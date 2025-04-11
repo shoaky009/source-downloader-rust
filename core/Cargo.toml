@@ -1,0 +1,8 @@
+[package]
+name = "core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sdk = { path = "../sdk" }
+log = "0.4.27"
