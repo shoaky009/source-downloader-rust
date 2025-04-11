@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use crate::component::ComponentSupplier;
+use crate::component::{ComponentSupplier, SdComponent};
 use crate::instance::{InstanceFactory, InstanceManager};
 use std::collections::HashMap;
 use std::path::Path;
@@ -16,7 +16,7 @@ pub trait PluginContext {
 
     fn get_persistent_data_path(&self) -> &Path;
 
-    fn register_supplier(&mut self, suppliers: Vec<Box<dyn ComponentSupplier>>);
+    fn register_supplier(&mut self, suppliers: Vec<Box<dyn ComponentSupplier<dyn SdComponent>>>);
 
     fn register_instance_factory(&mut self, factories: Vec<Box<dyn InstanceFactory>>);
 
