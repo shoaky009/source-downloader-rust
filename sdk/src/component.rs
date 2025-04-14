@@ -73,10 +73,10 @@ impl ComponentType {
     }
 }
 
-pub trait ComponentSupplier<T: SdComponent> {
+pub trait ComponentSupplier {
     fn supply_types(&self) -> Vec<ComponentType>;
 
-    fn apply(&self, props: Map<String, Value>) -> Result<Box<T>, ComponentError>;
+    fn apply(&self, props: Map<String, Value>) -> Result<Box<dyn SdComponent>, ComponentError>;
 
     fn is_support_no_props(&self) -> bool {
         false
@@ -132,5 +132,11 @@ impl Error for ComponentError {}
 impl From<&str> for ComponentError {
     fn from(s: &str) -> Self {
         ComponentError(s.to_string())
+    }
+}
+
+impl From<String> for ComponentError {
+    fn from(s: String) -> Self {
+        ComponentError(s)
     }
 }
