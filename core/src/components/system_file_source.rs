@@ -1,5 +1,3 @@
-pub mod system_file_source;
-
 use sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PointedItem, SdComponent,
     SdComponentMetadata, Source, empty_pointer,
@@ -7,16 +5,17 @@ use sdk::component::{
 
 use sdk::{Map, OffsetDateTime, SourceItem, Value};
 use std::collections::HashSet;
+use std::fs;
 use std::path::PathBuf;
 
 pub struct SystemFileSourceSupplier;
 
-impl ComponentSupplier<SystemFileSource> for SystemFileSourceSupplier {
+impl ComponentSupplier for SystemFileSourceSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::source("system-file".to_string())]
     }
 
-    fn apply(&self, props: Map<String, Value>) -> Result<Box<SystemFileSource>, ComponentError> {
+    fn apply(&self, props: Map<String, Value>) -> Result<Box<dyn SdComponent>, ComponentError> {
         let path = props
             .get("path")
             .unwrap()
@@ -34,20 +33,19 @@ impl ComponentSupplier<SystemFileSource> for SystemFileSourceSupplier {
 }
 
 struct SystemFileSource {
-    pub path: PathBuf,
+    path: PathBuf,
     mode: i8,
-}
-
-impl SystemFileSource {
-    fn test(&self) -> bool {
-        self.path.ends_with(".test")
-    }
 }
 
 impl SdComponent for SystemFileSource {}
 
 impl Source for SystemFileSource {
     fn fetch(&self) -> Vec<PointedItem> {
+        if self.mode == 1 {
+            let _ = fs::read_dir(&self.path).unwrap();
+            return vec![];
+        }
+
         vec![PointedItem {
             source_item: SourceItem {
                 title: "test".to_string(),
