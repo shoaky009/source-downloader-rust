@@ -62,4 +62,14 @@ impl ComponentManager {
         }
         Ok(true)
     }
+
+    pub fn register_suppliers(
+        &mut self,
+        suppliers: Vec<Arc<dyn ComponentSupplier>>,
+    ) -> Result<bool, ComponentError> {
+        for supplier in suppliers {
+            self.register(supplier)?;
+        }
+        Ok(true)
+    }
 }

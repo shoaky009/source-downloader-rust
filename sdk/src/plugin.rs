@@ -1,13 +1,15 @@
 #![allow(dead_code)]
+
 use crate::component::ComponentSupplier;
-use crate::instance::{InstanceFactory, InstanceManager};
-use std::collections::HashMap;
+use crate::instance::InstanceFactory;
+use std::fmt::{Display, Formatter};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 pub trait Plugin {
-    fn init(&self, plugin_context: &impl PluginContext);
+    fn init(&self, plugin_context: Arc<Mutex<dyn PluginContext>>);
 
-    fn destroy(&self, plugin_context: &impl PluginContext);
+    fn destroy(&self, plugin_context: Arc<dyn PluginContext>);
 
     fn description(&self) -> PluginDescription;
 }
@@ -15,23 +17,18 @@ pub trait Plugin {
 pub trait PluginContext {
     fn get_persistent_data_path(&self) -> &Path;
 
-    fn register_supplier(&mut self, suppliers: Vec<Box<dyn ComponentSupplier>>);
+    fn register_supplier(&mut self, suppliers: Vec<Arc<dyn ComponentSupplier>>);
 
     fn register_instance_factory(&mut self, factories: Vec<Box<dyn InstanceFactory>>);
-
-    fn load_instance<T: 'static>(
-        &self,
-        name: &str,
-        klass: &str,
-        props: Option<HashMap<String, String>>,
-    ) -> T;
-
-    fn get_instance_manager(&self) -> dyn InstanceManager;
 }
 
 pub struct PluginDescription {
     pub name: String,
     pub version: String,
-    pub author: String,
-    pub description: String,
+}
+
+impl Display for PluginDescription {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}:{}", self.name, self.version)
+    }
 }

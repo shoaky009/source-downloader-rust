@@ -6,3 +6,6 @@ edition = "2024"
 [dependencies]
 core = { path = "../../core" }
 sdk = { path = "../../sdk" }
+common = { path = "../../plugins/common" }
+log = "0.4"
+env_logger = "0.11"

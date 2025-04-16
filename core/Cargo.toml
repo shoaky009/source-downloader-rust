@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 sdk = { path = "../sdk" }
-log = "0.4.27"
+log = "0.4"
+libloading = "0.8"
