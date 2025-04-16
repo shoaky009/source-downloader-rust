@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use crate::component::{ComponentSupplier, SdComponent};
+use crate::component::ComponentSupplier;
 use crate::instance::{InstanceFactory, InstanceManager};
 use std::collections::HashMap;
 use std::path::Path;
@@ -13,7 +13,6 @@ pub trait Plugin {
 }
 
 pub trait PluginContext {
-
     fn get_persistent_data_path(&self) -> &Path;
 
     fn register_supplier(&mut self, suppliers: Vec<Box<dyn ComponentSupplier>>);

@@ -54,8 +54,8 @@ impl ComponentRootType {
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct ComponentType {
-    root_type: ComponentRootType,
-    name: String,
+    pub root_type: ComponentRootType,
+    pub name: String,
 }
 
 impl ComponentType {
@@ -113,17 +113,27 @@ pub struct PointedItem {
     pub pointer: Box<dyn ItemPointer>,
 }
 
-pub struct ComponentError(String);
+pub struct ComponentError {
+    message: String,
+}
+
+impl ComponentError {
+    pub fn new<S: Into<String>>(message: S) -> Self {
+        ComponentError {
+            message: message.into(),
+        }
+    }
+}
 
 impl Display for ComponentError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", self.message)
     }
 }
 
 impl Debug for ComponentError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ComponentError: {}", self.0)
+        write!(f, "ComponentError: {}", self.message)
     }
 }
 
@@ -131,12 +141,13 @@ impl Error for ComponentError {}
 
 impl From<&str> for ComponentError {
     fn from(s: &str) -> Self {
-        ComponentError(s.to_string())
+        ComponentError::new(s)
     }
 }
 
 impl From<String> for ComponentError {
     fn from(s: String) -> Self {
-        ComponentError(s)
+        ComponentError::new(s)
     }
 }
+
