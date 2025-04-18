@@ -1,0 +1,6 @@
+components:
+  source:
+    - type: system-file
+      name: test
+      props:
+        path: test_value

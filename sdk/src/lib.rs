@@ -1,5 +1,6 @@
 pub use http::Uri;
 pub use serde_json::{Map, Value};
+pub use serde::{Serialize, Deserialize};
 use std::collections::HashSet;
 pub use time::OffsetDateTime;
 
