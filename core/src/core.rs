@@ -71,27 +71,40 @@ impl PluginContext for CorePluginContext {
 pub struct PluginManager {
     context: Arc<Mutex<dyn PluginContext>>,
     plugins: Vec<Box<dyn Plugin>>,
+    // Keep libraries alive as long as the plugins are in use
+    _libraries: Vec<Library>,
 }
+
 
 impl PluginManager {
     pub fn new(ctx: Arc<Mutex<dyn PluginContext>>) -> Self {
         PluginManager {
             context: ctx,
             plugins: Vec::new(),
+            _libraries: Vec::new(),
         }
     }
 
     pub fn load_dylib_plugins(&mut self) {
         // TODO 根据配置加载暂时写死
         let plugin_path = "./target/debug/libcommon.dylib";
-        unsafe {
-            let lib = Library::new(plugin_path).expect("Failed to load plugin");
-            let create_plugin: Symbol<unsafe extern "Rust" fn() -> Box<dyn Plugin>> =
-                lib.get(b"create_plugin").expect("Failed to find symbol");
-            let plugin = create_plugin();
-            plugin.init(self.context.clone());
-            log::info!("Loaded plugin: {}", plugin.description());
-            self.plugins.push(plugin);
+        match unsafe { Library::new(plugin_path) } {
+            Ok(lib) => {
+                unsafe {
+                    match lib.get::<unsafe extern "Rust" fn() -> Box<dyn Plugin>>(b"create_plugin") {
+                        Ok(create_plugin) => {
+                            let plugin = create_plugin();
+                            plugin.init(self.context.clone());
+                            log::info!("Loaded plugin: {}", plugin.description());
+                            self.plugins.push(plugin);
+                            self._libraries.push(lib);
+                        }
+                        Err(e) => log::error!("Failed to find a symbol in plugin {}: {}", plugin_path, e),
+                    }
+                }
+            }
+            Err(e) => log::error!("Failed to load plugin {}: {}", plugin_path, e),
         }
     }
 }
+
