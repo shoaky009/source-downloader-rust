@@ -147,10 +147,20 @@ impl ConfigOperator for YamlConfigOperator {
     }
 
     fn get_all_component_config(&self) -> HashMap<String, Vec<ComponentConfig>> {
-        todo!()
+        let config = self.get_config().unwrap();
+        config.components.clone()
     }
 
     fn save_component(&self, root_type: ComponentRootType, component_config: ComponentConfig) {
+        let mut config = self.get_config().unwrap();
+        let component_type = root_type.name();
+        if let Some(components) = config.components.get_mut(component_type) {
+            components.push(component_config);
+        } else {
+            config
+                .components
+                .insert(String::from(component_type), vec![component_config]);
+        }
         todo!()
     }
 
