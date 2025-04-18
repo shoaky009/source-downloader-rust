@@ -161,11 +161,15 @@ impl ConfigOperator for YamlConfigOperator {
                 .components
                 .insert(String::from(component_type), vec![component_config]);
         }
-        todo!()
     }
 
     fn save_processor(&self, name: String, processor_config: ProcessorConfig) {
-        todo!()
+        let mut config = self.get_config().unwrap();
+        if let Some(processor) = config.processors.iter_mut().find(|p| p.name == name) {
+            processor.enabled = processor_config.enabled;
+        } else {
+            config.processors.push(processor_config);
+        }
     }
 
     fn delete_component(
