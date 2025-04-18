@@ -142,34 +142,40 @@ struct Config {
 
 impl ConfigOperator for YamlConfigOperator {
     fn get_all_processor_config(&self) -> Vec<ProcessorConfig> {
-        let config = self.get_config().unwrap();
-        config.processors
+        self.get_config()
+            .map(|config| config.processors.clone())
+            .unwrap_or_default()
     }
 
     fn get_all_component_config(&self) -> HashMap<String, Vec<ComponentConfig>> {
-        let config = self.get_config().unwrap();
-        config.components.clone()
+        self.get_config()
+            .map(|config| config.components.clone())
+            .unwrap_or_default()
     }
 
     fn save_component(&self, root_type: ComponentRootType, component_config: ComponentConfig) {
         let mut config = self.get_config().unwrap();
         let component_type = root_type.name();
-        if let Some(components) = config.components.get_mut(component_type) {
-            components.push(component_config);
-        } else {
-            config
-                .components
-                .insert(String::from(component_type), vec![component_config]);
-        }
+
+        // 使用 entry API 更优雅地处理存在/不存在的情况
+        config.components
+            .entry(String::from(component_type))
+            .or_insert(vec![component_config]);
+        
     }
 
     fn save_processor(&self, name: String, processor_config: ProcessorConfig) {
         let mut config = self.get_config().unwrap();
-        if let Some(processor) = config.processors.iter_mut().find(|p| p.name == name) {
-            processor.enabled = processor_config.enabled;
-        } else {
-            config.processors.push(processor_config);
+        match config.processors.iter().position(|p| p.name == name) {
+            Some(index) => {
+                // 只更新 enabled 状态
+                config.processors[index].enabled = processor_config.enabled;
+            },
+            None => {
+                config.processors.push(processor_config);
+            }
         }
+
     }
 
     fn delete_component(
@@ -178,15 +184,32 @@ impl ConfigOperator for YamlConfigOperator {
         component_type: String,
         name: String,
     ) -> bool {
-        todo!()
+        let mut config = self.get_config().unwrap();
+        if let Some(components) = config.components.get_mut(component_type.as_str()) {
+            if let Some(pos) = components.iter().position(|c| c.name == name) {
+                components.remove(pos);
+                return true;
+            }
+        }
+        false
     }
 
     fn delete_processor(&self, name: String) -> bool {
-        todo!()
+        let mut config = self.get_config().unwrap();
+        if let Some(pos) = config.processors.iter().position(|p| p.name == name) {
+            config.processors.remove(pos);
+            return true;
+        }
+        false
     }
 
     fn get_instance_props(&self, name: String) -> Properties {
-        todo!()
+        let config = self.get_config().unwrap();
+        if let Some(instance) = config.instances.iter().find(|i| i.name == name) {
+            Properties::from_map(instance.props.clone())
+        } else {
+            Properties::new()
+        }
     }
 }
 
