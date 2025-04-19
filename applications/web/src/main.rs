@@ -8,8 +8,7 @@ fn main() {
         .filter(None, log::LevelFilter::Info)
         .init();
 
-    let container = Box::new(ObjectWrapperContainer::new());
-    let component_manager = Rc::new(RefCell::new(ComponentManager::new(container)));
+    let component_manager = Rc::new(RefCell::new(ComponentManager::new()));
 
     let plugin_ctx = CorePluginContext::new(component_manager.clone());
     let plugin_ctx = Arc::new(Mutex::new(plugin_ctx));

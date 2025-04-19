@@ -38,10 +38,10 @@ impl Display for ComponentManager {
 }
 
 impl ComponentManager {
-    pub fn new(object_container: Box<ObjectWrapperContainer>) -> Self {
+    pub fn new() -> Self {
         ComponentManager {
             component_suppliers: HashMap::new(),
-            object_container,
+            object_container: Box::new(ObjectWrapperContainer::new()),
         }
     }
 
