@@ -1,6 +1,16 @@
+instances:
+  - name: test
+    type: test
+    props:
+      test: test_value
+
 components:
   source:
     - type: system-file
       name: test
       props:
         path: test_value
+
+processors:
+  - name: test
+    enabled: true
