@@ -4,14 +4,12 @@ use libloading::Library;
 use sdk::component::ComponentSupplier;
 use sdk::instance::InstanceFactory;
 use sdk::plugin::{Plugin, PluginContext};
-use std::cell::RefCell;
 use std::path::Path;
-use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::{env, fs};
 
 pub struct CoreApplication {
-    pub component_manager: Rc<RefCell<ComponentManager>>,
+    pub component_manager: Arc<RwLock<ComponentManager>>,
     pub plugin_manager: PluginManager,
 }
 
@@ -39,7 +37,8 @@ impl CoreApplication {
 
     fn register_component_supplier(&mut self) {
         self.component_manager
-            .borrow_mut()
+            .write()
+            .unwrap()
             .register(Arc::new(SystemFileSourceSupplier {}))
             .unwrap();
     }
@@ -48,11 +47,11 @@ impl CoreApplication {
 }
 
 pub struct CorePluginContext {
-    component_manager: Rc<RefCell<ComponentManager>>,
+    component_manager: Arc<RwLock<ComponentManager>>,
 }
 
 impl CorePluginContext {
-    pub fn new(manager: Rc<RefCell<ComponentManager>>) -> Self {
+    pub fn new(manager: Arc<RwLock<ComponentManager>>) -> Self {
         CorePluginContext {
             component_manager: manager,
         }
@@ -66,7 +65,8 @@ impl PluginContext for CorePluginContext {
 
     fn register_supplier(&mut self, suppliers: Vec<Arc<dyn ComponentSupplier>>) {
         self.component_manager
-            .borrow_mut()
+            .write()
+            .unwrap()
             .register_suppliers(suppliers)
             .unwrap();
     }

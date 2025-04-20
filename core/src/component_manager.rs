@@ -72,4 +72,14 @@ impl ComponentManager {
         }
         Ok(true)
     }
+    
+    pub fn get_all_suppliers(
+        &self,
+    ) -> Result<Vec<Arc<dyn ComponentSupplier>>, ComponentError> {
+        let mut suppliers = Vec::new();
+        for (_, supplier) in &self.component_suppliers {
+            suppliers.push(supplier.clone());
+        }
+        Ok(suppliers)
+    }
 }

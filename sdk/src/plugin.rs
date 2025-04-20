@@ -6,7 +6,7 @@ use std::fmt::{Display, Formatter};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-pub trait Plugin {
+pub trait Plugin: Send + Sync {
     fn init(&self, plugin_context: Arc<Mutex<dyn PluginContext>>);
 
     fn destroy(&self, plugin_context: Arc<dyn PluginContext>);
@@ -14,7 +14,7 @@ pub trait Plugin {
     fn description(&self) -> PluginDescription;
 }
 
-pub trait PluginContext {
+pub trait PluginContext: Send + Sync{
     fn get_persistent_data_path(&self) -> &Path;
 
     fn register_supplier(&mut self, suppliers: Vec<Arc<dyn ComponentSupplier>>);

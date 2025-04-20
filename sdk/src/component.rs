@@ -73,7 +73,7 @@ impl ComponentType {
     }
 }
 
-pub trait ComponentSupplier {
+pub trait ComponentSupplier: Send + Sync{
     fn supply_types(&self) -> Vec<ComponentType>;
 
     fn apply(&self, props: Map<String, Value>) -> Result<Box<dyn SdComponent>, ComponentError>;
@@ -150,4 +150,3 @@ impl From<String> for ComponentError {
         ComponentError::new(s)
     }
 }
-
