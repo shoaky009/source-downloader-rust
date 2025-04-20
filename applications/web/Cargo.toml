@@ -1,6 +1,5 @@
 [package]
 name = "web"
-version = "0.1.0"
 edition = "2024"
 
 [dependencies]
@@ -9,3 +8,6 @@ sdk = { path = "../../sdk" }
 common = { path = "../../plugins/common" }
 log = "0.4"
 env_logger = "0.11"
+axum = { version = "0.8.3", features = ["macros"] }
+tokio = { version = "1.44.2", features = ["full"] }
+serde = { version = "1.0.219", features = ["derive"] }
