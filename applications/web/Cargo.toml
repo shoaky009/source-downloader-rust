@@ -2,6 +2,13 @@
 name = "web"
 edition = "2024"
 
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "web"
+path = "src/main.rs"
+
 [dependencies]
 core = { path = "../../core" }
 sdk = { path = "../../sdk" }

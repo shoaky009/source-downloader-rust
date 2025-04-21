@@ -1,4 +1,4 @@
-use crate::service::model::ApiResponse;
+use crate::model::http_model::ApiResponse;
 use axum::{body::Body, http::Request, middleware::Next, response::IntoResponse};
 use sdk::component::ComponentError;
 use std::{

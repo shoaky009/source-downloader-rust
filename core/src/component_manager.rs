@@ -72,7 +72,7 @@ impl ComponentManager {
         }
         Ok(true)
     }
-    
+
     pub fn get_all_suppliers(
         &self,
     ) -> Result<Vec<Arc<dyn ComponentSupplier>>, ComponentError> {
