@@ -1,9 +1,9 @@
-use crate::dao::yaml_file::YamlFileDao;
 use crate::dao::ComponentDao;
-use crate::error::error_handle::{error_handler, AppResult};
+use crate::dao::yaml_file::YamlFileDao;
+use crate::error::error_handle::{AppResult, error_handler};
 use crate::model::http_model::ApiResponse;
 use axum::extract::State;
-use axum::{middleware, routing::get, Router};
+use axum::{Router, middleware, routing::get};
 use core::CoreApplication;
 use std::sync::{Arc, RwLock};
 
@@ -29,4 +29,3 @@ async fn list_component_suppliers(
     // 成功返回
     Ok(ApiResponse::success(supplier_types))
 }
-
