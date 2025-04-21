@@ -1,5 +1,3 @@
-mod service;
-
 use core::*;
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::net::TcpListener;
