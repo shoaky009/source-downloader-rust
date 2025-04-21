@@ -1,5 +1,3 @@
-
-
 use core::*;
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::net::TcpListener;
@@ -34,7 +32,7 @@ async fn main() {
 
 async fn run_web_server(core_application: Arc<RwLock<CoreApplication>>) {
     // 使用router模块中的register_routers函数获取配置好的路由
-    let app = router::register_routers(core_application).await;
+    let app = router::register_routers(core_application);
 
     // 监听所有网络接口的3000端口
     let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
