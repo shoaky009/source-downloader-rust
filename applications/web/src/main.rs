@@ -9,7 +9,12 @@ async fn main() {
         .filter(None, log::LevelFilter::Info)
         .init();
 
-    let component_manager = Arc::new(RwLock::new(ComponentManager::new()));
+    let component_manager = Arc::new(RwLock::new(ComponentManager::new(
+        // TODO from config
+        Arc::new(YamlConfigOperator::new(
+            "./tests/resources/config.yaml",
+        ))
+    )));
 
     let plugin_ctx = CorePluginContext::new(component_manager.clone());
     let plugin_ctx = Arc::new(Mutex::new(plugin_ctx));

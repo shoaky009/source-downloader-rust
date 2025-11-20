@@ -1,12 +1,13 @@
 use sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, PointedItem, SdComponent,
-    SdComponentMetadata, Source, empty_pointer,
+    empty_pointer, ComponentError, ComponentSupplier, ComponentType, PointedItem,
+    SdComponent, SdComponentMetadata, Source,
 };
 
-use sdk::{Map, OffsetDateTime, SourceItem, Value};
+use sdk::{Map, OffsetDateTime, SdComponent, SourceItem, Value};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub struct SystemFileSourceSupplier;
 
@@ -15,16 +16,15 @@ impl ComponentSupplier for SystemFileSourceSupplier {
         vec![ComponentType::source("system-file".to_string())]
     }
 
-    fn apply(&self, props: Map<String, Value>) -> Result<Box<dyn SdComponent>, ComponentError> {
+    fn apply(&self, props: Map<String, Value>) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let path = props
             .get("path")
-            .unwrap()
-            .as_str()
-            .ok_or_else(|| ComponentError::from("Missing path property"))?;
+            .ok_or_else(|| ComponentError::from("Missing 'path' property"))?
+            .to_string();
 
         let mode = props.get("mode").and_then(|v| v.as_i64()).unwrap_or(0) as i8;
         let path = PathBuf::from(path);
-        Ok(Box::new(SystemFileSource { path, mode }))
+        Ok(Arc::new(SystemFileSource { path, mode }))
     }
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
@@ -32,12 +32,12 @@ impl ComponentSupplier for SystemFileSourceSupplier {
     }
 }
 
+#[derive(SdComponent, Debug)]
+#[component(Source)]
 struct SystemFileSource {
     path: PathBuf,
     mode: i8,
 }
-
-impl SdComponent for SystemFileSource {}
 
 impl Source for SystemFileSource {
     fn fetch(&self) -> Vec<PointedItem> {

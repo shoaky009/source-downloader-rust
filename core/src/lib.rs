@@ -1,11 +1,10 @@
 mod component_manager;
-mod processor_manager;
-mod container;
 mod components;
-mod core;
 mod config;
+mod core;
 mod instance_manager;
+mod processor_manager;
 
 pub use component_manager::*;
-pub use container::*;
 pub use core::*;
+pub use config::YamlConfigOperator;

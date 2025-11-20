@@ -39,7 +39,7 @@ impl CoreApplication {
         self.component_manager
             .write()
             .unwrap()
-            .register(Arc::new(SystemFileSourceSupplier {}))
+            .register_supplier(Arc::new(SystemFileSourceSupplier {}))
             .unwrap();
     }
 

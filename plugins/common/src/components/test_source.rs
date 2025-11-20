@@ -3,7 +3,9 @@ use sdk::component::{
     SdComponentMetadata, Source,
 };
 use sdk::{Map, Value};
+use std::sync::Arc;
 
+#[derive(Debug)]
 struct TestSource {}
 
 impl TestSource {
@@ -33,13 +35,13 @@ impl ComponentSupplier for TestSourceSupplier {
         vec![ComponentType::source("test".to_string())]
     }
 
-    fn apply(&self, props: Map<String, Value>) -> Result<Box<dyn SdComponent>, ComponentError> {
+    fn apply(&self, props: Map<String, Value>) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let mode = props.get("mode").and_then(|v| v.as_i64()).unwrap_or(0) as i8;
         if mode == 1 {
             return Err(ComponentError::from("Mode 1 is not supported"));
         }
 
-        Ok(Box::new(TestSource::new()))
+        Ok(Arc::new(TestSource::new()))
     }
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {

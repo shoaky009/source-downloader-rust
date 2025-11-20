@@ -1,7 +1,7 @@
 #[allow(dead_code, unused)]
 use moka::sync::Cache;
-use sdk::component::{ComponentError, ComponentRootType};
-use sdk::{Deserialize, Serialize, Value};
+use sdk::component::{ComponentError, ComponentRootType, ComponentType};
+use sdk::{Deserialize, Map, Serialize, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::fs::{File, OpenOptions};
@@ -12,7 +12,7 @@ use std::time::Duration;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceConfig {
     pub name: String,
-    pub props: HashMap<String, Value>,
+    pub props: Map<String, Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -20,7 +20,7 @@ pub struct ComponentConfig {
     pub name: String,
     #[serde(rename = "type")]
     pub component_type: String,
-    pub props: HashMap<String, Value>,
+    pub props: Map<String, Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -32,18 +32,16 @@ pub struct ProcessorConfig {
 
 #[derive(Debug, Clone, Default)]
 pub struct Properties {
-    inner: HashMap<String, Value>,
+    pub inner: Map<String, Value>,
 }
 
 #[allow(dead_code, unused)]
 impl Properties {
     pub fn new() -> Self {
-        Properties {
-            inner: HashMap::new(),
-        }
+        Properties { inner: Map::new() }
     }
 
-    pub fn from_map(map: HashMap<String, Value>) -> Self {
+    pub fn from_map(map: Map<String, Value>) -> Self {
         Properties { inner: map }
     }
 
@@ -72,6 +70,12 @@ pub trait ConfigOperator: Send + Sync {
     fn delete_processor(&self, name: String) -> bool;
 
     fn get_instance_props(&self, name: String) -> Properties;
+
+    fn get_component_config(
+        &self,
+        component_type: &ComponentType,
+        name: &str,
+    ) -> Option<ComponentConfig>;
 }
 
 pub struct YamlConfigOperator {
@@ -231,13 +235,31 @@ impl ConfigOperator for YamlConfigOperator {
             Properties::new()
         }
     }
+
+    fn get_component_config(
+        &self,
+        component_type: &ComponentType,
+        name: &str,
+    ) -> Option<ComponentConfig> {
+        let config = self.get_config().ok()?;
+        let root_name = component_type.root_type.name();
+        let type_name = component_type.name.clone();
+        config
+            .components
+            .get(root_name)
+            .and_then(|list| {
+                list.iter()
+                    .find(|c| c.component_type == type_name && c.name == name)
+            })
+            .cloned()
+    }
 }
 
 #[cfg(test)]
 mod test {
     use crate::config::{ComponentConfig, Config, ConfigOperator, YamlConfigOperator};
+    use sdk::Map;
     use sdk::component::ComponentRootType;
-    use std::collections::HashMap;
     use std::fs;
     use std::path::Path;
     use tempfile::NamedTempFile;
@@ -314,7 +336,7 @@ mod test {
         let component_config = ComponentConfig {
             name: "test_save_component".to_string(),
             component_type: "test".to_string(),
-            props: HashMap::new(),
+            props: Map::new(),
         };
         operator.save_component(&ComponentRootType::Source, component_config);
 
