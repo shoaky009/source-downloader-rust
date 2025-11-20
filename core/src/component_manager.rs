@@ -95,7 +95,7 @@ impl ComponentManager {
 
         let types = supplier.supply_types();
         let (pk_type, props) =
-            self.get_component_props(&types, name, supplier.is_support_no_props());
+            self.get_component_props(&types, name, supplier.is_support_no_props())?;
 
         let (component, creation_error) = match supplier.apply(props.inner) {
             Ok(c) => (Some(c), None),
@@ -149,18 +149,34 @@ impl ComponentManager {
         &self,
         types: &[ComponentType],
         name: &str,
-        _allow_no_args: bool,
-    ) -> (ComponentType, Properties) {
-        let empty_props = Properties::new();
+        allow_no_args: bool,
+    ) -> Result<(ComponentType, Properties), ComponentError> {
+        if types.is_empty() {
+            return Err(ComponentError::new(
+                "没有任何可用的 ComponentType (types list is empty)".to_string(),
+            ));
+        }
+
         for component_type in types {
-            if let Some(props) = self
+            if let Some(config) = self
                 .config_operator
                 .get_component_config(component_type, name)
             {
-                return (component_type.clone(), Properties::from_map(props.props));
+                if config.name == name {
+                    return Ok((component_type.clone(), Properties::from_map(config.props)));
+                }
             }
         }
-        (types[0].clone(), empty_props)
+
+        if allow_no_args {
+            return Ok((types[0].clone(), Properties::new()));
+        }
+
+        Err(ComponentError::new(format!(
+            "Component config not found types:{:?} name:{}",
+            types,
+            name,
+        )))
     }
 
     pub fn destroy(&self, type_: &ComponentType, name: &str) {
@@ -208,18 +224,23 @@ pub struct ComponentWrapper {
 mod tests {
     use crate::ComponentManager;
     use crate::components::system_file_source::SystemFileSourceSupplier;
-    use crate::config::YamlConfigOperator;
-    use sdk::component::ComponentType;
-    use std::sync::Arc;
+    use crate::config::{ConfigOperator, YamlConfigOperator};
+    use sdk::component::{ComponentSupplier, ComponentType};
+    use std::sync::{Arc, OnceLock};
 
+    static CONFIG_OP: OnceLock<Arc<dyn ConfigOperator>> = OnceLock::new();
+    fn get_config_op() -> &'static Arc<dyn ConfigOperator> {
+        CONFIG_OP.get_or_init(|| Arc::new(YamlConfigOperator::new("./tests/resources/config.yaml")))
+    }
+    // 预期一切正常
     #[test]
-    fn test() {
-        let mut manager = ComponentManager::new(Arc::new(YamlConfigOperator::new(
-            "./tests/resources/config.yaml",
-        )));
+    fn normal_case() {
+        let mut manager = ComponentManager::new(get_config_op().clone());
+        // register supplier case
         let result = manager.register_supplier(Arc::new(SystemFileSourceSupplier {}));
         assert!(result.unwrap());
 
+        // get component and downcast case
         let component_type = &ComponentType::source("system-file".to_string());
         let component_wrapper = manager.get_component(component_type, "test").unwrap();
         let source = component_wrapper
@@ -231,6 +252,61 @@ mod tests {
         assert_eq!(component_wrapper.name, "test");
         let items = source.fetch();
         assert!(items.len() > 0);
-        println!("{:?}", items)
+        println!("{:?}", items);
+
+        // multiple time get a component case, the component should be the same instance
+        let component_wp2 = manager.get_component(component_type, "test").unwrap();
+        assert!(Arc::ptr_eq(
+            &component_wrapper.component.clone().unwrap(),
+            &component_wp2.component.unwrap()
+        ));
+
+        // to destroy a component case, the component should be recreated so that the instance is different
+        manager.destroy(component_type, "test");
+        let component_wp3 = manager.get_component(component_type, "test").unwrap();
+        assert!(!Arc::ptr_eq(
+            &component_wrapper.component.unwrap(),
+            &component_wp3.component.unwrap()
+        ));
+    }
+
+    #[test]
+    fn duplicate_registration_case() {
+        let mut manager = ComponentManager::new(get_config_op().clone());
+
+        let result = manager.register_supplier(Arc::new(SystemFileSourceSupplier {}));
+        assert!(result.unwrap());
+
+        let result = manager.register_supplier(Arc::new(SystemFileSourceSupplier {}));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn get_all_suppliers_case() {
+        let mut manager = ComponentManager::new(get_config_op().clone());
+        let arc: Arc<dyn ComponentSupplier> = Arc::new(SystemFileSourceSupplier {});
+        manager.register_supplier(arc.clone()).unwrap();
+        let suppliers = manager.get_all_suppliers().unwrap();
+        assert_eq!(suppliers.len(), 1);
+        assert!(Arc::ptr_eq(suppliers.first().unwrap(), &arc));
+    }
+
+    #[test]
+    fn get_component_error_case() {
+        let mut manager = ComponentManager::new(get_config_op().clone());
+        let component_type = ComponentType::source("system-file".to_string());
+        let result = manager.get_component(&component_type, "test");
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.message.starts_with("Supplier not found for type:"));
+
+        manager
+            .register_supplier(Arc::new(SystemFileSourceSupplier {}))
+            .unwrap();
+
+        let result2 = manager.get_component(&component_type, "test2");
+        assert!(result2.is_err());
+        let error2 = result2.unwrap_err();
+        assert!(error2.message.starts_with("Component config not found types"));
     }
 }
