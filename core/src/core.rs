@@ -7,6 +7,7 @@ use sdk::plugin::{Plugin, PluginContext};
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use std::{env, fs};
+use std::any::Any;
 
 pub struct CoreApplication {
     pub component_manager: Arc<RwLock<ComponentManager>>,
@@ -71,7 +72,7 @@ impl PluginContext for CorePluginContext {
             .unwrap();
     }
 
-    fn register_instance_factory(&mut self, factories: Vec<Box<dyn InstanceFactory>>) {
+    fn register_instance_factory(&mut self, factories: Vec<Box<dyn InstanceFactory<dyn Any>>>) {
         // 暂时不做任何操作，防止未使用变量警告
         let _ = factories;
     }

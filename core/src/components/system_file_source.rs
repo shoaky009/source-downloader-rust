@@ -1,6 +1,6 @@
 use sdk::component::{
-    empty_pointer, ComponentError, ComponentSupplier, ComponentType, PointedItem,
-    SdComponent, SdComponentMetadata, Source,
+    empty_pointer, ComponentError, ComponentSupplier, ComponentType, ItemPointer,
+    PointedItem, SdComponent, SdComponentMetadata, Source,
 };
 
 use sdk::{Map, OffsetDateTime, SdComponent, SourceItem, Value};
@@ -16,7 +16,7 @@ impl ComponentSupplier for SystemFileSourceSupplier {
         vec![ComponentType::source("system-file".to_string())]
     }
 
-    fn apply(&self, props: Map<String, Value>) -> Result<Arc<dyn SdComponent>, ComponentError> {
+    fn apply(&self, props: &Map<String, Value>) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let path = props
             .get("path")
             .ok_or_else(|| ComponentError::from("Missing 'path' property"))?
@@ -40,7 +40,7 @@ struct SystemFileSource {
 }
 
 impl Source for SystemFileSource {
-    fn fetch(&self) -> Vec<PointedItem> {
+    fn fetch(&self, _: &Map<String, Value>) -> Vec<PointedItem> {
         if self.mode == 1 {
             let _ = fs::read_dir(&self.path).unwrap();
             return vec![];
@@ -58,5 +58,9 @@ impl Source for SystemFileSource {
             },
             pointer: empty_pointer(),
         }]
+    }
+
+    fn default_pointer(&self) -> Box<dyn ItemPointer> {
+        empty_pointer()
     }
 }

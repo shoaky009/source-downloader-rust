@@ -97,7 +97,7 @@ impl ComponentManager {
         let (pk_type, props) =
             self.get_component_props(&types, name, supplier.is_support_no_props())?;
 
-        let (component, creation_error) = match supplier.apply(props.inner) {
+        let (component, creation_error) = match supplier.apply(&props.inner) {
             Ok(c) => (Some(c), None),
             Err(e) => {
                 eprintln!("Failed to create component {}: {}", instance_name, e);
@@ -174,8 +174,7 @@ impl ComponentManager {
 
         Err(ComponentError::new(format!(
             "Component config not found types:{:?} name:{}",
-            types,
-            name,
+            types, name,
         )))
     }
 
@@ -225,6 +224,7 @@ mod tests {
     use crate::ComponentManager;
     use crate::components::system_file_source::SystemFileSourceSupplier;
     use crate::config::{ConfigOperator, YamlConfigOperator};
+    use sdk::Map;
     use sdk::component::{ComponentSupplier, ComponentType};
     use std::sync::{Arc, OnceLock};
 
@@ -243,31 +243,21 @@ mod tests {
         // get component and downcast case
         let component_type = &ComponentType::source("system-file".to_string());
         let component_wrapper = manager.get_component(component_type, "test").unwrap();
-        let source = component_wrapper
-            .component
-            .as_ref()
-            .unwrap()
-            .as_source()
-            .unwrap();
+        let component_arc = component_wrapper.component.unwrap();
+        let source = component_arc.clone().as_source().unwrap();
         assert_eq!(component_wrapper.name, "test");
-        let items = source.fetch();
+        let items = source.fetch(&Map::new());
         assert!(items.len() > 0);
         println!("{:?}", items);
 
         // multiple time get a component case, the component should be the same instance
         let component_wp2 = manager.get_component(component_type, "test").unwrap();
-        assert!(Arc::ptr_eq(
-            &component_wrapper.component.clone().unwrap(),
-            &component_wp2.component.unwrap()
-        ));
+        assert!(Arc::ptr_eq(&component_arc, &component_wp2.component.unwrap()));
 
         // to destroy a component case, the component should be recreated so that the instance is different
         manager.destroy(component_type, "test");
         let component_wp3 = manager.get_component(component_type, "test").unwrap();
-        assert!(!Arc::ptr_eq(
-            &component_wrapper.component.unwrap(),
-            &component_wp3.component.unwrap()
-        ));
+        assert!(!Arc::ptr_eq(&component_arc, &component_wp3.component.unwrap()));
     }
 
     #[test]
@@ -307,6 +297,10 @@ mod tests {
         let result2 = manager.get_component(&component_type, "test2");
         assert!(result2.is_err());
         let error2 = result2.unwrap_err();
-        assert!(error2.message.starts_with("Component config not found types"));
+        assert!(
+            error2
+                .message
+                .starts_with("Component config not found types")
+        );
     }
 }

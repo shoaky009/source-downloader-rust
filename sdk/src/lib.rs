@@ -1,9 +1,9 @@
+pub use component_macro::*;
 pub use http::Uri;
+pub use serde::{Deserialize, Serialize};
 pub use serde_json::{Map, Value};
-pub use serde::{Serialize, Deserialize};
 use std::collections::HashSet;
 pub use time::OffsetDateTime;
-pub use component_macro::*;
 
 pub mod component;
 pub mod instance;
