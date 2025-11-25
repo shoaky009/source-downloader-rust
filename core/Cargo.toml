@@ -10,7 +10,11 @@ libloading = { workspace = true }
 serde_yaml = { workspace = true }
 serde = { workspace = true }
 moka = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+parking_lot = { workspace = true }
 
 [dev-dependencies]
-env_logger = "0.11"
-tempfile = "3.19"
+tempfile = { workspace = true }
+storage-memory = { path = "../storage-memory" }
+storage-sqlite = { path = "../storage-sqlite" }

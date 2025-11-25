@@ -250,8 +250,8 @@ pub trait Trigger: SdComponent {
         self.stop();
         self.start();
     }
-    fn add_task(&self, task: ProcessorTask);
-    fn remove_task(&self, task: ProcessorTask);
+    fn add_task(&self, task: Arc<ProcessorTask>);
+    fn remove_task(&self, task: Arc<ProcessorTask>);
 }
 
 pub trait Downloader: SdComponent {
@@ -293,7 +293,7 @@ pub trait FileMover: SdComponent {
     fn is_supported_batch_move(&self) -> bool {
         false
     }
-    fn batch_move(&self, item_content: &ItemContent) -> Result<(), ProcessingError> {
+    fn batch_move(&self, _: &ItemContent) -> Result<(), ProcessingError> {
         Err(ProcessingError {
             message: "Batch move is not supported".to_string(),
             skip: false,
@@ -338,6 +338,21 @@ pub trait FileReplacementDecider: SdComponent {
 
 pub trait ItemExistsDetector: SdComponent {
     fn exists(&self, file_mover: &dyn FileMover, item_content: &ItemContent) -> bool;
+}
+
+pub trait VariableProvider: SdComponent {
+    fn accuracy(&self) -> i32 {
+        1
+    }
+    fn item_variables(&self, item: &SourceItem) -> Map<String, Value>;
+    fn file_variables(
+        &self,
+        item: &SourceItem,
+        item_variables: &Map<String, Value>,
+        files: &[SourceFile],
+    ) -> Map<String, Value>;
+    fn extract_from(&self, item: &SourceItem, value: &str) -> Option<Map<String, Value>>;
+    fn primary_variable_name(&self) -> Option<String>;
 }
 
 pub trait VariableReplacer: SdComponent {
@@ -388,6 +403,7 @@ impl Clone for PointedItem {
     }
 }
 
+#[derive(Clone)]
 pub struct ComponentError {
     pub message: String,
 }

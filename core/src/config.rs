@@ -1,3 +1,4 @@
+use log::error;
 #[allow(dead_code, unused)]
 use moka::sync::Cache;
 use sdk::component::{ComponentError, ComponentRootType, ComponentType};
@@ -28,6 +29,8 @@ pub struct ProcessorConfig {
     /// 处理器名称
     pub name: String,
     pub enabled: bool,
+    pub save_path: String,
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -80,13 +83,13 @@ pub trait ConfigOperator: Send + Sync {
 
 pub struct YamlConfigOperator {
     config_path: PathBuf,
-    config_cache: Cache<String, Config>,
+    config_cache: Cache<String, Result<Config, ComponentError>>,
 }
 
 #[allow(dead_code, unused)]
 impl YamlConfigOperator {
     pub fn new<P: AsRef<Path>>(config_path: P) -> Self {
-        let config_cache: Cache<String, Config> = Cache::builder()
+        let config_cache: Cache<String, Result<Config, ComponentError>> = Cache::builder()
             .time_to_live(Duration::from_secs(5))
             .build();
         YamlConfigOperator {
@@ -131,9 +134,8 @@ impl YamlConfigOperator {
         let config = self.config_cache.get_with(path, move || {
             self.load_yaml()
                 .map_err(|e| ComponentError::new(format!("Failed to get config: {}", e)))
-                .unwrap()
         });
-        Ok(config)
+        config
     }
 
     fn write_config(&self, config: &Config) -> Result<(), ComponentError> {
@@ -202,7 +204,7 @@ impl ConfigOperator for YamlConfigOperator {
         component_type: &str,
         name: &str,
     ) -> Result<(), ComponentError> {
-        let mut config = self.get_config().unwrap();
+        let mut config = self.get_config()?;
         let root_type_name = root_type.name();
 
         if let Some(components) = config.components.get_mut(root_type_name) {
@@ -241,7 +243,19 @@ impl ConfigOperator for YamlConfigOperator {
         component_type: &ComponentType,
         name: &str,
     ) -> Option<ComponentConfig> {
-        let config = self.get_config().ok()?;
+        let config = match self.get_config() {
+            Ok(cfg) => cfg,
+            Err(error) => {
+                error!(
+                    "Failed to get config {}:{} {}",
+                    component_type.to_string(),
+                    name,
+                    error,
+                );
+                return None;
+            }
+        };
+
         let root_name = component_type.root_type.name();
         let type_name = component_type.name.clone();
         config

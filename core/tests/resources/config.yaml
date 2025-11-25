@@ -12,5 +12,7 @@ components:
         path: test_value
 
 processors:
-  - name: test
+  - name: normal-case
     enabled: true
+    save_path: test1
+    source: system-file:test

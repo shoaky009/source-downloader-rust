@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["core", "sdk", "applications/web", "plugins/common", "component-macro"]
+members = ["core", "sdk", "applications/web", "plugins/common", "component-macro", "storage-memory", "storage-sqlite"]
 
 [workspace.dependencies]
 log = "0.4"
@@ -15,7 +15,11 @@ time = "0.3"
 libloading = "0.8"
 syn = "2.0"
 quote = "1.0"
+tempfile = "3.19"
+parking_lot = "0.12"
 
 moka = { version = "0.12.10", features = ["sync"] }
 axum = { version = "0.8.3", features = ["macros"] }
 tokio = { version = "1.44.2", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -1,15 +1,16 @@
 ﻿#![allow(dead_code)]
 
 use crate::config::{ConfigOperator, Properties};
-use sdk::component::{ComponentError, ComponentSupplier, ComponentType, SdComponent};
-use std::collections::HashMap;
+use parking_lot::RwLock;
+use sdk::component::{ComponentError, ComponentSupplier, ComponentType, SdComponent, Trigger};
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 pub struct ComponentManager {
     config_operator: Arc<dyn ConfigOperator>,
     component_suppliers: HashMap<ComponentType, Arc<dyn ComponentSupplier>>,
-    wrappers: RwLock<HashMap<String, ComponentWrapper>>,
+    component_wrappers: RwLock<HashMap<String, Arc<ComponentWrapper>>>,
 }
 
 impl Display for ComponentManager {
@@ -39,7 +40,7 @@ impl ComponentManager {
         Self {
             config_operator,
             component_suppliers: HashMap::new(),
-            wrappers: RwLock::new(HashMap::new()),
+            component_wrappers: RwLock::new(HashMap::new()),
         }
     }
 
@@ -79,11 +80,11 @@ impl ComponentManager {
         &self,
         type_: &ComponentType,
         name: &str,
-    ) -> Result<ComponentWrapper, ComponentError> {
+    ) -> Result<Arc<ComponentWrapper>, ComponentError> {
         let instance_name = Self::get_instance_name(type_, name);
 
         {
-            let guard = self.wrappers.read().unwrap();
+            let guard = self.component_wrappers.read();
             if let Some(wrapper) = guard.get(&instance_name) {
                 return Ok(wrapper.clone());
             }
@@ -105,28 +106,25 @@ impl ComponentManager {
             }
         };
 
-        let mut guard = self.wrappers.write().unwrap();
-
-        // Double-Check Locking
+        let mut guard = self.component_wrappers.write();
         if let Some(existing) = guard.get(&instance_name) {
             return Ok(existing.clone());
         }
 
         let error_message = creation_error.map(|e| e.message);
-        let mut target_wrapper: Option<ComponentWrapper> = None;
+        let mut target_wrapper: Option<Arc<ComponentWrapper>> = None;
 
         for x in &types {
-            let wrapper = ComponentWrapper {
+            let wrapper = Arc::new(ComponentWrapper {
                 component_type: x.clone(),
                 name: name.to_string(),
                 component: component.clone(),
                 primary: x == &pk_type,
                 creation_error: error_message.to_owned(),
-            };
+                processor_ref: HashSet::new(),
+            });
 
             let key = Self::get_instance_name(&wrapper.component_type, &wrapper.name);
-
-            // 对应 C# TryAdd: 如果 key 已存在则报错 (或者你可以选择忽略)
             if guard.contains_key(&key) {
                 return Err(ComponentError::new(format!(
                     "组件实例 '{}' 已经存在 (Race condition hit)",
@@ -173,14 +171,14 @@ impl ComponentManager {
         }
 
         Err(ComponentError::new(format!(
-            "Component config not found types:{:?} name:{}",
-            types, name,
+            "Component config not found types {:?} name:{}",
+            types.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(","), name,
         )))
     }
 
     pub fn destroy(&self, type_: &ComponentType, name: &str) {
         let instance_name = Self::get_instance_name(type_, name);
-        let mut guard = self.wrappers.write().unwrap();
+        let mut guard = self.component_wrappers.write();
         if guard.remove(&instance_name).is_none() {
             return;
         }
@@ -204,8 +202,25 @@ impl ComponentManager {
     }
 
     pub fn destroy_all(&self) {
-        let mut guard = self.wrappers.write().unwrap();
+        let mut guard = self.component_wrappers.write();
         guard.clear();
+    }
+
+    pub fn get_all_component(&self) -> Vec<Arc<ComponentWrapper>> {
+        self.component_wrappers
+            .read()
+            .values()
+            .map(|x| x.clone())
+            .collect()
+    }
+
+    pub fn get_all_trigger(&self) -> Vec<Arc<dyn Trigger>> {
+        self.component_wrappers
+            .read()
+            .values()
+            .filter_map(|x| x.component.as_ref().map(|c| c.as_trigger()))
+            .flatten()
+            .collect()
     }
 }
 
@@ -213,10 +228,32 @@ impl ComponentManager {
 pub struct ComponentWrapper {
     pub component_type: ComponentType,
     pub name: String,
-    // 使用 Arc 因为一个实例可能对应多个 Wrapper (多个 Interface)
     pub component: Option<Arc<dyn SdComponent>>,
     pub primary: bool,
     pub creation_error: Option<String>,
+    processor_ref: HashSet<String>,
+}
+
+impl ComponentWrapper {
+    pub fn get_component(&self) -> Result<Arc<dyn SdComponent>, ComponentError> {
+        if self.component.is_some() {
+            return Ok(self.component.as_ref().unwrap().clone());
+        }
+        Err(ComponentError::new(
+            self.creation_error
+                .clone()
+                .unwrap_or_else(|| format!("Component {} not created", self.name)),
+        ))
+    }
+
+    pub fn get_and_mark_ref(&mut self, processor_name: &str) -> Option<Arc<dyn SdComponent>> {
+        self.processor_ref.insert(processor_name.to_string());
+        self.component.clone()
+    }
+
+    pub fn remove_ref(&mut self, processor_name: &str) {
+        self.processor_ref.remove(processor_name);
+    }
 }
 
 #[cfg(test)]
@@ -243,7 +280,7 @@ mod tests {
         // get component and downcast case
         let component_type = &ComponentType::source("system-file".to_string());
         let component_wrapper = manager.get_component(component_type, "test").unwrap();
-        let component_arc = component_wrapper.component.unwrap();
+        let component_arc = component_wrapper.component.as_ref().unwrap();
         let source = component_arc.clone().as_source().unwrap();
         assert_eq!(component_wrapper.name, "test");
         let items = source.fetch(&Map::new());
@@ -252,12 +289,18 @@ mod tests {
 
         // multiple time get a component case, the component should be the same instance
         let component_wp2 = manager.get_component(component_type, "test").unwrap();
-        assert!(Arc::ptr_eq(&component_arc, &component_wp2.component.unwrap()));
+        assert!(Arc::ptr_eq(
+            &component_arc,
+            &component_wp2.component.as_ref().unwrap()
+        ));
 
         // to destroy a component case, the component should be recreated so that the instance is different
         manager.destroy(component_type, "test");
         let component_wp3 = manager.get_component(component_type, "test").unwrap();
-        assert!(!Arc::ptr_eq(&component_arc, &component_wp3.component.unwrap()));
+        assert!(!Arc::ptr_eq(
+            &component_arc,
+            &component_wp3.component.as_ref().unwrap()
+        ));
     }
 
     #[test]
