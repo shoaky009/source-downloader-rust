@@ -234,6 +234,9 @@ pub trait SdComponent: Any + Send + Sync + Debug {
     fn as_trimmer(&self) -> Option<Arc<dyn Trimmer>> {
         None
     }
+    fn as_async_downloader(&self) -> Option<Arc<dyn AsyncDownloader>> {
+        None
+    }
     fn get_state_detail(&self) -> Option<Map<String, Value>> {
         None
     }
@@ -255,6 +258,10 @@ pub trait Downloader: SdComponent {
     fn submit(&self, task: &DownloadTask) -> Result<(), ComponentError>;
     fn default_download_path(&self) -> &str;
     fn cancel(&self, item: &DownloadTask, files: &Vec<SourceFile>) -> Result<(), ComponentError>;
+}
+
+pub trait AsyncDownloader: Downloader {
+    fn is_finished(&self, item: &SourceItem) -> Option<bool>;
 }
 
 pub trait Source: SdComponent {
@@ -283,6 +290,15 @@ pub trait FileMover: SdComponent {
     fn replace(&self, item_content: &ItemContent) -> Result<(), ProcessingError>;
     fn list_files(&self, path: &str) -> Vec<String>;
     fn path_metadata(&self, path: &str) -> SourceFile;
+    fn is_supported_batch_move(&self) -> bool {
+        false
+    }
+    fn batch_move(&self, item_content: &ItemContent) -> Result<(), ProcessingError> {
+        Err(ProcessingError {
+            message: "Batch move is not supported".to_string(),
+            skip: false,
+        })
+    }
 }
 
 pub trait ProcessListener: SdComponent {
@@ -414,7 +430,6 @@ impl From<String> for ComponentError {
 pub struct ProcessingError {
     pub message: String,
     pub skip: bool,
-    pub item: Option<SourceItem>,
 }
 
 impl Error for ProcessingError {}
