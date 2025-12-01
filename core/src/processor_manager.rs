@@ -47,20 +47,24 @@ impl ProcessorManager {
     }
 
     fn create(&self, config: &ProcessorConfig) -> Result<Arc<ProcessorWrapper>, ComponentError> {
-        let source_id = config.source.split(":").collect::<Vec<&str>>();
+        let component_ref_pat = ":";
+        let source_id = config
+            .source
+            .split(component_ref_pat)
+            .collect::<Vec<&str>>();
         let source_type_name = source_id.first().unwrap().to_string();
-        let source_name = source_id.last().unwrap().to_string();
+        let source_name = source_id.last().unwrap();
         let source_type = &ComponentType::source(source_type_name);
         let source = self
             .component_manager
-            .get_component(source_type, &source_name)?
+            .get_component(source_type, source_name)?
             .get_component()?
-            .as_source();
+            .as_source()?;
         let processor = SourceProcessor {
             name: config.name.to_owned(),
             source_id: config.source.to_owned(),
             save_path: config.save_path.to_owned(),
-            source: source.unwrap().clone(),
+            source: source.clone(),
         };
         let wrapper = Arc::new(ProcessorWrapper {
             name: config.name.to_owned(),

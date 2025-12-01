@@ -189,53 +189,57 @@ pub struct SdComponentMetadata {
 }
 
 pub trait SdComponent: Any + Send + Sync + Debug {
-    fn as_trigger(&self) -> Option<Arc<dyn Trigger>> {
-        None
+    fn as_trigger(&self) -> Result<Arc<dyn Trigger>, ComponentError> {
+        Err(ComponentError::from("Not a trigger component"))
     }
-    fn as_source(self: Arc<Self>) -> Option<Arc<dyn Source>> {
-        None
+    fn as_source(self: Arc<Self>) -> Result<Arc<dyn Source>, ComponentError> {
+        Err(ComponentError::from("Not a source component"))
     }
-    fn as_downloader(&self) -> Option<Arc<dyn Downloader>> {
-        None
+    fn as_downloader(&self) -> Result<Arc<dyn Downloader>, ComponentError> {
+        Err(ComponentError::from("Not a downloader component"))
     }
-    fn as_item_filter(&self) -> Option<Arc<dyn ItemFilter>> {
-        None
+    fn as_item_filter(&self) -> Result<Arc<dyn ItemFilter>, ComponentError> {
+        Err(ComponentError::from("Not a item filter component"))
     }
-    fn as_file_mover(&self) -> Option<Arc<dyn FileMover>> {
-        None
+    fn as_file_mover(&self) -> Result<Arc<dyn FileMover>, ComponentError> {
+        Err(ComponentError::from("Not a file mover component"))
     }
-    fn as_process_listener(&self) -> Option<Arc<dyn ProcessListener>> {
-        None
+    fn as_process_listener(&self) -> Result<Arc<dyn ProcessListener>, ComponentError> {
+        Err(ComponentError::from("Not a process listener component"))
     }
-    fn as_source_item_filter(&self) -> Option<Arc<dyn SourceItemFilter>> {
-        None
+    fn as_source_item_filter(&self) -> Result<Arc<dyn SourceItemFilter>, ComponentError> {
+        Err(ComponentError::from("Not a source item filter component"))
     }
-    fn as_source_file_filter(&self) -> Option<Arc<dyn SourceFileFilter>> {
-        None
+    fn as_source_file_filter(&self) -> Result<Arc<dyn SourceFileFilter>, ComponentError> {
+        Err(ComponentError::from("Not a source file filter component"))
     }
-    fn as_item_content_filter(&self) -> Option<Arc<dyn ItemContentFilter>> {
-        None
+    fn as_item_content_filter(&self) -> Result<Arc<dyn ItemContentFilter>, ComponentError> {
+        Err(ComponentError::from("Not a item content filter component"))
     }
-    fn as_file_content_filter(&self) -> Option<Arc<dyn FileContentFilter>> {
-        None
+    fn as_file_content_filter(&self) -> Result<Arc<dyn FileContentFilter>, ComponentError> {
+        Err(ComponentError::from("Not a file content filter component"))
     }
-    fn as_file_tagger(&self) -> Option<Arc<dyn FileTagger>> {
-        None
+    fn as_file_tagger(&self) -> Result<Arc<dyn FileTagger>, ComponentError> {
+        Err(ComponentError::from("Not a file tagger component"))
     }
-    fn as_file_replacement_decider(&self) -> Option<Arc<dyn FileReplacementDecider>> {
-        None
+    fn as_file_replacement_decider(
+        &self,
+    ) -> Result<Arc<dyn FileReplacementDecider>, ComponentError> {
+        Err(ComponentError::from(
+            "Not a file replacement decider component",
+        ))
     }
-    fn as_item_exists_detector(&self) -> Option<Arc<dyn ItemExistsDetector>> {
-        None
+    fn as_item_exists_detector(&self) -> Result<Arc<dyn ItemExistsDetector>, ComponentError> {
+        Err(ComponentError::from("Not a item exists detector component"))
     }
-    fn as_variable_replacer(&self) -> Option<Arc<dyn VariableReplacer>> {
-        None
+    fn as_variable_replacer(&self) -> Result<Arc<dyn VariableReplacer>, ComponentError> {
+        Err(ComponentError::from("Not a variable replacer component"))
     }
-    fn as_trimmer(&self) -> Option<Arc<dyn Trimmer>> {
-        None
+    fn as_trimmer(&self) -> Result<Arc<dyn Trimmer>, ComponentError> {
+        Err(ComponentError::from("Not a trimmer component"))
     }
-    fn as_async_downloader(&self) -> Option<Arc<dyn AsyncDownloader>> {
-        None
+    fn as_async_downloader(&self) -> Result<Arc<dyn AsyncDownloader>, ComponentError> {
+        Err(ComponentError::from("Not a async downloader component"))
     }
     fn get_state_detail(&self) -> Option<Map<String, Value>> {
         None
