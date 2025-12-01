@@ -2,7 +2,6 @@
 
 use crate::component::ComponentSupplier;
 use crate::instance::InstanceFactory;
-use std::any::Any;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -20,7 +19,7 @@ pub trait PluginContext: Send + Sync {
 
     fn register_supplier(&mut self, suppliers: Vec<Arc<dyn ComponentSupplier>>);
 
-    fn register_instance_factory(&mut self, factories: Vec<Box<dyn InstanceFactory<dyn Any>>>);
+    fn register_instance_factory(&mut self, factories: Vec<Box<dyn InstanceFactory>>);
 }
 
 pub struct PluginDescription {

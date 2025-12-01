@@ -1,4 +1,3 @@
-use tracing::{error, info};
 #[allow(dead_code, unused)]
 use moka::sync::Cache;
 use sdk::component::{ComponentError, ComponentRootType, ComponentType};
@@ -9,6 +8,7 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use tracing::{error, info};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceConfig {
@@ -72,7 +72,7 @@ pub trait ConfigOperator: Send + Sync {
 
     fn delete_processor(&self, name: String) -> bool;
 
-    fn get_instance_props(&self, name: String) -> Properties;
+    fn get_instance_props(&self, name: String) -> Result<Properties, ComponentError>;
 
     fn get_component_config(
         &self,
@@ -229,12 +229,12 @@ impl ConfigOperator for YamlConfigOperator {
         false
     }
 
-    fn get_instance_props(&self, name: String) -> Properties {
-        let config = self.get_config().unwrap();
+    fn get_instance_props(&self, name: String) -> Result<Properties, ComponentError> {
+        let config = self.get_config()?;
         if let Some(instance) = config.instances.iter().find(|i| i.name == name) {
-            Properties::from_map(instance.props.clone())
+            Ok(Properties::from_map(instance.props.clone()))
         } else {
-            Properties::new()
+            Ok(Properties::new())
         }
     }
 

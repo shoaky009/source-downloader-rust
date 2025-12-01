@@ -1,9 +1,9 @@
-use crate::ComponentManager;
 use crate::config::ProcessorConfig;
 use crate::source_processor::SourceProcessor;
+use crate::ComponentManager;
 use parking_lot::RwLock;
-use sdk::ProcessingStorage;
 use sdk::component::{ComponentError, ComponentType};
+use sdk::ProcessingStorage;
 use std::collections::{HashMap, HashSet};
 use std::ops::Not;
 use std::sync::Arc;

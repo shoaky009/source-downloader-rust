@@ -1,7 +1,6 @@
 mod cel;
 
 use sdk::{Map, Value};
-use serde::Serialize;
 use std::any::Any;
 
 pub trait CompiledExpressionFactory {

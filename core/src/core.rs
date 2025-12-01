@@ -72,7 +72,7 @@ impl PluginContext for CorePluginContext {
             .unwrap();
     }
 
-    fn register_instance_factory(&mut self, factories: Vec<Box<dyn InstanceFactory<dyn Any>>>) {
+    fn register_instance_factory(&mut self, factories: Vec<Box<dyn InstanceFactory>>) {
         // 暂时不做任何操作，防止未使用变量警告
         let _ = factories;
     }
