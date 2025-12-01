@@ -12,6 +12,7 @@ moka = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 parking_lot = { workspace = true }
+cel = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

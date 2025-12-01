@@ -5,6 +5,7 @@ mod core;
 mod instance_manager;
 mod processor_manager;
 mod source_processor;
+mod expression;
 
 pub use component_manager::*;
 pub use core::*;
