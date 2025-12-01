@@ -1,5 +1,6 @@
 use core::*;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
+use parking_lot::RwLock;
 use tokio::net::TcpListener;
 use web::service::router;
 
@@ -30,8 +31,8 @@ async fn main() {
     let app = Arc::new(RwLock::new(app));
 
     // 打印组件管理器状态
-    let manager = app.read().unwrap().component_manager.clone();
-    log::info!("{}", manager.read().unwrap());
+    let manager = app.read().component_manager.clone();
+    log::info!("{}", manager.read());
     run_web_server(app).await;
 }
 

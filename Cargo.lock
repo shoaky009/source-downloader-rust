@@ -2386,6 +2386,7 @@ dependencies = [
  "core",
  "env_logger",
  "log",
+ "parking_lot",
  "sdk",
  "serde",
  "tokio",

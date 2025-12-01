@@ -5,7 +5,8 @@ use crate::model::http_model::ApiResponse;
 use axum::extract::State;
 use axum::{Router, middleware, routing::get};
 use core::CoreApplication;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc};
+use parking_lot::RwLock;
 
 pub fn register_routers(core_application: Arc<RwLock<CoreApplication>>) -> Router {
     let dao: Arc<dyn ComponentDao> = Arc::new(YamlFileDao::new(core_application.clone()));

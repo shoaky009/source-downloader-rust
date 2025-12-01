@@ -1,13 +1,14 @@
 use crate::components::system_file_source::SystemFileSourceSupplier;
 use crate::ComponentManager;
 use libloading::Library;
+use parking_lot::RwLock;
 use sdk::component::ComponentSupplier;
 use sdk::instance::InstanceFactory;
 use sdk::plugin::{Plugin, PluginContext};
-use std::path::Path;
-use std::sync::{Arc, Mutex, RwLock};
-use std::{env, fs};
 use std::any::Any;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+use std::{env, fs};
 use tracing::{error, info};
 
 pub struct CoreApplication {
@@ -40,7 +41,6 @@ impl CoreApplication {
     fn register_component_supplier(&mut self) {
         self.component_manager
             .write()
-            .unwrap()
             .register_supplier(Arc::new(SystemFileSourceSupplier {}))
             .unwrap();
     }
@@ -68,7 +68,6 @@ impl PluginContext for CorePluginContext {
     fn register_supplier(&mut self, suppliers: Vec<Arc<dyn ComponentSupplier>>) {
         self.component_manager
             .write()
-            .unwrap()
             .register_suppliers(suppliers)
             .unwrap();
     }
