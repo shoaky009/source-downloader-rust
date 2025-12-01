@@ -1,4 +1,4 @@
-use log::error;
+use tracing::{error, info};
 #[allow(dead_code, unused)]
 use moka::sync::Cache;
 use sdk::component::{ComponentError, ComponentRootType, ComponentType};
@@ -99,7 +99,7 @@ impl YamlConfigOperator {
     }
 
     pub fn init(&self) -> Result<(), ComponentError> {
-        log::info!("Config path: {}", self.config_path.display());
+        info!("Config path: {}", self.config_path.display());
         if let Some(parent) = self.config_path.parent() {
             if !parent.exists() {
                 fs::create_dir_all(parent)
@@ -108,7 +108,7 @@ impl YamlConfigOperator {
         }
 
         if !self.config_path.exists() {
-            log::info!("Config file not found, creating a new one");
+            info!("Config file not found, creating a new one");
             let mut file = OpenOptions::new()
                 .append(true)
                 .create(true)

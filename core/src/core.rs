@@ -8,6 +8,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use std::{env, fs};
 use std::any::Any;
+use tracing::{error, info};
 
 pub struct CoreApplication {
     pub component_manager: Arc<RwLock<ComponentManager>>,
@@ -25,11 +26,11 @@ impl CoreApplication {
     fn init_plugin(&mut self) {
         match env::var("SOURCE_DOWNLOADER_PLUGIN_LOCATION") {
             Ok(path) => {
-                log::info!("从目录加载插件: {}", path);
+                info!("从目录加载插件: {}", path);
                 self.plugin_manager.load_dylib_plugins(&path);
             }
             Err(_) => {
-                log::info!("未设置 SOURCE_DOWNLOADER_PLUGIN_LOCATION 环境变量");
+                info!("未设置 SOURCE_DOWNLOADER_PLUGIN_LOCATION 环境变量");
             }
         }
     }
@@ -113,7 +114,7 @@ impl PluginManager {
                     self.try_load_plugin(&path);
                 }
             }
-            Err(e) => log::error!("无法读取插件目录 {}: {}", plugin_dir, e),
+            Err(e) => error!("无法读取插件目录 {}: {}", plugin_dir, e),
         }
     }
 
@@ -121,7 +122,7 @@ impl PluginManager {
         let lib = match unsafe { Library::new(path) } {
             Ok(lib) => lib,
             Err(e) => {
-                log::error!("加载插件失败 {:?}: {}", path, e);
+                error!("加载插件失败 {:?}: {}", path, e);
                 return;
             }
         };
@@ -133,12 +134,12 @@ impl PluginManager {
                 Ok(create_plugin) => {
                     let plugin = create_plugin();
                     plugin.init(self.context.clone());
-                    log::info!("成功加载插件: {}", plugin.description());
+                    info!("成功加载插件: {}", plugin.description());
                     self.plugins.push(plugin);
                     self._libraries.push(lib);
                 }
                 Err(e) => {
-                    log::error!("在插件中查找符号失败 {:?}: {}", path, e);
+                    error!("在插件中查找符号失败 {:?}: {}", path, e);
                 }
             }
         }
