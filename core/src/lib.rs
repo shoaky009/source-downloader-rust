@@ -11,6 +11,7 @@ pub use component_manager::*;
 pub use config::*;
 pub use core::*;
 pub use expression::*;
+pub use expression::cel::*;
 pub use instance_manager::*;
 pub use processor_manager::*;
 pub use source_processor::*;

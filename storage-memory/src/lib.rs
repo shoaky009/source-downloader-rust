@@ -2,6 +2,7 @@ use sdk::{ProcessingContent, ProcessingStorage};
 use std::collections::HashMap;
 use std::sync::RwLock;
 
+#[derive(Default)]
 pub struct MemoryProcessingStorage {
     contents: RwLock<HashMap<String, ProcessingContent>>,
 }

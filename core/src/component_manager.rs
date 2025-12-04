@@ -16,10 +16,10 @@ pub struct ComponentManager {
 impl Display for ComponentManager {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut grouped: HashMap<&str, Vec<&str>> = HashMap::new();
-        for (component_type, _) in &self.component_suppliers {
+        for component_type in self.component_suppliers.keys() {
             grouped
-                .entry(&component_type.root_type.name())
-                .or_insert_with(Vec::new)
+                .entry(component_type.root_type.name())
+                .or_default()
                 .push(&component_type.name);
         }
 
@@ -195,7 +195,7 @@ impl ComponentManager {
 
     pub fn get_all_suppliers(&self) -> Result<Vec<Arc<dyn ComponentSupplier>>, ComponentError> {
         let mut suppliers = Vec::new();
-        for (_, supplier) in &self.component_suppliers {
+        for supplier in self.component_suppliers.values() {
             suppliers.push(supplier.clone());
         }
         Ok(suppliers)

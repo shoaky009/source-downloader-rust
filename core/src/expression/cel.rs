@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-struct CelCompiledExpressionFactory {}
+pub struct CelCompiledExpressionFactory {}
 
 impl CompiledExpressionFactory for CelCompiledExpressionFactory {
     fn create<T>(&self, expression: &str) -> Result<Box<dyn CompiledExpression<T>>, String>
@@ -140,6 +140,7 @@ impl ExprValue for String {
 
 #[cfg(test)]
 mod tests {
+    use cel::Program;
     use crate::expression::cel::CelCompiledExpressionFactory;
     use crate::expression::CompiledExpressionFactory;
     use sdk::Map;
@@ -154,5 +155,11 @@ mod tests {
         let result = expression.unwrap().execute(&vars);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 4);
+    }
+
+    #[test]
+    fn wtd() {
+        let p = Program::compile("1+1").map_err(|e| e.to_string()).unwrap();
+        println!("{:?}", p.expression())
     }
 }

@@ -347,6 +347,7 @@ dependencies = [
  "parking_lot",
  "sdk",
  "serde",
+ "serde_json",
  "serde_yaml",
  "storage-memory",
  "storage-sqlite",
@@ -1595,6 +1596,7 @@ version = "0.1.0"
 dependencies = [
  "component-macro",
  "http",
+ "parking_lot",
  "serde",
  "serde_json",
  "time",

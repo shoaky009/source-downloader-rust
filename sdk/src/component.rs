@@ -3,6 +3,7 @@
 use crate::SourceItem;
 use crate::{Map, Value};
 use http::Uri;
+use parking_lot::RwLock;
 use std::any::Any;
 use std::cmp::PartialEq;
 use std::collections::{HashMap, HashSet};
@@ -214,10 +215,14 @@ pub trait SdComponent: Any + Send + Sync + Debug {
     fn as_source_file_filter(self: Arc<Self>) -> Result<Arc<dyn SourceFileFilter>, ComponentError> {
         Err(ComponentError::from("Not a source file filter component"))
     }
-    fn as_item_content_filter(self: Arc<Self>) -> Result<Arc<dyn ItemContentFilter>, ComponentError> {
+    fn as_item_content_filter(
+        self: Arc<Self>,
+    ) -> Result<Arc<dyn ItemContentFilter>, ComponentError> {
         Err(ComponentError::from("Not a item content filter component"))
     }
-    fn as_file_content_filter(self: Arc<Self>) -> Result<Arc<dyn FileContentFilter>, ComponentError> {
+    fn as_file_content_filter(
+        self: Arc<Self>,
+    ) -> Result<Arc<dyn FileContentFilter>, ComponentError> {
         Err(ComponentError::from("Not a file content filter component"))
     }
     fn as_file_tagger(self: Arc<Self>) -> Result<Arc<dyn FileTagger>, ComponentError> {
@@ -230,7 +235,9 @@ pub trait SdComponent: Any + Send + Sync + Debug {
             "Not a file replacement decider component",
         ))
     }
-    fn as_item_exists_detector(self: Arc<Self>) -> Result<Arc<dyn ItemExistsDetector>, ComponentError> {
+    fn as_item_exists_detector(
+        self: Arc<Self>,
+    ) -> Result<Arc<dyn ItemExistsDetector>, ComponentError> {
         Err(ComponentError::from("Not a item exists detector component"))
     }
     fn as_variable_replacer(self: Arc<Self>) -> Result<Arc<dyn VariableReplacer>, ComponentError> {
@@ -262,7 +269,7 @@ pub trait Trigger: SdComponent {
 pub trait Downloader: SdComponent {
     fn submit(&self, task: &DownloadTask) -> Result<(), ComponentError>;
     fn default_download_path(&self) -> &str;
-    fn cancel(&self, item: &DownloadTask, files: &Vec<SourceFile>) -> Result<(), ComponentError>;
+    fn cancel(&self, item: &DownloadTask, files: &[SourceFile]) -> Result<(), ComponentError>;
 }
 
 pub trait AsyncDownloader: Downloader {
@@ -488,6 +495,17 @@ pub struct ProcessorTask {
     pub group: Option<String>,
 }
 
+impl Debug for ProcessorTask {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "task:{} group:{}",
+            self.process_name,
+            self.group.clone().unwrap_or_default()
+        )
+    }
+}
+
 pub struct FileContent {
     pub download_path: String,
     pub file_download_path: String,
@@ -519,4 +537,26 @@ pub struct ProcessorInfo {
     pub source_save_path: String,
     pub tags: HashSet<String>,
     pub category: Option<String>,
+}
+
+/// Help trigger to hold tasks
+#[derive(Clone, Debug, Default)]
+pub struct TaskRegistry {
+    pub tasks: Arc<RwLock<Vec<Arc<ProcessorTask>>>>,
+}
+
+impl TaskRegistry {
+    pub fn new() -> Self {
+        TaskRegistry {
+            tasks: Arc::new(RwLock::new(vec![])),
+        }
+    }
+
+    pub fn add(&self, task: Arc<ProcessorTask>) {
+        self.tasks.write().push(task);
+    }
+
+    pub fn remove(&self, task: Arc<ProcessorTask>) {
+        self.tasks.write().retain(|t| !Arc::ptr_eq(t, &task));
+    }
 }

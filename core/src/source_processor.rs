@@ -10,10 +10,10 @@ pub struct SourceProcessor {
     // downloader: Arc<dyn Downloader>,
     // file_mover: Arc<dyn FileMover>,
     // processing_storage: Arc<dyn ProcessingStorage>,
-    // options: ProcessorOptions,
+    pub options: ProcessorOptions,
 }
 
-struct ProcessorOptions {
+pub struct ProcessorOptions {
     pub save_path_pattern: String,
     pub filename_pattern: String,
     pub variable_providers: Vec<Arc<dyn VariableProvider>>,

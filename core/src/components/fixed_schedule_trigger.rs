@@ -1,12 +1,11 @@
 use sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ProcessorTask, SdComponent,
-    SdComponentMetadata, Trigger,
+    SdComponentMetadata, TaskRegistry, Trigger,
 };
 use sdk::{Map, SdComponent, Value};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
-use parking_lot::RwLock;
 use std::time::Duration;
 use tokio::task::AbortHandle;
 use tokio::time::MissedTickBehavior;
@@ -48,7 +47,7 @@ impl ComponentSupplier for FixedScheduleTriggerSupplier {
 struct FixedScheduleTrigger {
     interval: Duration,
     on_start_run_tasks: bool,
-    tasks: Arc<RwLock<Vec<Arc<ProcessorTask>>>>,
+    task_registry: TaskRegistry,
     worker_handle: Mutex<Option<AbortHandle>>,
 }
 
@@ -57,7 +56,7 @@ impl FixedScheduleTrigger {
         Self {
             interval,
             on_start_run_tasks,
-            tasks: Arc::new(RwLock::new(vec![])),
+            task_registry: TaskRegistry::new(),
             worker_handle: Mutex::new(None),
         }
     }
@@ -67,11 +66,11 @@ impl Trigger for FixedScheduleTrigger {
     fn start(&self) {
         let mut handle_lock = self.worker_handle.lock().unwrap();
         if handle_lock.is_some() {
-            println!("Trigger is already running.");
+            info!("Trigger is already running.");
             return;
         }
 
-        let tasks_list = self.tasks.clone();
+        let tasks_arc = self.task_registry.tasks.clone();
         let duration = self.interval;
         let run_on_start = self.on_start_run_tasks;
 
@@ -84,14 +83,9 @@ impl Trigger for FixedScheduleTrigger {
 
             loop {
                 interval_timer.tick().await;
-                let tasks_to_run = {
-                    let reader = tasks_list.read();
-                    reader.clone()
-                };
-
-                // 这里的策略是并发执行所有任务（spawn），互不阻塞。
-                // 如果你想顺序执行，可以去掉 spawn，直接 await task.execute()
+                let tasks_to_run = tasks_arc.read().clone();
                 for task in tasks_to_run {
+                    //TODO grouping tasks, then run them in parallel await task.execute()
                     tokio::spawn(async move {
                         (task.runnable)().await;
                     });
@@ -100,9 +94,10 @@ impl Trigger for FixedScheduleTrigger {
         });
 
         *handle_lock = Some(join_handle.abort_handle());
+
         info!(
-            "Fixed schedule trigger started, interval: {}s, on_start_run_tasks: {}",
-            duration.as_secs(),
+            "Trigger started, interval: {}, on_start_run_tasks: {}",
+            humantime::format_duration(duration).to_string(),
             run_on_start
         );
     }
@@ -111,19 +106,16 @@ impl Trigger for FixedScheduleTrigger {
         let mut handle_lock = self.worker_handle.lock().unwrap();
         if let Some(handle) = handle_lock.take() {
             handle.abort();
-            info!(
-                "Fixed schedule trigger stopped, interval: {}s",
-                self.interval.as_secs(),
-            );
+            info!("Trigger stopped, interval: {}s", self.interval.as_secs(),);
         }
     }
 
     fn add_task(&self, task: Arc<ProcessorTask>) {
-        self.tasks.write().push(task.clone());
+        self.task_registry.add(task)
     }
 
     fn remove_task(&self, task: Arc<ProcessorTask>) {
-        self.tasks.write().retain(|t| !Arc::ptr_eq(t, &task));
+        self.task_registry.remove(task)
     }
 }
 
@@ -132,7 +124,7 @@ impl Debug for FixedScheduleTrigger {
         f.debug_struct("FixedScheduleTrigger")
             .field("interval", &self.interval)
             .field("on_start_run_tasks", &self.on_start_run_tasks)
-            .field("tasks", &self.tasks.read().len())
+            .field("tasks", &self.task_registry)
             .field(
                 "worker_handle",
                 &self.worker_handle.lock().unwrap().is_some(),
@@ -156,6 +148,7 @@ mod tests {
                 let counter_clone = counter.clone();
                 Box::pin(async move {
                     counter_clone.fetch_add(1, Ordering::SeqCst);
+                    println!("Task executed");
                 })
             }),
         })
@@ -171,14 +164,14 @@ mod tests {
         // 添加
         trigger.add_task(task.clone());
         {
-            let tasks = trigger.tasks.read();
+            let tasks = trigger.task_registry.tasks.read();
             assert_eq!(tasks.len(), 1);
         }
 
         // 删除
         trigger.remove_task(task.clone());
         {
-            let tasks = trigger.tasks.read();
+            let tasks = trigger.task_registry.tasks.read();
             assert_eq!(tasks.len(), 0);
         }
     }

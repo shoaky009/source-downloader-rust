@@ -8,6 +8,7 @@ sdk = { path = "../sdk" }
 libloading = { workspace = true }
 serde_yaml = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 moka = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

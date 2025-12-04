@@ -1,6 +1,6 @@
-use crate::ComponentManager;
 use crate::config::ProcessorConfig;
 use crate::source_processor::SourceProcessor;
+use crate::{ComponentManager, ProcessorOptions};
 use parking_lot::RwLock;
 use sdk::ProcessingStorage;
 use sdk::component::{ComponentError, ComponentType};
@@ -11,7 +11,7 @@ use tracing::{error, info};
 
 pub struct ProcessorManager {
     component_manager: Arc<RwLock<ComponentManager>>,
-    processing_storage: Arc<dyn ProcessingStorage>,
+    _processing_storage: Arc<dyn ProcessingStorage>,
     processor_wrappers: RwLock<HashMap<String, Arc<ProcessorWrapper>>>,
 }
 
@@ -22,7 +22,7 @@ impl ProcessorManager {
     ) -> Self {
         Self {
             component_manager,
-            processing_storage,
+            _processing_storage: processing_storage,
             processor_wrappers: RwLock::new(HashMap::new()),
         }
     }
@@ -66,6 +66,11 @@ impl ProcessorManager {
             source_id: config.source.to_owned(),
             save_path: config.save_path.to_owned(),
             source: source.clone(),
+            options: ProcessorOptions {
+                save_path_pattern: "".to_owned(),
+                filename_pattern: "".to_owned(),
+                variable_providers: vec![],
+            },
         };
         let wrapper = Arc::new(ProcessorWrapper {
             name: config.name.to_owned(),

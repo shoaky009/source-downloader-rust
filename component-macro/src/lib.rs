@@ -19,7 +19,7 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
 
     let methods = trait_paths.iter().map(|path| {
         let trait_ident = &path.segments.last().unwrap().ident;
-        let method_name = format_ident!("as_{}", trait_ident.to_string().to_lowercase());
+        let method_name = format_ident!("as_{}", to_snake_case(trait_ident.to_string().as_str()));
         quote! {
             fn #method_name(self: std::sync::Arc<Self>) -> Result<std::sync::Arc<dyn #path>, sdk::component::ComponentError> {
                 Ok(self)
@@ -33,4 +33,19 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
         }
     }
     .into()
+}
+
+fn to_snake_case(input: &str) -> String {
+    let mut out = String::new();
+    for (i, ch) in input.chars().enumerate() {
+        if ch.is_uppercase() {
+            if i != 0 {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
