@@ -2,7 +2,7 @@ use crate::SourceItem;
 use serde_json::{Map, Value};
 use time::PrimitiveDateTime;
 
-pub trait ProcessingStorage {
+pub trait ProcessingStorage: Send + Sync {
     fn save_processing_content(&self, content: &ProcessingContent);
     fn find_rename_content(
         &self,

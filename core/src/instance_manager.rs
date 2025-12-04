@@ -2,7 +2,7 @@ use crate::config::{ConfigOperator, Properties};
 use parking_lot::RwLock;
 use sdk::component::ComponentError;
 use sdk::instance::InstanceFactory;
-use std::any::{type_name, Any, TypeId};
+use std::any::{Any, TypeId, type_name};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -111,9 +111,9 @@ impl InstanceManager {
 
 #[cfg(test)]
 mod test {
+    use crate::YamlConfigOperator;
     use crate::config::Properties;
     use crate::instance_manager::InstanceManager;
-    use crate::YamlConfigOperator;
     use sdk::component::ComponentError;
     use sdk::instance::InstanceFactory;
     use sdk::{Map, Value};

@@ -1,11 +1,12 @@
 use crate::components::system_file_source::SystemFileSourceSupplier;
+use crate::instance_manager::InstanceManager;
+use crate::processor_manager::ProcessorManager;
 use crate::ComponentManager;
 use libloading::Library;
 use parking_lot::RwLock;
 use sdk::component::ComponentSupplier;
 use sdk::instance::InstanceFactory;
 use sdk::plugin::{Plugin, PluginContext};
-use std::any::Any;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::{env, fs};
@@ -13,6 +14,8 @@ use tracing::{error, info};
 
 pub struct CoreApplication {
     pub component_manager: Arc<RwLock<ComponentManager>>,
+    pub instance_manager: Arc<InstanceManager>,
+    pub processor_manager: Arc<ProcessorManager>,
     pub plugin_manager: PluginManager,
 }
 

@@ -10,14 +10,14 @@ use std::sync::Arc;
 use tracing::{error, info};
 
 pub struct ProcessorManager {
-    component_manager: Arc<ComponentManager>,
+    component_manager: Arc<RwLock<ComponentManager>>,
     processing_storage: Arc<dyn ProcessingStorage>,
     processor_wrappers: RwLock<HashMap<String, Arc<ProcessorWrapper>>>,
 }
 
 impl ProcessorManager {
     pub fn new(
-        component_manager: Arc<ComponentManager>,
+        component_manager: Arc<RwLock<ComponentManager>>,
         processing_storage: Arc<dyn ProcessingStorage>,
     ) -> Self {
         Self {
@@ -57,6 +57,7 @@ impl ProcessorManager {
         let source_type = &ComponentType::source(source_type_name);
         let source = self
             .component_manager
+            .read()
             .get_component(source_type, source_name)?
             .get_component()?
             .as_source()?;
@@ -92,7 +93,7 @@ impl ProcessorManager {
         let Some(processor) = &wrapper.processor else {
             return;
         };
-        let triggers = self.component_manager.get_all_trigger();
+        let triggers = self.component_manager.read().get_all_trigger();
         for trigger in triggers {
             let task = processor.safe_task();
             trigger.remove_task(task);
@@ -118,6 +119,7 @@ mod test {
     use crate::processor_manager::ProcessorManager;
     use crate::{ComponentManager, YamlConfigOperator};
     use std::sync::Arc;
+    use parking_lot::lock_api::RwLock;
     use storage_memory::MemoryProcessingStorage;
 
     #[test]
@@ -128,7 +130,7 @@ mod test {
         )));
         let _ = component_manager.register_supplier(Arc::new(SystemFileSourceSupplier {}));
         let mut manager = ProcessorManager::new(
-            Arc::new(component_manager),
+            Arc::new(RwLock::new(component_manager)),
             Arc::new(MemoryProcessingStorage::new()),
         );
         let name = "normal-case";
@@ -153,7 +155,7 @@ mod test {
             "./tests/resources/config.yaml",
         )));
         let manager = ProcessorManager::new(
-            Arc::new(component_manager),
+            Arc::new(RwLock::new(component_manager)),
             Arc::new(MemoryProcessingStorage::new()),
         );
 

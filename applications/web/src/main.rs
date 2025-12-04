@@ -1,6 +1,7 @@
 use core::*;
-use std::sync::{Arc, Mutex};
 use parking_lot::RwLock;
+use std::sync::{Arc, Mutex};
+use storage_memory::MemoryProcessingStorage;
 use tokio::net::TcpListener;
 use web::service::router;
 
@@ -10,20 +11,28 @@ async fn main() {
         .filter(None, log::LevelFilter::Info)
         .init();
 
-    let component_manager = Arc::new(RwLock::new(ComponentManager::new(
+    let config_operator = Arc::new(YamlConfigOperator::new(
         // TODO from config
-        Arc::new(YamlConfigOperator::new(
-            "./tests/resources/config.yaml",
-        ))
-    )));
+        "./tests/resources/config.yaml",
+    ));
+    let component_manager = Arc::new(RwLock::new(ComponentManager::new(config_operator.clone())));
 
     let plugin_ctx = CorePluginContext::new(component_manager.clone());
     let plugin_ctx = Arc::new(Mutex::new(plugin_ctx));
 
     let plugin_manager = PluginManager::new(plugin_ctx);
+    let instance_manager = Arc::new(InstanceManager::new(config_operator));
 
+    // TODO change to sqlite
+    let processing_storage = Arc::new(MemoryProcessingStorage::new());
+    let processor_manager = Arc::new(ProcessorManager::new(
+        component_manager.clone(),
+        processing_storage,
+    ));
     let mut app = CoreApplication {
         component_manager,
+        instance_manager,
+        processor_manager,
         plugin_manager,
     };
     app.start();

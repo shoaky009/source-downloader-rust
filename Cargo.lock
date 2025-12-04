@@ -2389,6 +2389,8 @@ dependencies = [
  "parking_lot",
  "sdk",
  "serde",
+ "storage-memory",
+ "storage-sqlite",
  "tokio",
 ]
 
