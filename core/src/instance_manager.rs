@@ -204,9 +204,9 @@ mod test {
     impl InstanceFactory for ErrorImplFactory {
         fn create_instance(
             &self,
-            props: &Map<String, Value>,
+            _: &Map<String, Value>,
         ) -> Result<Arc<dyn Any + Send + Sync>, ComponentError> {
-            return Ok(Arc::new(1));
+            Ok(Arc::new(1))
         }
 
         fn instance_type_id(&self) -> TypeId {

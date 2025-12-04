@@ -1,7 +1,4 @@
-use sdk::ProcessingStorage;
-use sdk::component::{
-    Downloader, FileMover, ItemFileResolver, ProcessorTask, Source, VariableProvider,
-};
+use sdk::component::{ProcessorTask, Source, VariableProvider};
 use std::sync::Arc;
 
 pub struct SourceProcessor {
@@ -29,7 +26,14 @@ impl SourceProcessor {
     pub fn safe_task(&self) -> Arc<ProcessorTask> {
         Arc::new(ProcessorTask {
             process_name: self.name.clone(),
-            runnable: Box::new(move || {}),
+            runnable: Box::new(|| {
+                Box::pin(async move {
+                    // TODO invoke run
+                    println!("开始异步任务");
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    println!("异步任务完成");
+                })
+            }),
             group: None,
         })
     }

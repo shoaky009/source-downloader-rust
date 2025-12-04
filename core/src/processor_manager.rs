@@ -1,9 +1,9 @@
+use crate::ComponentManager;
 use crate::config::ProcessorConfig;
 use crate::source_processor::SourceProcessor;
-use crate::ComponentManager;
 use parking_lot::RwLock;
-use sdk::component::{ComponentError, ComponentType};
 use sdk::ProcessingStorage;
+use sdk::component::{ComponentError, ComponentType};
 use std::collections::{HashMap, HashSet};
 use std::ops::Not;
 use std::sync::Arc;
@@ -118,8 +118,8 @@ mod test {
     use crate::config::ProcessorConfig;
     use crate::processor_manager::ProcessorManager;
     use crate::{ComponentManager, YamlConfigOperator};
-    use std::sync::Arc;
     use parking_lot::lock_api::RwLock;
+    use std::sync::Arc;
     use storage_memory::MemoryProcessingStorage;
 
     #[test]

@@ -218,7 +218,7 @@ impl ComponentManager {
         self.component_wrappers
             .read()
             .values()
-            .filter_map(|x| x.component.as_ref().map(|c| c.as_trigger()))
+            .filter_map(|x| x.component.as_ref().map(|c| c.clone().as_trigger()))
             .flatten()
             .collect()
     }
