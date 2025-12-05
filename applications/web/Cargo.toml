@@ -15,9 +15,10 @@ sdk = { path = "../../sdk" }
 storage-sqlite = { path = "../../storage-sqlite" }
 storage-memory = { path = "../../storage-memory" }
 common = { path = "../../plugins/common" }
-log = { workspace = true }
-env_logger = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 parking_lot = { workspace = true }
+clap = { workspace = true }

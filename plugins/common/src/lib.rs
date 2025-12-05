@@ -2,20 +2,19 @@ mod components;
 
 use crate::components::test_source::TestSourceSupplier;
 use sdk::plugin::{Plugin, PluginContext, PluginDescription};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tracing::info;
 
 struct CommonPlugin;
 
 impl Plugin for CommonPlugin {
-    fn init(&self, plugin_context: Arc<Mutex<dyn PluginContext>>) {
-        println!("Initializing common plugin");
-        if let Ok(mut context) = plugin_context.lock() {
-            context.register_supplier(vec![Arc::new(TestSourceSupplier::new())]);
-        }
+    fn init(&self, plugin_context: Arc<dyn PluginContext>) {
+        info!("Initializing common plugin");
+        plugin_context.register_supplier(vec![Arc::new(TestSourceSupplier::new())]);
     }
 
     fn destroy(&self, _: Arc<dyn PluginContext>) {
-        println!("Destroying common plugin");
+        info!("Destroying common plugin");
     }
 
     fn description(&self) -> PluginDescription {

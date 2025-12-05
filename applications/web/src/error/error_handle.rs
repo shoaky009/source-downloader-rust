@@ -5,6 +5,7 @@ use std::{
     fmt,
     panic::{self, AssertUnwindSafe},
 };
+use tracing::log;
 
 // 定义错误码
 pub const ERROR_INTERNAL: u32 = 500;

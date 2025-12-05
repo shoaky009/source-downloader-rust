@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 pub struct InstanceManager {
     config_operator: Arc<dyn ConfigOperator>,
-    factories: HashMap<TypeId, Arc<dyn InstanceFactory>>,
+    factories: RwLock<HashMap<TypeId, Arc<dyn InstanceFactory>>>,
     instances: RwLock<HashMap<String, Arc<dyn Any + Send + Sync>>>,
 }
 
@@ -16,7 +16,7 @@ impl InstanceManager {
     pub fn new(config_operator: Arc<dyn ConfigOperator>) -> Self {
         Self {
             config_operator,
-            factories: HashMap::new(),
+            factories: RwLock::new(HashMap::new()),
             instances: RwLock::new(HashMap::new()),
         }
     }
@@ -27,14 +27,15 @@ impl InstanceManager {
         props: Option<Properties>,
     ) -> Result<Arc<T>, String> {
         let mut instances = self.instances.write();
-        if let Some(instance_any) = instances.get_mut(name) {
+        if let Some(instance_any) = instances.get(name) {
             return instance_any
                 .clone()
                 .downcast::<T>()
                 .map_err(|_| format!("Instance '{}' exists but type mismatch", name));
         }
         let request_type_id = TypeId::of::<T>();
-        let factory = self.factories.get(&request_type_id).ok_or_else(|| {
+        let factory_guard = self.factories.read();
+        let factory = factory_guard.get(&request_type_id).ok_or_else(|| {
             format!(
                 "No factory found for typeId {:?} name:{:?}",
                 request_type_id,
@@ -94,17 +95,17 @@ impl InstanceManager {
     }
 
     pub fn register_instance_factory(
-        &mut self,
+        &self,
         factory: Arc<dyn InstanceFactory>,
     ) -> Result<bool, ComponentError> {
         let type_id = factory.instance_type_id();
-        if self.factories.contains_key(&type_id) {
+        if self.factories.read().contains_key(&type_id) {
             return Err(ComponentError::new(format!(
                 "Instance factory {:?} already registered",
                 type_id
             )));
         }
-        self.factories.insert(type_id, factory.clone());
+        self.factories.write().insert(type_id, factory.clone());
         Ok(true)
     }
 }
@@ -122,7 +123,7 @@ mod test {
 
     #[test]
     fn normal_case() {
-        let mut manager = InstanceManager::new(Arc::new(YamlConfigOperator::new(
+        let manager = InstanceManager::new(Arc::new(YamlConfigOperator::new(
             "./tests/resources/config.yaml",
         )));
         let instance_name = "client1";
@@ -163,7 +164,7 @@ mod test {
 
     #[test]
     fn factory_error_case() {
-        let mut manager = InstanceManager::new(Arc::new(YamlConfigOperator::new(
+        let manager = InstanceManager::new(Arc::new(YamlConfigOperator::new(
             "./tests/resources/config.yaml",
         )));
         let _ = manager.register_instance_factory(Arc::new(ErrorImplFactory {}));

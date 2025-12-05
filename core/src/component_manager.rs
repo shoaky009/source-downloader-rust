@@ -9,14 +9,15 @@ use std::sync::Arc;
 
 pub struct ComponentManager {
     config_operator: Arc<dyn ConfigOperator>,
-    component_suppliers: HashMap<ComponentType, Arc<dyn ComponentSupplier>>,
+    component_suppliers: RwLock<HashMap<ComponentType, Arc<dyn ComponentSupplier>>>,
     component_wrappers: RwLock<HashMap<String, Arc<ComponentWrapper>>>,
 }
 
 impl Display for ComponentManager {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut grouped: HashMap<&str, Vec<&str>> = HashMap::new();
-        for component_type in self.component_suppliers.keys() {
+        let guard = self.component_suppliers.read();
+        for component_type in guard.keys() {
             grouped
                 .entry(component_type.root_type.name())
                 .or_default()
@@ -26,7 +27,7 @@ impl Display for ComponentManager {
         writeln!(
             f,
             "ComponentManager registered {} component suppliers:",
-            self.component_suppliers.len()
+            self.component_suppliers.read().len()
         )?;
         for (key, values) in &grouped {
             writeln!(f, "{}: [{}]", key, values.join(", "))?;
@@ -39,7 +40,7 @@ impl ComponentManager {
     pub fn new(config_operator: Arc<dyn ConfigOperator>) -> Self {
         Self {
             config_operator,
-            component_suppliers: HashMap::new(),
+            component_suppliers: RwLock::new(HashMap::new()),
             component_wrappers: RwLock::new(HashMap::new()),
         }
     }
@@ -49,25 +50,30 @@ impl ComponentManager {
     }
 
     pub fn register_supplier(
-        &mut self,
+        &self,
         supplier: Arc<dyn ComponentSupplier>,
     ) -> Result<bool, ComponentError> {
         let component_types = supplier.supply_types();
         for component_type in component_types {
-            if self.component_suppliers.contains_key(&component_type) {
+            if self
+                .component_suppliers
+                .read()
+                .contains_key(&component_type)
+            {
                 return Err(ComponentError::new(format!(
                     "Component type {:?} already registered",
                     component_type
                 )));
             }
             self.component_suppliers
+                .write()
                 .insert(component_type, supplier.clone());
         }
         Ok(true)
     }
 
     pub fn register_suppliers(
-        &mut self,
+        &self,
         suppliers: Vec<Arc<dyn ComponentSupplier>>,
     ) -> Result<bool, ComponentError> {
         for supplier in suppliers {
@@ -90,7 +96,8 @@ impl ComponentManager {
             }
         }
 
-        let supplier = self.component_suppliers.get(type_).ok_or_else(|| {
+        let guard = self.component_suppliers.read();
+        let supplier = guard.get(type_).ok_or_else(|| {
             ComponentError::new(format!("Supplier not found for type: {}", type_))
         })?;
 
@@ -187,7 +194,7 @@ impl ComponentManager {
             return;
         }
 
-        if let Some(supplier) = self.component_suppliers.get(type_) {
+        if let Some(supplier) = self.component_suppliers.read().get(type_) {
             for other_type in supplier.supply_types() {
                 if &other_type != type_ {
                     let key = Self::get_instance_name(&other_type, name);
@@ -199,7 +206,7 @@ impl ComponentManager {
 
     pub fn get_all_suppliers(&self) -> Result<Vec<Arc<dyn ComponentSupplier>>, ComponentError> {
         let mut suppliers = Vec::new();
-        for supplier in self.component_suppliers.values() {
+        for supplier in self.component_suppliers.read().values() {
             suppliers.push(supplier.clone());
         }
         Ok(suppliers)
@@ -258,11 +265,11 @@ impl ComponentWrapper {
 
 #[cfg(test)]
 mod tests {
-    use crate::ComponentManager;
     use crate::components::system_file_source::SystemFileSourceSupplier;
     use crate::config::{ConfigOperator, YamlConfigOperator};
-    use sdk::Map;
+    use crate::ComponentManager;
     use sdk::component::{ComponentSupplier, ComponentType};
+    use sdk::Map;
     use std::sync::{Arc, OnceLock};
 
     static CONFIG_OP: OnceLock<Arc<dyn ConfigOperator>> = OnceLock::new();
@@ -272,7 +279,7 @@ mod tests {
     // 预期一切正常
     #[test]
     fn normal_case() {
-        let mut manager = ComponentManager::new(get_config_op().clone());
+        let manager = ComponentManager::new(get_config_op().clone());
         // register supplier case
         let result = manager.register_supplier(Arc::new(SystemFileSourceSupplier {}));
         assert!(result.unwrap());
@@ -305,7 +312,7 @@ mod tests {
 
     #[test]
     fn duplicate_registration_case() {
-        let mut manager = ComponentManager::new(get_config_op().clone());
+        let manager = ComponentManager::new(get_config_op().clone());
 
         let result = manager.register_supplier(Arc::new(SystemFileSourceSupplier {}));
         assert!(result.unwrap());
@@ -316,7 +323,7 @@ mod tests {
 
     #[test]
     fn get_all_suppliers_case() {
-        let mut manager = ComponentManager::new(get_config_op().clone());
+        let manager = ComponentManager::new(get_config_op().clone());
         let arc: Arc<dyn ComponentSupplier> = Arc::new(SystemFileSourceSupplier {});
         manager.register_supplier(arc.clone()).unwrap();
         let suppliers = manager.get_all_suppliers().unwrap();
@@ -326,7 +333,7 @@ mod tests {
 
     #[test]
     fn get_component_error_case() {
-        let mut manager = ComponentManager::new(get_config_op().clone());
+        let manager = ComponentManager::new(get_config_op().clone());
         let component_type = ComponentType::source("system-file".to_string());
         let result = manager.get_component(&component_type, "test");
         assert!(result.is_err());

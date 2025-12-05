@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub struct SystemFileSourceSupplier;
+pub const SUPPLIER: SystemFileSourceSupplier = SystemFileSourceSupplier {};
 
 impl ComponentSupplier for SystemFileSourceSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {

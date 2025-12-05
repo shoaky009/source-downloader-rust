@@ -1,29 +1,23 @@
 use crate::dao::ComponentDao;
 use crate::error::error_handle::AppError;
 use core::CoreApplication;
-use parking_lot::RwLock;
 use std::sync::Arc;
 
 pub struct YamlFileDao {
-    core_application: Arc<RwLock<CoreApplication>>,
+    core_application: Arc<CoreApplication>,
 }
 
 impl YamlFileDao {
-    pub fn new(core_application: Arc<RwLock<CoreApplication>>) -> Self {
+    pub fn new(core_application: Arc<CoreApplication>) -> Self {
         YamlFileDao { core_application }
     }
 }
 
 impl ComponentDao for YamlFileDao {
     fn list_component_suppliers(&self) -> Result<Vec<String>, AppError> {
-        // 尝试获取核心应用的读锁
-        let app = self.core_application.read();
-
-        // 访问组件管理器
-        let component_manager = app.component_manager.read();
-
-        // 获取所有供应商
-        let suppliers = component_manager
+        let suppliers = self
+            .core_application
+            .component_manager
             .get_all_suppliers()
             .map_err(|e| AppError::InternalError(format!("无法获取供应商: {}", e)))?;
 

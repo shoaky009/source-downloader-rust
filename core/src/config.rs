@@ -3,11 +3,11 @@ use moka::sync::Cache;
 use sdk::component::{ComponentError, ComponentRootType, ComponentType};
 use sdk::{Deserialize, Map, Serialize, Value};
 use std::collections::HashMap;
-use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
+use std::{env, fs};
 use tracing::{error, info};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,35 +82,50 @@ pub trait ConfigOperator: Send + Sync {
 }
 
 pub struct YamlConfigOperator {
-    config_path: PathBuf,
+    config_path: Box<Path>,
     config_cache: Cache<String, Result<Config, ComponentError>>,
 }
 
 #[allow(dead_code, unused)]
 impl YamlConfigOperator {
-    pub fn new<P: AsRef<Path>>(config_path: P) -> Self {
+    pub fn new(config_path: &str) -> Self {
         let config_cache: Cache<String, Result<Config, ComponentError>> = Cache::builder()
             .time_to_live(Duration::from_secs(5))
             .build();
         YamlConfigOperator {
-            config_path: config_path.as_ref().to_path_buf(),
+            config_path: Path::new(config_path).into(),
+            config_cache,
+        }
+    }
+
+    pub fn new_path(config_path: &Path) -> Self {
+        let config_cache: Cache<String, Result<Config, ComponentError>> = Cache::builder()
+            .time_to_live(Duration::from_secs(5))
+            .build();
+        YamlConfigOperator {
+            config_path: Path::new(config_path).into(),
             config_cache,
         }
     }
 
     pub fn init(&self) -> Result<(), ComponentError> {
-        info!("Config path: {}", self.config_path.display());
+        let config_path = Path::new("config.yaml");
+        let display_path = match env::current_dir() {
+            Ok(cwd) => cwd.join(config_path),
+            Err(_) => config_path.to_path_buf(),
+        };
+        info!("Config path located at: {}", display_path.display());
         if let Some(parent) = self.config_path.parent().filter(|p| !p.exists()) {
             fs::create_dir_all(parent)
                 .map_err(|e| ComponentError::new(format!("Failed to create directory: {}", e)))?;
         }
 
         if !self.config_path.exists() {
-            info!("Config file not found, creating a new one");
+            info!("Config file not found, creating a empty file");
             let mut file = OpenOptions::new()
                 .append(true)
                 .create(true)
-                .open(self.config_path.as_path())
+                .open(&self.config_path)
                 .map_err(|e| ComponentError::new(format!("Failed to open config file: {}", e)))?;
             file.write_all(b"instances: []\ncomponents: []\nprocessors: []")
                 .map_err(|e| ComponentError::new(format!("Failed to write config file: {}", e)))?;
@@ -136,7 +151,7 @@ impl YamlConfigOperator {
     }
 
     fn write_config(&self, config: &Config) -> Result<(), ComponentError> {
-        let file = File::create(self.config_path.as_path()).expect("File should exist");
+        let file = File::create(&self.config_path).expect("File should exist");
         serde_yaml::to_writer(file, config)
             .map_err(|e| ComponentError::new(format!("Failed to write config file: {}", e)))?;
         self.config_cache
@@ -299,7 +314,7 @@ mod test {
             let temp_file = NamedTempFile::new().expect("无法创建临时文件");
             let temp_path = temp_file.path();
             fs::copy(config_path, temp_path).expect("无法复制配置文件到临时文件");
-            let operator = YamlConfigOperator::new(temp_path);
+            let operator = YamlConfigOperator::new_path(temp_path);
             TempFileOperator {
                 operator,
                 _temp_file: temp_file,
@@ -323,7 +338,7 @@ mod test {
 
     #[test]
     fn test_deserialize_from_yaml() {
-        let operator = YamlConfigOperator::new(CONFIG_PATH.to_string());
+        let operator = YamlConfigOperator::new(CONFIG_PATH);
         let init_result = operator.init();
         assert!(init_result.is_ok());
 

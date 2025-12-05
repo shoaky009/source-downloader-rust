@@ -8,7 +8,8 @@ use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 use tracing::warn;
 
-pub struct ExpressionItemFilterSupplier {}
+pub struct ExpressionItemFilterSupplier;
+pub const SUPPLIER: ExpressionItemFilterSupplier = ExpressionItemFilterSupplier {};
 
 impl ComponentSupplier for ExpressionItemFilterSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
@@ -151,7 +152,7 @@ impl ItemFilter for ExpressionItemFilter {
 #[cfg(test)]
 mod test {
     use crate::components::expression_item_filter::ExpressionItemFilterSupplier;
-    use sdk::component::{empty_pointer, ComponentSupplier, PointedItem};
+    use sdk::component::{ComponentSupplier, PointedItem, empty_pointer};
     use sdk::{Deserialize, SourceItem};
     use serde_json::{Map, Value};
     use serde_yaml::from_str;

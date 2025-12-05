@@ -10,14 +10,14 @@ use std::sync::Arc;
 use tracing::{error, info};
 
 pub struct ProcessorManager {
-    component_manager: Arc<RwLock<ComponentManager>>,
+    component_manager: Arc<ComponentManager>,
     _processing_storage: Arc<dyn ProcessingStorage>,
     processor_wrappers: RwLock<HashMap<String, Arc<ProcessorWrapper>>>,
 }
 
 impl ProcessorManager {
     pub fn new(
-        component_manager: Arc<RwLock<ComponentManager>>,
+        component_manager: Arc<ComponentManager>,
         processing_storage: Arc<dyn ProcessingStorage>,
     ) -> Self {
         Self {
@@ -57,7 +57,6 @@ impl ProcessorManager {
         let source_type = &ComponentType::source(source_type_name);
         let source = self
             .component_manager
-            .read()
             .get_component(source_type, source_name)?
             .get_component()?
             .as_source()?;
@@ -98,7 +97,7 @@ impl ProcessorManager {
         let Some(processor) = &wrapper.processor else {
             return;
         };
-        let triggers = self.component_manager.read().get_all_trigger();
+        let triggers = self.component_manager.get_all_trigger();
         for trigger in triggers {
             let task = processor.safe_task();
             trigger.remove_task(task);
@@ -123,19 +122,18 @@ mod test {
     use crate::config::ProcessorConfig;
     use crate::processor_manager::ProcessorManager;
     use crate::{ComponentManager, YamlConfigOperator};
-    use parking_lot::lock_api::RwLock;
     use std::sync::Arc;
     use storage_memory::MemoryProcessingStorage;
 
     #[test]
     fn normal_cases() {
         let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
-        let mut component_manager = ComponentManager::new(Arc::new(YamlConfigOperator::new(
+        let component_manager = ComponentManager::new(Arc::new(YamlConfigOperator::new(
             "./tests/resources/config.yaml",
         )));
         let _ = component_manager.register_supplier(Arc::new(SystemFileSourceSupplier {}));
         let mut manager = ProcessorManager::new(
-            Arc::new(RwLock::new(component_manager)),
+            Arc::new(component_manager),
             Arc::new(MemoryProcessingStorage::new()),
         );
         let name = "normal-case";
@@ -160,7 +158,7 @@ mod test {
             "./tests/resources/config.yaml",
         )));
         let manager = ProcessorManager::new(
-            Arc::new(RwLock::new(component_manager)),
+            Arc::new(component_manager),
             Arc::new(MemoryProcessingStorage::new()),
         );
 

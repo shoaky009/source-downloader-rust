@@ -6,9 +6,8 @@ use axum::extract::State;
 use axum::{Router, middleware, routing::get};
 use core::CoreApplication;
 use std::sync::{Arc};
-use parking_lot::RwLock;
 
-pub fn register_routers(core_application: Arc<RwLock<CoreApplication>>) -> Router {
+pub fn register_routers(core_application: Arc<CoreApplication>) -> Router {
     let dao: Arc<dyn ComponentDao> = Arc::new(YamlFileDao::new(core_application.clone()));
     Router::new()
         .route("/", get(handler))

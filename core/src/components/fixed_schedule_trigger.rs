@@ -12,6 +12,7 @@ use tokio::time::MissedTickBehavior;
 use tracing::info;
 
 pub struct FixedScheduleTriggerSupplier;
+pub const SUPPLIER: FixedScheduleTriggerSupplier = FixedScheduleTriggerSupplier {};
 
 impl ComponentSupplier for FixedScheduleTriggerSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
