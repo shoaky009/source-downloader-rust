@@ -13,7 +13,7 @@ moka = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 parking_lot = { workspace = true }
-cel = { workspace = true }
+cel = { workspace = true, features = ["json", "regex"] }
 humantime = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 

@@ -6,6 +6,7 @@ use sdk::component::{
 use sdk::{Deserialize, Map, SdComponent, Value};
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
+use tracing::warn;
 
 pub struct ExpressionItemFilterSupplier {}
 
@@ -16,9 +17,10 @@ impl ComponentSupplier for ExpressionItemFilterSupplier {
 
     fn apply(&self, props: &Map<String, Value>) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let fac = CelCompiledExpressionFactory {};
-        let cfg = serde_json::from_value::<Cfg>(Value::Object(props.clone())).map_err(|e| {
-            ComponentError::new(format!("Failed to parse ExpressionItemFilter config: {}", e))
-        })?;
+        let val = serde_json::to_value(props)
+            .map_err(|e| ComponentError::new(format!("Failed to parse config: {}", e)))?;
+        let cfg = serde_json::from_value::<Cfg>(val)
+            .map_err(|e| ComponentError::new(format!("Failed to convert config: {}", e)))?;
         let mut exclusions = Vec::new();
         for x in cfg.exclusions {
             exclusions.push(fac.create(&x)?);
@@ -49,7 +51,9 @@ struct ExpressionItemFilter {
 
 #[derive(Deserialize)]
 struct Cfg {
+    #[serde(default)]
     exclusions: Vec<String>,
+    #[serde(default)]
     inclusions: Vec<String>,
 }
 
@@ -110,8 +114,17 @@ impl ItemFilter for ExpressionItemFilter {
             Value::from(item.source_item.attrs.to_owned()),
         );
 
+        let mut item_var = Map::new();
+        item_var.insert("item".to_string(), Value::Object(vars));
         for excl in &self.exclusions {
-            if excl.execute(&vars).unwrap_or(false) {
+            let result = excl.execute(&item_var);
+            if result.is_err() {
+                warn!(
+                    "Exclusions expression execution error will be false, error: {}",
+                    result.clone().unwrap_err()
+                );
+            }
+            if result.unwrap_or(false) {
                 return false;
             }
         }
@@ -119,10 +132,66 @@ impl ItemFilter for ExpressionItemFilter {
             return true;
         }
         for incl in &self.inclusions {
-            if incl.execute(&vars).unwrap_or(false) {
+            let result = incl.execute(&item_var);
+            if result.is_err() {
+                warn!(
+                    "Inclusions expression execution error will be false, error: {}",
+                    result.clone().unwrap_err()
+                );
+            }
+
+            if result.unwrap_or(false) {
                 return true;
             }
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::components::expression_item_filter::ExpressionItemFilterSupplier;
+    use sdk::component::{empty_pointer, ComponentSupplier, PointedItem};
+    use sdk::{Deserialize, SourceItem};
+    use serde_json::{Map, Value};
+    use serde_yaml::from_str;
+    use std::fs::File;
+    use std::path::Path;
+
+    const SUPPLIER: ExpressionItemFilterSupplier = ExpressionItemFilterSupplier {};
+
+    #[test]
+    fn test_all() {
+        let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
+        let path = Path::new("./tests/component/expression_item_filter_test_data.json");
+        let file = File::open(path).unwrap();
+        let test_data: Vec<TestData> = serde_json::from_reader(file).unwrap();
+        let json = r#"{"title":"test","link":"localhost", "downloadUri":"localhost", "contentType":"txt", "datetime": "2025-12-05T10:07:53+09:00"}"#;
+        let default_item: SourceItem = from_str(json).unwrap();
+        for data in &test_data {
+            let mut props = Map::new();
+            props.insert("exclusions".into(), Value::from(data.exclusions.clone()));
+            props.insert("inclusions".into(), Value::from(data.inclusions.clone()));
+            let filter = SUPPLIER.apply(&props).unwrap().as_item_filter().unwrap();
+            let item = data.item.as_ref().unwrap_or(&default_item);
+            let p = PointedItem {
+                source_item: item.clone(), // 这个必要，因为 filter.filter 需要 owned
+                pointer: empty_pointer(),
+            };
+            let actual = filter.filter(&p);
+            let expected = data.expected;
+            assert_eq!(expected, actual, "{:#?}", data);
+        }
+    }
+
+    #[derive(Deserialize, Debug, Clone)]
+    struct TestData {
+        #[serde(default)]
+        exclusions: Vec<String>,
+        #[serde(default)]
+        inclusions: Vec<String>,
+        expected: bool,
+        #[serde(default)]
+        item: Option<SourceItem>,
     }
 }

@@ -1,0 +1,53 @@
+[
+  {
+    "expected": true
+  },
+  {
+    "expected": false,
+    "exclusions": ["item.title == 'test'"],
+    "item": {
+      "title": "test",
+      "datetime": "2025-12-05T10:07:53+09:00",
+      "link": "localhost",
+      "downloadUri": "localhost",
+      "contentType": "txt"
+    }
+  },
+  {
+    "expected": true,
+    "inclusions": ["item.title.matches('1|CR |test')"],
+    "item": {
+      "title": "test",
+      "datetime": "2025-12-05T10:07:53+09:00",
+      "link": "localhost",
+      "downloadUri": "localhost",
+      "contentType": "txt"
+    }
+  },
+  {
+    "expected": false,
+    "inclusions": ["item.tags in ['a1']"],
+    "item": {
+      "title": "test",
+      "datetime": "2025-12-05T10:07:53+09:00",
+      "link": "localhost",
+      "downloadUri": "localhost",
+      "contentType": "txt",
+      "tags": ["a1", "a2"]
+    }
+  },
+  {
+    "expected": true,
+    "inclusions": ["item.attrs.price > 100"],
+    "item": {
+      "title": "test",
+      "datetime": "2025-12-05T10:07:53+09:00",
+      "link": "localhost",
+      "downloadUri": "localhost",
+      "contentType": "txt",
+      "attrs": {
+        "price": 101
+      }
+    }
+  }
+]
