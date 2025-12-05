@@ -159,10 +159,9 @@ impl ComponentManager {
             if let Some(config) = self
                 .config_operator
                 .get_component_config(component_type, name)
+                .filter(|c| c.name == name)
             {
-                if config.name == name {
-                    return Ok((component_type.clone(), Properties::from_map(config.props)));
-                }
+                return Ok((component_type.clone(), Properties::from_map(config.props)));
             }
         }
 
@@ -172,7 +171,12 @@ impl ComponentManager {
 
         Err(ComponentError::new(format!(
             "Component config not found types {:?} name:{}",
-            types.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(","), name,
+            types
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+            name,
         )))
     }
 
@@ -207,11 +211,7 @@ impl ComponentManager {
     }
 
     pub fn get_all_component(&self) -> Vec<Arc<ComponentWrapper>> {
-        self.component_wrappers
-            .read()
-            .values()
-            .map(|x| x.clone())
-            .collect()
+        self.component_wrappers.read().values().cloned().collect()
     }
 
     pub fn get_all_trigger(&self) -> Vec<Arc<dyn Trigger>> {

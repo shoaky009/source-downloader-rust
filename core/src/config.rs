@@ -100,11 +100,9 @@ impl YamlConfigOperator {
 
     pub fn init(&self) -> Result<(), ComponentError> {
         info!("Config path: {}", self.config_path.display());
-        if let Some(parent) = self.config_path.parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| ComponentError::new(format!("Failed to create directory: {}", e)));
-            }
+        if let Some(parent) = self.config_path.parent().filter(|p| !p.exists()) {
+            fs::create_dir_all(parent)
+                .map_err(|e| ComponentError::new(format!("Failed to create directory: {}", e)))?;
         }
 
         if !self.config_path.exists() {
@@ -131,11 +129,10 @@ impl YamlConfigOperator {
 
     fn get_config(&self) -> Result<Config, ComponentError> {
         let path = self.config_path.to_str().unwrap().to_string();
-        let config = self.config_cache.get_with(path, move || {
+        self.config_cache.get_with(path, move || {
             self.load_yaml()
                 .map_err(|e| ComponentError::new(format!("Failed to get config: {}", e)))
-        });
-        config
+        })
     }
 
     fn write_config(&self, config: &Config) -> Result<(), ComponentError> {
@@ -180,7 +177,7 @@ impl ConfigOperator for YamlConfigOperator {
         config
             .components
             .entry(String::from(component_type))
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(component_config);
         self.write_config(&config).unwrap();
     }
@@ -207,15 +204,14 @@ impl ConfigOperator for YamlConfigOperator {
         let mut config = self.get_config()?;
         let root_type_name = root_type.name();
 
-        if let Some(components) = config.components.get_mut(root_type_name) {
-            if let Some(pos) = components
+        if let Some(components) = config.components.get_mut(root_type_name)
+            && let Some(pos) = components
                 .iter()
                 .filter(|c| c.component_type == component_type)
                 .position(|c| c.name == name)
-            {
-                components.remove(pos);
-                self.write_config(&config)?;
-            }
+        {
+            components.remove(pos);
+            self.write_config(&config)?;
         }
         Ok(())
     }

@@ -87,9 +87,7 @@ pub async fn error_handler(request: Request<Body>, next: Next) -> impl IntoRespo
     match result {
         Ok(future) => {
             // 正常情况，执行 future 并返回响应
-            match future.await.into_response() {
-                response => response,
-            }
+            future.await.into_response()
         }
         Err(panic) => {
             // 处理 panic
