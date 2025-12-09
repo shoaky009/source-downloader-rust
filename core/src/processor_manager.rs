@@ -7,7 +7,7 @@ use sdk::component::{ComponentError, ComponentRootType};
 use std::collections::{HashMap, HashSet};
 use std::ops::Not;
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 pub struct ProcessorManager {
     component_manager: Arc<ComponentManager>,
@@ -33,16 +33,59 @@ impl ProcessorManager {
             info!("Processor {} is disabled", config.name);
             return;
         }
-        if let Err(err) = self.create_internal(config) {
-            error!("Failed to create processor {}, cause: {}", config.name, err);
-            self.processor_wrappers.write().insert(
-                config.name.to_owned(),
-                Arc::new(ProcessorWrapper {
-                    name: config.name.to_owned(),
-                    processor: None,
-                    error_message: Some(err.message),
-                }),
-            );
+        let processor_wrapper = match self.create_internal(config) {
+            Ok(p) => p,
+            Err(err) => {
+                error!("Failed to create processor {}, cause: {}", config.name, err);
+                self.processor_wrappers.write().insert(
+                    config.name.to_owned(),
+                    Arc::new(ProcessorWrapper {
+                        name: config.name.to_owned(),
+                        processor: None,
+                        error_message: Some(err.message),
+                    }),
+                );
+                return;
+            }
+        };
+
+        let processor_task = processor_wrapper
+            .processor
+            .as_ref()
+            .unwrap()
+            .clone()
+            .safe_task();
+        for component_ref in config.triggers.iter() {
+            let id = &ComponentRootType::Trigger.parse_component_id(component_ref);
+            let trigger_wrapper = match self.component_manager.get_component(id) {
+                Ok(w) => w,
+                Err(e) => {
+                    warn!(
+                        "Processor {} using a error trigger: {} will not add run task, cause: {}",
+                        config.name, component_ref, e
+                    );
+                    continue;
+                }
+            };
+
+            let component = match trigger_wrapper.get_and_mark_ref(&config.name) {
+                None => {
+                    error!(
+                        "Trigger {} state not expected, it may be a bug",
+                        component_ref
+                    );
+                    continue;
+                }
+                Some(p) => p,
+            };
+            match component.as_trigger() {
+                Ok(x) => {
+                    x.add_task(processor_task.clone());
+                }
+                Err(e) => {
+                    error!("Trigger {} is not a trigger, cause: {}", component_ref, e);
+                }
+            }
         }
     }
 
@@ -69,7 +112,7 @@ impl ProcessorManager {
         };
         let wrapper = Arc::new(ProcessorWrapper {
             name: config.name.to_owned(),
-            processor: Some(processor),
+            processor: Some(Arc::new(processor)),
             error_message: None,
         });
         self.processor_wrappers
@@ -96,10 +139,9 @@ impl ProcessorManager {
         };
         let triggers = self.component_manager.get_all_trigger();
         for trigger in triggers {
-            let task = processor.safe_task();
+            let task = processor.clone().safe_task();
             trigger.remove_task(task);
         }
-        processor.close();
     }
 
     pub fn get_all_processor_names(&self) -> HashSet<String> {
@@ -109,7 +151,7 @@ impl ProcessorManager {
 
 pub struct ProcessorWrapper {
     pub name: String,
-    pub processor: Option<SourceProcessor>,
+    pub processor: Option<Arc<SourceProcessor>>,
     pub error_message: Option<String>,
 }
 

@@ -1,7 +1,7 @@
 mod component_manager;
 mod components;
 mod config;
-mod core;
+mod application;
 mod expression;
 mod instance_manager;
 mod processor_manager;
@@ -10,7 +10,7 @@ mod plugin;
 
 pub use component_manager::*;
 pub use config::*;
-pub use core::*;
+pub use application::*;
 pub use expression::*;
 pub use expression::cel::*;
 pub use instance_manager::*;

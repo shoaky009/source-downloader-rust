@@ -1,5 +1,6 @@
 use sdk::component::{ProcessorTask, Source, VariableProvider};
 use std::sync::Arc;
+use tracing::info;
 
 pub struct SourceProcessor {
     pub name: String,
@@ -20,21 +21,30 @@ pub struct ProcessorOptions {
 }
 
 impl SourceProcessor {
-    pub fn close(&self) {
-        println!("close source processor")
-    }
-    pub fn safe_task(&self) -> Arc<ProcessorTask> {
+    pub fn safe_task(self: Arc<Self>) -> Arc<ProcessorTask> {
         Arc::new(ProcessorTask {
             process_name: self.name.clone(),
-            runnable: Box::new(|| {
-                Box::pin(async move {
-                    // TODO invoke run
-                    println!("开始异步任务");
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    println!("异步任务完成");
-                })
+            runnable: Box::new({
+                move || {
+                    let processor = self.clone();
+                    Box::pin(async move {
+                        processor.hello();
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        info!("异步任务完成: {}", processor.name);
+                    })
+                }
             }),
             group: None,
         })
+    }
+
+    fn hello(&self) {
+        info!("hello");
+    }
+}
+
+impl Drop for SourceProcessor {
+    fn drop(&mut self) {
+        info!("Processor {} dropped", self.name);
     }
 }

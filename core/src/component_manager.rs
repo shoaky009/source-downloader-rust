@@ -8,6 +8,7 @@ use sdk::component::{
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
+use tracing::info;
 
 pub struct ComponentManager {
     config_operator: Arc<dyn ConfigOperator>,
@@ -124,7 +125,7 @@ impl ComponentManager {
                 component: component.clone(),
                 primary: x == &pk_type,
                 creation_error: error_message.to_owned(),
-                processor_ref: HashSet::new(),
+                processor_ref: RwLock::new(HashSet::new()),
             });
 
             let key = ComponentId::new(wrapper.component_type.clone(), &wrapper.name).display();
@@ -134,7 +135,7 @@ impl ComponentManager {
                     key
                 )));
             }
-
+            info!("Successfully created component {}", instance_name);
             guard.insert(key, wrapper.clone());
 
             if x == component_type {
@@ -246,14 +247,14 @@ impl ComponentManager {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, )]
 pub struct ComponentWrapper {
     pub component_type: ComponentType,
     pub name: String,
     pub component: Option<Arc<dyn SdComponent>>,
     pub primary: bool,
     pub creation_error: Option<String>,
-    processor_ref: HashSet<String>,
+    processor_ref: RwLock<HashSet<String>>,
 }
 
 impl ComponentWrapper {
@@ -268,13 +269,15 @@ impl ComponentWrapper {
         ))
     }
 
-    pub fn get_and_mark_ref(&mut self, processor_name: &str) -> Option<Arc<dyn SdComponent>> {
-        self.processor_ref.insert(processor_name.to_string());
+    pub fn get_and_mark_ref(&self, processor_name: &str) -> Option<Arc<dyn SdComponent>> {
+        self.processor_ref
+            .write()
+            .insert(processor_name.to_string());
         self.component.clone()
     }
 
-    pub fn remove_ref(&mut self, processor_name: &str) {
-        self.processor_ref.remove(processor_name);
+    pub fn remove_ref(&self, processor_name: &str) {
+        self.processor_ref.write().remove(processor_name);
     }
 }
 
