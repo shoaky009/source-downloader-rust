@@ -26,7 +26,6 @@ async fn main() {
         core: app.clone(),
         storage,
     });
-    log::info!("{}", app.component_manager);
     run_web_server(ctx, &config).await;
 }
 
@@ -55,7 +54,7 @@ fn create_core_application(
     let config_operator = Arc::new(YamlConfigOperator::new_path(config_path.as_path()));
     config_operator.init().unwrap();
     let component_manager = Arc::new(ComponentManager::new(config_operator.clone()));
-    let instance_manager = Arc::new(InstanceManager::new(config_operator));
+    let instance_manager = Arc::new(InstanceManager::new(config_operator.clone()));
     let plugin_ctx = CorePluginContext::new();
     let plugin_ctx = Arc::new(plugin_ctx);
 
@@ -65,6 +64,7 @@ fn create_core_application(
         processing_storage.clone(),
     ));
     CoreApplication {
+        config_operator,
         component_manager,
         instance_manager,
         processor_manager,

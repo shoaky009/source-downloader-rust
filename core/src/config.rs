@@ -127,7 +127,7 @@ impl YamlConfigOperator {
                 .create(true)
                 .open(&self.config_path)
                 .map_err(|e| ComponentError::new(format!("Failed to open config file: {}", e)))?;
-            file.write_all(b"instances: []\ncomponents: []\nprocessors: []")
+            file.write_all(b"instances: []\ncomponents: \nprocessors: []")
                 .map_err(|e| ComponentError::new(format!("Failed to write config file: {}", e)))?;
         }
         Ok(())
@@ -174,7 +174,7 @@ impl ConfigOperator for YamlConfigOperator {
     fn get_all_processor_config(&self) -> Vec<ProcessorConfig> {
         self.get_config()
             .map(|config| config.processors.clone())
-            .unwrap_or_default()
+            .unwrap()
     }
 
     fn get_all_component_config(&self) -> HashMap<String, Vec<ComponentConfig>> {

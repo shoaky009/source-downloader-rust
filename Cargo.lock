@@ -2434,7 +2434,6 @@ dependencies = [
  "sdk",
  "serde",
  "storage-memory",
- "storage-sqlite",
  "tokio",
  "tracing",
  "tracing-subscriber",

@@ -12,7 +12,7 @@ path = "src/main.rs"
 [dependencies]
 core = { path = "../../core" }
 sdk = { path = "../../sdk" }
-storage-sqlite = { path = "../../storage-sqlite" }
+#storage-sqlite = { path = "../../storage-sqlite" }
 storage-memory = { path = "../../storage-memory" }
 common = { path = "../../plugins/common" }
 tracing = { workspace = true }

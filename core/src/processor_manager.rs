@@ -34,7 +34,7 @@ impl ProcessorManager {
             return;
         }
         if let Err(err) = self.create(config) {
-            error!("Processor {} create failed: {}", config.name, err);
+            error!("Failed to create processor {}, cause: {}", config.name, err);
             self.processor_wrappers.write().insert(
                 config.name.to_owned(),
                 Arc::new(ProcessorWrapper {
@@ -79,6 +79,7 @@ impl ProcessorManager {
         self.processor_wrappers
             .write()
             .insert(config.name.to_owned(), wrapper.clone());
+        info!("Processor {} created", config.name);
         Ok(wrapper)
     }
 

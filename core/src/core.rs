@@ -1,14 +1,15 @@
-use crate::ComponentManager;
 use crate::components::get_build_in_component_supplier;
 use crate::instance_manager::InstanceManager;
 use crate::plugin::PluginManager;
 use crate::processor_manager::ProcessorManager;
+use crate::{ComponentManager, ConfigOperator};
 use sdk::plugin::PluginContext;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::info;
 
 pub struct CoreApplication {
+    pub config_operator: Arc<dyn ConfigOperator>,
     pub component_manager: Arc<ComponentManager>,
     pub instance_manager: Arc<InstanceManager>,
     pub processor_manager: Arc<ProcessorManager>,
@@ -22,7 +23,9 @@ impl CoreApplication {
         self.init_plugin();
         self.register_instance_factory();
         self.register_component_supplier();
-        self.create_processor();
+        info!("{}", self.component_manager);
+        self.create_processors();
+        self.start_triggers();
     }
 
     fn init_plugin(&self) {
@@ -66,7 +69,23 @@ impl CoreApplication {
         })
     }
 
-    fn create_processor(&self) {}
+    fn create_processors(&self) {
+        let configs = self.config_operator.get_all_processor_config();
+        info!("Total {} processors to be created", configs.len());
+        for cfg in configs {
+            self.processor_manager.create_processor(&cfg)
+        }
+    }
+
+    fn start_triggers(&self) {
+        self.component_manager.for_each_trigger(|wrapper, trigger| {
+            info!(
+                "Starting trigger {}:{}",
+                wrapper.component_type.name, wrapper.name
+            );
+            trigger.start();
+        });
+    }
 }
 
 pub struct CorePluginContext {}

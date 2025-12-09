@@ -221,6 +221,24 @@ impl ComponentManager {
         self.component_wrappers.read().values().cloned().collect()
     }
 
+    pub fn for_each_trigger<F>(&self, mut f: F)
+    where
+        F: FnMut(&ComponentWrapper, Arc<dyn Trigger>),
+    {
+        let wrappers = self.component_wrappers.read();
+        for wrapper in wrappers.values() {
+            let c = match wrapper.component.as_ref() {
+                Some(c) => c,
+                None => continue,
+            };
+            let trigger = match c.clone().as_trigger() {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            f(wrapper, trigger);
+        }
+    }
+
     pub fn get_all_trigger(&self) -> Vec<Arc<dyn Trigger>> {
         self.component_wrappers
             .read()
@@ -265,11 +283,11 @@ impl ComponentWrapper {
 
 #[cfg(test)]
 mod tests {
+    use crate::ComponentManager;
     use crate::components::system_file_source::SystemFileSourceSupplier;
     use crate::config::{ConfigOperator, YamlConfigOperator};
-    use crate::ComponentManager;
-    use sdk::component::{ComponentSupplier, ComponentType};
     use sdk::Map;
+    use sdk::component::{ComponentSupplier, ComponentType};
     use std::sync::{Arc, OnceLock};
 
     static CONFIG_OP: OnceLock<Arc<dyn ConfigOperator>> = OnceLock::new();
