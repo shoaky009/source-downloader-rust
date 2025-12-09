@@ -6,6 +6,7 @@ use std::sync::Arc;
 use storage_memory::MemoryProcessingStorage;
 use tokio::net::TcpListener;
 use tracing::log;
+use web::ApplicationContext;
 use web::service::router;
 
 #[tokio::main]
@@ -14,13 +15,19 @@ async fn main() {
 
     let config = init_config();
     let storage = create_storage(&config.db);
-    let app = create_core_application(storage, &config.source_downloader);
-    app.start();
+    let core = create_core_application(&storage, &config.source_downloader);
 
-    let app = Arc::new(app);
-    let manager = app.component_manager.clone();
-    log::info!("{}", manager);
-    run_web_server(app, &config).await;
+    core.plugin_manager
+        .register_plugin(Box::new(common::PLUGIN));
+    core.start();
+
+    let app = Arc::new(core);
+    let ctx = Arc::new(ApplicationContext {
+        core: app.clone(),
+        storage,
+    });
+    log::info!("{}", app.component_manager);
+    run_web_server(ctx, &config).await;
 }
 
 fn init_config() -> ApplicationConfig {
@@ -41,7 +48,7 @@ fn create_storage(_config: &Db) -> Arc<dyn ProcessingStorage> {
 }
 
 fn create_core_application(
-    processing_storage: Arc<dyn ProcessingStorage>,
+    processing_storage: &Arc<dyn ProcessingStorage>,
     config: &SourceDownloaderConfig,
 ) -> CoreApplication {
     let config_path = config.data_location.join("config.yaml");
@@ -49,14 +56,13 @@ fn create_core_application(
     config_operator.init().unwrap();
     let component_manager = Arc::new(ComponentManager::new(config_operator.clone()));
     let instance_manager = Arc::new(InstanceManager::new(config_operator));
-    let plugin_ctx = CorePluginContext::new(component_manager.clone(), instance_manager.clone());
+    let plugin_ctx = CorePluginContext::new();
     let plugin_ctx = Arc::new(plugin_ctx);
 
     let plugin_manager = PluginManager::new(plugin_ctx);
-
     let processor_manager = Arc::new(ProcessorManager::new(
         component_manager.clone(),
-        processing_storage,
+        processing_storage.clone(),
     ));
     CoreApplication {
         component_manager,
@@ -68,7 +74,7 @@ fn create_core_application(
     }
 }
 
-async fn run_web_server(core_application: Arc<CoreApplication>, config: &ApplicationConfig) {
+async fn run_web_server(core_application: Arc<ApplicationContext>, config: &ApplicationConfig) {
     // 使用router模块中的register_routers函数获取配置好的路由
     let app = router::register_routers(core_application);
 

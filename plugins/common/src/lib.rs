@@ -1,20 +1,24 @@
 mod components;
 
-use crate::components::test_source::TestSourceSupplier;
+use crate::components::test_source;
+use sdk::instance::InstanceFactory;
 use sdk::plugin::{Plugin, PluginContext, PluginDescription};
 use std::sync::Arc;
-use tracing::info;
 
-struct CommonPlugin;
+pub struct CommonPlugin;
+pub const PLUGIN: CommonPlugin = CommonPlugin {};
 
 impl Plugin for CommonPlugin {
-    fn init(&self, plugin_context: Arc<dyn PluginContext>) {
-        info!("Initializing common plugin");
-        plugin_context.register_supplier(vec![Arc::new(TestSourceSupplier::new())]);
+    fn init(&self, _: Arc<dyn PluginContext>) {}
+
+    fn destroy(&self, _: Arc<dyn PluginContext>) {}
+
+    fn get_instance_factories(&self) -> Vec<Arc<dyn InstanceFactory>> {
+        vec![]
     }
 
-    fn destroy(&self, _: Arc<dyn PluginContext>) {
-        info!("Destroying common plugin");
+    fn get_component_suppliers(&self) -> Vec<Arc<dyn sdk::component::ComponentSupplier>> {
+        vec![Arc::new(test_source::SUPPLIER)]
     }
 
     fn description(&self) -> PluginDescription {
@@ -24,8 +28,7 @@ impl Plugin for CommonPlugin {
         }
     }
 }
-
-#[unsafe(no_mangle)]
-pub extern "Rust" fn create_plugin() -> Box<dyn Plugin> {
-    Box::new(CommonPlugin {})
-}
+// #[unsafe(no_mangle)]
+// pub extern "Rust" fn create_plugin() -> Box<dyn Plugin> {
+//     Box::new(CommonPlugin {})
+// }

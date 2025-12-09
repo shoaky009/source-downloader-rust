@@ -28,11 +28,7 @@ impl Source for TestSource {
 
 pub struct TestSourceSupplier {}
 
-impl TestSourceSupplier {
-    pub fn new() -> Self {
-        TestSourceSupplier {}
-    }
-}
+pub const SUPPLIER: TestSourceSupplier = TestSourceSupplier {};
 
 impl ComponentSupplier for TestSourceSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {

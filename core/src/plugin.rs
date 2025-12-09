@@ -21,6 +21,20 @@ impl PluginManager {
         }
     }
 
+    pub fn with_plugins<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&[Box<dyn Plugin>]) -> R,
+    {
+        let guard = self.plugins.read();
+        f(&guard)
+    }
+
+    pub fn register_plugin(&self, plugin: Box<dyn Plugin>) {
+        plugin.init(self.context.clone());
+        info!("成功注册内置插件: {}", plugin.description());
+        self.plugins.write().push(plugin);
+    }
+
     pub fn load_dylib_plugins(&self, plugin_dir: &str) {
         let lib_ext = if cfg!(target_os = "windows") {
             "dll"

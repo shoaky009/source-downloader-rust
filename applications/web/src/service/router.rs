@@ -1,14 +1,14 @@
-use crate::dao::ComponentDao;
 use crate::dao::yaml_file::YamlFileDao;
-use crate::error::error_handle::{AppResult, error_handler};
+use crate::dao::ComponentDao;
+use crate::error::error_handle::{error_handler, AppResult};
 use crate::model::http_model::ApiResponse;
+use crate::ApplicationContext;
 use axum::extract::State;
-use axum::{Router, middleware, routing::get};
-use core::CoreApplication;
-use std::sync::{Arc};
+use axum::{middleware, routing::get, Router};
+use std::sync::Arc;
 
-pub fn register_routers(core_application: Arc<CoreApplication>) -> Router {
-    let dao: Arc<dyn ComponentDao> = Arc::new(YamlFileDao::new(core_application.clone()));
+pub fn register_routers(core_application: Arc<ApplicationContext>) -> Router {
+    let dao: Arc<dyn ComponentDao> = Arc::new(YamlFileDao::new(core_application.core.clone()));
     Router::new()
         .route("/", get(handler))
         .route("/suppliers", get(list_component_suppliers))

@@ -1,10 +1,8 @@
 use crate::ComponentManager;
-use crate::components::system_file_source::SystemFileSourceSupplier;
+use crate::components::get_build_in_component_supplier;
 use crate::instance_manager::InstanceManager;
 use crate::plugin::PluginManager;
 use crate::processor_manager::ProcessorManager;
-use sdk::component::{ComponentError, ComponentSupplier};
-use sdk::instance::InstanceFactory;
 use sdk::plugin::PluginContext;
 use std::path::Path;
 use std::sync::Arc;
@@ -28,61 +26,59 @@ impl CoreApplication {
     }
 
     fn init_plugin(&self) {
-        if self.plugin_location.is_none() {
-            info!("未配置插件路径不加载插件");
-            return;
-        }
-        let path = self.plugin_location.as_ref().unwrap().to_str().unwrap();
-        info!("从目录加载插件: {}", path);
-        self.plugin_manager.load_dylib_plugins(&path);
+        let path = match &self.plugin_location {
+            Some(p) => p,
+            None => {
+                info!("未配置插件路径不加载插件");
+                return;
+            }
+        };
+        info!("从目录加载插件: {}", path.display());
+        self.plugin_manager
+            .load_dylib_plugins(path.to_str().unwrap());
     }
 
-    fn register_instance_factory(&self) {}
+    fn register_instance_factory(&self) {
+        self.plugin_manager.with_plugins(|plugins| {
+            for plugin in plugins {
+                plugin.get_instance_factories().iter().for_each(|x| {
+                    // 有重复的直接crash
+                    self.instance_manager
+                        .register_instance_factory(x.clone())
+                        .unwrap();
+                });
+            }
+        })
+    }
 
     fn register_component_supplier(&self) {
         self.component_manager
-            .register_supplier(Arc::new(SystemFileSourceSupplier {}))
+            .register_suppliers(get_build_in_component_supplier())
             .unwrap();
+
+        self.plugin_manager.with_plugins(|plugins| {
+            for plugin in plugins {
+                plugin.get_component_suppliers().iter().for_each(|x| {
+                    // 有重复的直接crash
+                    self.component_manager.register_supplier(x.clone()).unwrap();
+                })
+            }
+        })
     }
 
     fn create_processor(&self) {}
 }
 
-pub struct CorePluginContext {
-    component_manager: Arc<ComponentManager>,
-    instance_manager: Arc<InstanceManager>,
-}
+pub struct CorePluginContext {}
 
 impl CorePluginContext {
-    pub fn new(
-        component_manager: Arc<ComponentManager>,
-        instance_manager: Arc<InstanceManager>,
-    ) -> Self {
-        CorePluginContext {
-            component_manager,
-            instance_manager,
-        }
+    pub fn new() -> Self {
+        CorePluginContext {}
     }
 }
 
 impl PluginContext for CorePluginContext {
     fn get_persistent_data_path(&self) -> &Path {
         todo!()
-    }
-
-    fn register_supplier(&self, suppliers: Vec<Arc<dyn ComponentSupplier>>) {
-        self.component_manager
-            .register_suppliers(suppliers)
-            .unwrap();
-    }
-
-    fn register_instance_factory(
-        &self,
-        factories: Vec<Arc<dyn InstanceFactory>>,
-    ) -> Result<bool, ComponentError> {
-        for fac in factories {
-            self.instance_manager.register_instance_factory(fac)?;
-        }
-        Ok(true)
     }
 }

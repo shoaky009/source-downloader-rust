@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::component::{ComponentError, ComponentSupplier};
+use crate::component::ComponentSupplier;
 use crate::instance::InstanceFactory;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
@@ -11,18 +11,15 @@ pub trait Plugin: Send + Sync {
 
     fn destroy(&self, plugin_context: Arc<dyn PluginContext>);
 
+    fn get_instance_factories(&self) -> Vec<Arc<dyn InstanceFactory>>;
+
+    fn get_component_suppliers(&self) -> Vec<Arc<dyn ComponentSupplier>>;
+
     fn description(&self) -> PluginDescription;
 }
 
 pub trait PluginContext: Send + Sync {
     fn get_persistent_data_path(&self) -> &Path;
-
-    fn register_supplier(&self, suppliers: Vec<Arc<dyn ComponentSupplier>>);
-
-    fn register_instance_factory(
-        &self,
-        factories: Vec<Arc<dyn InstanceFactory>>,
-    ) -> Result<bool, ComponentError>;
 }
 
 pub struct PluginDescription {
