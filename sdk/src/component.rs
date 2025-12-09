@@ -55,12 +55,50 @@ impl ComponentRootType {
             ComponentRootType::Trimmer => "trimmer",
         }
     }
+
+    pub fn parse_component_id(&self, str: &str) -> ComponentId {
+        let component_ref_pat = ":";
+        let source_id = str.split(component_ref_pat).collect::<Vec<&str>>();
+        let type_name = source_id.first().unwrap().to_string();
+        let name = source_id.last().unwrap();
+        ComponentId::new(
+            ComponentType {
+                root_type: self.to_owned(),
+                name: type_name.to_owned(),
+            },
+            name.to_owned(),
+        )
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct ComponentType {
     pub root_type: ComponentRootType,
     pub name: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+pub struct ComponentId {
+    pub component_type: ComponentType,
+    pub name: String,
+}
+
+impl ComponentId {
+    pub fn new(component_type: ComponentType, name: &str) -> Self {
+        ComponentId {
+            component_type,
+            name: name.to_string(),
+        }
+    }
+
+    pub fn display(&self) -> String {
+        format!(
+            "{}:{}:{}",
+            self.component_type.root_type.name(),
+            self.component_type.name,
+            self.name
+        )
+    }
 }
 
 impl ComponentType {

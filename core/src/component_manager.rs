@@ -2,7 +2,9 @@
 
 use crate::config::{ConfigOperator, Properties};
 use parking_lot::RwLock;
-use sdk::component::{ComponentError, ComponentSupplier, ComponentType, SdComponent, Trigger};
+use sdk::component::{
+    ComponentError, ComponentId, ComponentSupplier, ComponentType, SdComponent, Trigger,
+};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
@@ -45,10 +47,6 @@ impl ComponentManager {
         }
     }
 
-    fn get_instance_name(type_: &ComponentType, name: &str) -> String {
-        format!("{}:{}:{}", type_.root_type.name(), type_.name, name)
-    }
-
     pub fn register_supplier(
         &self,
         supplier: Arc<dyn ComponentSupplier>,
@@ -82,12 +80,8 @@ impl ComponentManager {
         Ok(true)
     }
 
-    pub fn get_component(
-        &self,
-        type_: &ComponentType,
-        name: &str,
-    ) -> Result<Arc<ComponentWrapper>, ComponentError> {
-        let instance_name = Self::get_instance_name(type_, name);
+    pub fn get_component(&self, id: &ComponentId) -> Result<Arc<ComponentWrapper>, ComponentError> {
+        let instance_name = id.display();
 
         {
             let guard = self.component_wrappers.read();
@@ -97,8 +91,10 @@ impl ComponentManager {
         }
 
         let guard = self.component_suppliers.read();
-        let supplier = guard.get(type_).ok_or_else(|| {
-            ComponentError::new(format!("Supplier not found for type: {}", type_))
+        let component_type = &id.component_type;
+        let name = &id.name;
+        let supplier = guard.get(component_type).ok_or_else(|| {
+            ComponentError::new(format!("Supplier not found for type: {}", component_type))
         })?;
 
         let types = supplier.supply_types();
@@ -123,15 +119,15 @@ impl ComponentManager {
 
         for x in &types {
             let wrapper = Arc::new(ComponentWrapper {
-                component_type: x.clone(),
-                name: name.to_string(),
+                component_type: x.to_owned(),
+                name: name.to_owned(),
                 component: component.clone(),
                 primary: x == &pk_type,
                 creation_error: error_message.to_owned(),
                 processor_ref: HashSet::new(),
             });
 
-            let key = Self::get_instance_name(&wrapper.component_type, &wrapper.name);
+            let key = ComponentId::new(wrapper.component_type.clone(), &wrapper.name).display();
             if guard.contains_key(&key) {
                 return Err(ComponentError::new(format!(
                     "组件实例 '{}' 已经存在 (Race condition hit)",
@@ -141,13 +137,13 @@ impl ComponentManager {
 
             guard.insert(key, wrapper.clone());
 
-            if x == type_ {
+            if x == component_type {
                 target_wrapper = Some(wrapper);
             }
         }
 
         target_wrapper
-            .ok_or_else(|| ComponentError::new(format!("未找到类型为 '{}' 的组件", type_)))
+            .ok_or_else(|| ComponentError::new(format!("未找到类型为 '{}' 的组件", component_type)))
     }
 
     fn get_component_props(
@@ -187,17 +183,18 @@ impl ComponentManager {
         )))
     }
 
-    pub fn destroy(&self, type_: &ComponentType, name: &str) {
-        let instance_name = Self::get_instance_name(type_, name);
+    pub fn destroy(&self, id: &ComponentId) {
+        let instance_name = id.display();
         let mut guard = self.component_wrappers.write();
         if guard.remove(&instance_name).is_none() {
             return;
         }
 
+        let type_ = &id.component_type;
         if let Some(supplier) = self.component_suppliers.read().get(type_) {
             for other_type in supplier.supply_types() {
                 if &other_type != type_ {
-                    let key = Self::get_instance_name(&other_type, name);
+                    let key = ComponentId::new(other_type, &id.name).display();
                     guard.remove(&key);
                 }
             }
@@ -287,7 +284,7 @@ mod tests {
     use crate::components::system_file_source::SystemFileSourceSupplier;
     use crate::config::{ConfigOperator, YamlConfigOperator};
     use sdk::Map;
-    use sdk::component::{ComponentSupplier, ComponentType};
+    use sdk::component::{ComponentRootType, ComponentSupplier};
     use std::sync::{Arc, OnceLock};
 
     static CONFIG_OP: OnceLock<Arc<dyn ConfigOperator>> = OnceLock::new();
@@ -303,8 +300,8 @@ mod tests {
         assert!(result.unwrap());
 
         // get component and downcast case
-        let component_type = &ComponentType::source("system-file".to_string());
-        let component_wrapper = manager.get_component(component_type, "test").unwrap();
+        let id = &ComponentRootType::Source.parse_component_id("system-file:test");
+        let component_wrapper = manager.get_component(id).unwrap();
         let component_arc = component_wrapper.component.as_ref().unwrap();
         let source = component_arc.clone().as_source().unwrap();
         assert_eq!(component_wrapper.name, "test");
@@ -313,15 +310,15 @@ mod tests {
         println!("{:?}", items);
 
         // multiple time get a component case, the component should be the same instance
-        let component_wp2 = manager.get_component(component_type, "test").unwrap();
+        let component_wp2 = manager.get_component(id).unwrap();
         assert!(Arc::ptr_eq(
             &component_arc,
             &component_wp2.component.as_ref().unwrap()
         ));
 
         // to destroy a component case, the component should be recreated so that the instance is different
-        manager.destroy(component_type, "test");
-        let component_wp3 = manager.get_component(component_type, "test").unwrap();
+        manager.destroy(id);
+        let component_wp3 = manager.get_component(id).unwrap();
         assert!(!Arc::ptr_eq(
             &component_arc,
             &component_wp3.component.as_ref().unwrap()
@@ -352,8 +349,8 @@ mod tests {
     #[test]
     fn get_component_error_case() {
         let manager = ComponentManager::new(get_config_op().clone());
-        let component_type = ComponentType::source("system-file".to_string());
-        let result = manager.get_component(&component_type, "test");
+        let id = &ComponentRootType::Source.parse_component_id("system-file:test2");
+        let result = manager.get_component(id);
         assert!(result.is_err());
         let error = result.unwrap_err();
         assert!(error.message.starts_with("Supplier not found for type:"));
@@ -362,7 +359,7 @@ mod tests {
             .register_supplier(Arc::new(SystemFileSourceSupplier {}))
             .unwrap();
 
-        let result2 = manager.get_component(&component_type, "test2");
+        let result2 = manager.get_component(id);
         assert!(result2.is_err());
         let error2 = result2.unwrap_err();
         assert!(

@@ -5,6 +5,11 @@ instances:
       test: test_value
 
 components:
+  trigger:
+    - name: 20min
+      type: fixed
+      props:
+        interval: 10s
   source:
     - type: system-file
       name: test

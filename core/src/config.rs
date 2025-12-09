@@ -30,6 +30,8 @@ pub struct ProcessorConfig {
     pub name: String,
     pub enabled: bool,
     pub save_path: String,
+    #[serde(default)]
+    pub triggers: Vec<String>,
     pub source: String,
 }
 

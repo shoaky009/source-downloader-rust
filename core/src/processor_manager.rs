@@ -3,7 +3,7 @@ use crate::source_processor::SourceProcessor;
 use crate::{ComponentManager, ProcessorOptions};
 use parking_lot::RwLock;
 use sdk::ProcessingStorage;
-use sdk::component::{ComponentError, ComponentType};
+use sdk::component::{ComponentError, ComponentRootType};
 use std::collections::{HashMap, HashSet};
 use std::ops::Not;
 use std::sync::Arc;
@@ -33,7 +33,7 @@ impl ProcessorManager {
             info!("Processor {} is disabled", config.name);
             return;
         }
-        if let Err(err) = self.create(config) {
+        if let Err(err) = self.create_internal(config) {
             error!("Failed to create processor {}, cause: {}", config.name, err);
             self.processor_wrappers.write().insert(
                 config.name.to_owned(),
@@ -46,18 +46,14 @@ impl ProcessorManager {
         }
     }
 
-    fn create(&self, config: &ProcessorConfig) -> Result<Arc<ProcessorWrapper>, ComponentError> {
-        let component_ref_pat = ":";
-        let source_id = config
-            .source
-            .split(component_ref_pat)
-            .collect::<Vec<&str>>();
-        let source_type_name = source_id.first().unwrap().to_string();
-        let source_name = source_id.last().unwrap();
-        let source_type = &ComponentType::source(source_type_name);
+    fn create_internal(
+        &self,
+        config: &ProcessorConfig,
+    ) -> Result<Arc<ProcessorWrapper>, ComponentError> {
+        let source_id = ComponentRootType::Source.parse_component_id(&config.source);
         let source = self
             .component_manager
-            .get_component(source_type, source_name)?
+            .get_component(&source_id)?
             .get_component()?
             .as_source()?;
         let processor = SourceProcessor {
@@ -142,6 +138,7 @@ mod test {
             name: name.to_string(),
             enabled: true,
             source: "system-file:test".to_string(),
+            triggers: vec![],
             save_path: "./tests/resources/output".to_string(),
         });
         assert!(manager.processor_exists(name));
@@ -167,6 +164,7 @@ mod test {
         manager.create_processor(&ProcessorConfig {
             name: name.to_string(),
             enabled: true,
+            triggers: vec![],
             source: "system-file:not-exists".to_string(),
             save_path: "./tests/resources/output".to_string(),
         });
