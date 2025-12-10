@@ -100,6 +100,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-trait"
+version = "0.1.89"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "atoi"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -384,6 +395,7 @@ checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 name = "core"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "cel",
  "humantime",
  "libloading",
@@ -1090,9 +1102,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.27"
+version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
+checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "loom"
@@ -1417,6 +1429,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "problem_details"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d50e8b46a2f32e61ae82888734e24627ea0f8c9bc7c5fc8d0c3e0eb7ed0ff5ab"
+dependencies = [
+ "http",
+ "http-serde",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.94"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1599,6 +1623,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 name = "sdk"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "component-macro",
  "http",
  "http-serde",
@@ -1606,6 +1631,7 @@ dependencies = [
  "serde",
  "serde_json",
  "time",
+ "tracing",
 ]
 
 [[package]]
@@ -2431,6 +2457,7 @@ dependencies = [
  "common",
  "core",
  "parking_lot",
+ "problem_details",
  "sdk",
  "serde",
  "storage-memory",

@@ -2,6 +2,7 @@
 
 use crate::SourceItem;
 use crate::{Map, Value};
+use async_trait::async_trait;
 use http::Uri;
 use parking_lot::RwLock;
 use std::any::Any;
@@ -11,7 +12,6 @@ use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::io::Read;
-use std::pin::Pin;
 use std::sync::Arc;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -300,8 +300,8 @@ pub trait Trigger: SdComponent {
         self.stop();
         self.start();
     }
-    fn add_task(&self, task: Arc<ProcessorTask>);
-    fn remove_task(&self, task: Arc<ProcessorTask>);
+    fn add_task(&self, task: Arc<dyn ProcessTask>);
+    fn remove_task(&self, task: Arc<dyn ProcessTask>);
 }
 
 pub trait Downloader: SdComponent {
@@ -527,21 +527,11 @@ pub struct DownloadOptions {
     pub headers: Option<HashMap<String, String>>,
 }
 
-pub struct ProcessorTask {
-    pub process_name: String,
-    pub runnable: Box<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync + 'static>,
-    pub group: Option<String>,
-}
-
-impl Debug for ProcessorTask {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "task:{} group:{}",
-            self.process_name,
-            self.group.clone().unwrap_or_default()
-        )
-    }
+#[async_trait]
+pub trait ProcessTask: Send + Sync {
+    async fn run(&self) -> Result<(), String>;
+    fn name(&self) -> &str;
+    fn group(&self) -> Option<String>;
 }
 
 pub struct FileContent {
@@ -578,9 +568,9 @@ pub struct ProcessorInfo {
 }
 
 /// Help trigger to hold tasks
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct TaskRegistry {
-    pub tasks: Arc<RwLock<Vec<Arc<ProcessorTask>>>>,
+    pub tasks: Arc<RwLock<Vec<Arc<dyn ProcessTask>>>>,
 }
 
 impl TaskRegistry {
@@ -590,11 +580,11 @@ impl TaskRegistry {
         }
     }
 
-    pub fn add(&self, task: Arc<ProcessorTask>) {
+    pub fn add(&self, task: Arc<dyn ProcessTask>) {
         self.tasks.write().push(task);
     }
 
-    pub fn remove(&self, task: Arc<ProcessorTask>) {
+    pub fn remove(&self, task: Arc<dyn ProcessTask>) {
         self.tasks.write().retain(|t| !Arc::ptr_eq(t, &task));
     }
 }

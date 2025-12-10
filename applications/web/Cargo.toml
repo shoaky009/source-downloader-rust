@@ -22,3 +22,4 @@ tokio = { workspace = true }
 serde = { workspace = true }
 parking_lot = { workspace = true }
 clap = { workspace = true }
+problem_details = { workspace = true }

@@ -1,6 +1,6 @@
 use sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, ProcessorTask, SdComponent,
-    SdComponentMetadata, TaskRegistry, Trigger,
+    ComponentError, ComponentSupplier, ComponentType, ProcessTask, SdComponent, SdComponentMetadata,
+    TaskRegistry, Trigger,
 };
 use sdk::{Map, SdComponent, Value};
 use std::fmt::Debug;
@@ -88,7 +88,7 @@ impl Trigger for FixedScheduleTrigger {
                 for task in tasks_to_run {
                     //TODO grouping tasks, then run them in parallel await task.execute()
                     tokio::spawn(async move {
-                        (task.runnable)().await;
+                        let _ = task.run().await;
                     });
                 }
             }
@@ -111,12 +111,16 @@ impl Trigger for FixedScheduleTrigger {
         }
     }
 
-    fn add_task(&self, task: Arc<ProcessorTask>) {
+    fn add_task(&self, task: Arc<dyn ProcessTask>) {
         self.task_registry.add(task)
     }
 
-    fn remove_task(&self, task: Arc<ProcessorTask>) {
-        self.task_registry.remove(task)
+    fn remove_task(&self, task: Arc<dyn ProcessTask>) {
+        self.task_registry.remove(task);
+        info!(
+            "Current task count: {}",
+            self.task_registry.tasks.read().len()
+        );
     }
 }
 
@@ -125,7 +129,7 @@ impl Debug for FixedScheduleTrigger {
         f.debug_struct("FixedScheduleTrigger")
             .field("interval", &self.interval)
             .field("on_start_run_tasks", &self.on_start_run_tasks)
-            .field("tasks", &self.task_registry)
+            .field("tasks", &self.task_registry.tasks.read().len())
             .field(
                 "worker_handle",
                 &self.worker_handle.lock().unwrap().is_some(),
@@ -137,22 +141,44 @@ impl Debug for FixedScheduleTrigger {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     // 辅助函数：创建一个会增加计数器的任务
-    fn create_counting_task(counter: Arc<AtomicUsize>) -> Arc<ProcessorTask> {
-        Arc::new(ProcessorTask {
-            process_name: "TestTask".to_string(),
-            group: None,
-            runnable: Box::new(move || {
-                let counter_clone = counter.clone();
-                Box::pin(async move {
-                    counter_clone.fetch_add(1, Ordering::SeqCst);
-                    println!("Task executed");
-                })
-            }),
-        })
+    fn create_counting_task(counter: Arc<AtomicUsize>) -> Arc<dyn ProcessTask> {
+        Arc::new(TestTask { counter })
+        //
+        // Arc::new(ProcessorTask {
+        //     process_name: "TestTask".to_string(),
+        //     group: None,
+        //     runnable: Box::new(move || {
+        //         let counter_clone = counter.clone();
+        //         Box::pin(async move {
+        //             counter_clone.fetch_add(1, Ordering::SeqCst);
+        //             println!("Task executed");
+        //         })
+        //     }),
+        // })
+    }
+
+    struct TestTask {
+        counter: Arc<AtomicUsize>,
+    }
+    #[async_trait]
+    impl ProcessTask for TestTask {
+        async fn run(&self) -> Result<(), String> {
+            self.counter.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn name(&self) -> &str {
+            "TestTask"
+        }
+
+        fn group(&self) -> Option<String> {
+            None
+        }
     }
 
     #[test]

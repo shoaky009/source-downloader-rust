@@ -6,8 +6,7 @@ use std::sync::Arc;
 use storage_memory::MemoryProcessingStorage;
 use tokio::net::TcpListener;
 use tracing::log;
-use web::ApplicationContext;
-use web::service::router;
+use web::{ApplicationContext, app};
 
 #[tokio::main]
 async fn main() {
@@ -55,8 +54,9 @@ fn create_core_application(
     config_operator.init().unwrap();
     let component_manager = Arc::new(ComponentManager::new(config_operator.clone()));
     let instance_manager = Arc::new(InstanceManager::new(config_operator.clone()));
-    let plugin_ctx = CorePluginContext::new();
-    let plugin_ctx = Arc::new(plugin_ctx);
+    let plugin_ctx = Arc::new(CorePluginContext {
+        data_location: config.data_location.clone(),
+    });
 
     let plugin_manager = PluginManager::new(plugin_ctx);
     let processor_manager = Arc::new(ProcessorManager::new(
@@ -76,11 +76,11 @@ fn create_core_application(
 
 async fn run_web_server(core_application: Arc<ApplicationContext>, config: &ApplicationConfig) {
     // 使用router模块中的register_routers函数获取配置好的路由
-    let app = router::register_routers(core_application);
+    let app = app::router::register_routers(core_application);
 
     let addr = format!("{}:{}", config.server.host, config.server.port);
     let listener = TcpListener::bind(&addr).await.unwrap();
-    log::info!("Web服务器已启动，监听端口 {}", &addr);
+    log::info!("Web服务器已启动，监听 {}", &addr);
 
     // 使用axum serve函数启动服务器
     axum::serve(listener, app).await.unwrap();

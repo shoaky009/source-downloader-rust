@@ -62,7 +62,7 @@ impl CoreApplication {
         self.plugin_manager.with_plugins(|plugins| {
             for plugin in plugins {
                 plugin.get_component_suppliers().iter().for_each(|x| {
-                    // 有重复的直接crash
+                    // 因为插件目前没有卸载重载等周期
                     self.component_manager.register_supplier(x.clone()).unwrap();
                 })
             }
@@ -81,23 +81,45 @@ impl CoreApplication {
         self.component_manager.for_each_trigger(|wrapper, trigger| {
             info!(
                 "Starting trigger {}:{}",
-                wrapper.component_type.name, wrapper.name
+                wrapper.id.component_type.name, wrapper.id.name
             );
             trigger.start();
         });
     }
+
+    pub fn reload(&self) {
+        self.destroy_all_processor();
+        self.destroy_all_component();
+        self.destroy_all_instance();
+        self.create_processors();
+    }
+
+    fn destroy_all_processor(&self) {
+        for name in self.processor_manager.get_all_processor_names() {
+            self.processor_manager.destroy_processor(&name)
+        }
+        info!("All processors destroyed");
+    }
+
+    fn destroy_all_component(&self) {
+        for wrapper in self.component_manager.get_all_component() {
+            self.component_manager.destroy(&wrapper.id)
+        }
+        info!("All components destroyed");
+    }
+
+    fn destroy_all_instance(&self) {
+        self.instance_manager.destroy_all_instances();
+        info!("All instances destroyed");
+    }
 }
 
-pub struct CorePluginContext {}
-
-impl CorePluginContext {
-    pub fn new() -> Self {
-        CorePluginContext {}
-    }
+pub struct CorePluginContext {
+    pub data_location: Box<Path>,
 }
 
 impl PluginContext for CorePluginContext {
     fn get_persistent_data_path(&self) -> &Path {
-        todo!()
+        self.data_location.as_ref()
     }
 }

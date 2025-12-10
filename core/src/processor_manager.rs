@@ -7,7 +7,7 @@ use sdk::component::{ComponentError, ComponentRootType};
 use std::collections::{HashMap, HashSet};
 use std::ops::Not;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 pub struct ProcessorManager {
     component_manager: Arc<ComponentManager>,
@@ -30,7 +30,7 @@ impl ProcessorManager {
     pub fn create_processor(&self, config: &ProcessorConfig) {
         // TODO 补全所有
         if config.enabled.not() {
-            info!("Processor {} is disabled", config.name);
+            info!("Processor[disabled] {}", config.name);
             return;
         }
         let processor_wrapper = match self.create_internal(config) {
@@ -48,13 +48,11 @@ impl ProcessorManager {
                 return;
             }
         };
+        self.register_task(&config, processor_wrapper);
+    }
 
-        let processor_task = processor_wrapper
-            .processor
-            .as_ref()
-            .unwrap()
-            .clone()
-            .safe_task();
+    fn register_task(&self, config: &&ProcessorConfig, processor_wrapper: Arc<ProcessorWrapper>) {
+        let processor_task = processor_wrapper.processor.as_ref().unwrap();
         for component_ref in config.triggers.iter() {
             let id = &ComponentRootType::Trigger.parse_component_id(component_ref);
             let trigger_wrapper = match self.component_manager.get_component(id) {
@@ -118,7 +116,7 @@ impl ProcessorManager {
         self.processor_wrappers
             .write()
             .insert(config.name.to_owned(), wrapper.clone());
-        info!("Processor {} created", config.name);
+        info!("Processor[created] {}", config.name);
         Ok(wrapper)
     }
 
@@ -130,18 +128,20 @@ impl ProcessorManager {
         self.processor_wrappers.read().contains_key(name)
     }
 
-    pub fn destroy_processor(&mut self, name: &str) {
+    pub fn destroy_processor(&self, name: &str) {
         let removed = self.processor_wrappers.write().remove(name);
-        info!("Processor:'{}' destroying", name);
+        info!("Processor[destroying] {}", name);
         let Some(wrapper) = removed else { return };
+        debug!("ProcessorWp[on-destroy-arc] {}", Arc::strong_count(&wrapper));
         let Some(processor) = &wrapper.processor else {
             return;
         };
         let triggers = self.component_manager.get_all_trigger();
         for trigger in triggers {
-            let task = processor.clone().safe_task();
+            let task = processor.clone();
             trigger.remove_task(task);
         }
+        debug!("Processor[on-destroy-arc] {}", Arc::strong_count(processor));
     }
 
     pub fn get_all_processor_names(&self) -> HashSet<String> {
@@ -155,9 +155,15 @@ pub struct ProcessorWrapper {
     pub error_message: Option<String>,
 }
 
+impl Drop for ProcessorWrapper {
+    fn drop(&mut self) {
+        debug!("ProcessorWp[dropped] {}", self.name);
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use crate::components::system_file_source::SystemFileSourceSupplier;
+    use crate::components::system_file_source::SUPPLIER;
     use crate::config::ProcessorConfig;
     use crate::processor_manager::ProcessorManager;
     use crate::{ComponentManager, YamlConfigOperator};
@@ -170,8 +176,8 @@ mod test {
         let component_manager = ComponentManager::new(Arc::new(YamlConfigOperator::new(
             "./tests/resources/config.yaml",
         )));
-        let _ = component_manager.register_supplier(Arc::new(SystemFileSourceSupplier {}));
-        let mut manager = ProcessorManager::new(
+        let _ = component_manager.register_supplier(Arc::new(SUPPLIER));
+        let manager = ProcessorManager::new(
             Arc::new(component_manager),
             Arc::new(MemoryProcessingStorage::new()),
         );

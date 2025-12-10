@@ -120,22 +120,21 @@ impl ComponentManager {
 
         for x in &types {
             let wrapper = Arc::new(ComponentWrapper {
-                component_type: x.to_owned(),
-                name: name.to_owned(),
+                id: ComponentId::new(x.clone(), name),
                 component: component.clone(),
                 primary: x == &pk_type,
                 creation_error: error_message.to_owned(),
                 processor_ref: RwLock::new(HashSet::new()),
             });
 
-            let key = ComponentId::new(wrapper.component_type.clone(), &wrapper.name).display();
+            let key = wrapper.id.display();
             if guard.contains_key(&key) {
                 return Err(ComponentError::new(format!(
                     "组件实例 '{}' 已经存在 (Race condition hit)",
                     key
                 )));
             }
-            info!("Successfully created component {}", instance_name);
+            info!("Component[created] {}", instance_name);
             guard.insert(key, wrapper.clone());
 
             if x == component_type {
@@ -247,10 +246,9 @@ impl ComponentManager {
     }
 }
 
-#[derive(Debug, )]
+#[derive(Debug)]
 pub struct ComponentWrapper {
-    pub component_type: ComponentType,
-    pub name: String,
+    pub id: ComponentId,
     pub component: Option<Arc<dyn SdComponent>>,
     pub primary: bool,
     pub creation_error: Option<String>,
@@ -265,7 +263,7 @@ impl ComponentWrapper {
         Err(ComponentError::new(
             self.creation_error
                 .clone()
-                .unwrap_or_else(|| format!("Component {} not created", self.name)),
+                .unwrap_or_else(|| format!("Component {} not created", self.id.display())),
         ))
     }
 
@@ -307,7 +305,7 @@ mod tests {
         let component_wrapper = manager.get_component(id).unwrap();
         let component_arc = component_wrapper.component.as_ref().unwrap();
         let source = component_arc.clone().as_source().unwrap();
-        assert_eq!(component_wrapper.name, "test");
+        assert_eq!(component_wrapper.id.name, "test");
         let items = source.fetch(&Map::new());
         assert!(items.len() > 0);
         println!("{:?}", items);

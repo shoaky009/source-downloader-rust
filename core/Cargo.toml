@@ -16,6 +16,7 @@ parking_lot = { workspace = true }
 cel = { workspace = true, features = ["json", "regex"] }
 humantime = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+async-trait = {workspace = true}
 
 [dev-dependencies]
 tempfile = { workspace = true }
