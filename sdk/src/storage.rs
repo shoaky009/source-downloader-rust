@@ -1,4 +1,4 @@
-use crate::SourceItem;
+use crate::{Serialize, SourceItem};
 use serde_json::{Map, Value};
 use time::PrimitiveDateTime;
 
@@ -17,7 +17,7 @@ pub trait ProcessingStorage: Send + Sync {
     fn find_content_by_id(&self, id: &str) -> Option<ProcessingContent>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ProcessingContent {
     pub id: String,
     pub processor_name: String,
@@ -31,14 +31,14 @@ pub struct ProcessingContent {
     pub updated_at: Option<PrimitiveDateTime>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ItemContentLite {
     pub source_item: SourceItem,
     pub item_variables: Map<String, Value>,
 }
 
 #[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ProcessingStatus {
     /// 下载完成后重命名，可能包含替换的文件
     WaitingToRename = 0,

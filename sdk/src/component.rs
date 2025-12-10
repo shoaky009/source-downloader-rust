@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::SourceItem;
+use crate::{Deserialize, SourceItem};
 use crate::{Map, Value};
 use async_trait::async_trait;
 use http::Uri;
@@ -14,7 +14,7 @@ use std::hash::Hash;
 use std::io::Read;
 use std::sync::Arc;
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Deserialize)]
 pub enum ComponentRootType {
     Trigger,
     Source,
@@ -35,6 +35,27 @@ pub enum ComponentRootType {
 }
 
 impl ComponentRootType {
+    pub fn parse(str: &str) -> Result<Self, ComponentError> {
+        match str {
+            "trigger" => Ok(ComponentRootType::Trigger),
+            "source" => Ok(ComponentRootType::Source),
+            "downloader" => Ok(ComponentRootType::Downloader),
+            "item-file-resolver" => Ok(ComponentRootType::ItemFileResolver),
+            "file-mover" => Ok(ComponentRootType::FileMover),
+            "variable-provider" => Ok(ComponentRootType::VariableProvider),
+            "process-listener" => Ok(ComponentRootType::ProcessListener),
+            "source-item-filter" => Ok(ComponentRootType::SourceItemFilter),
+            "source-file-filter" => Ok(ComponentRootType::SourceFileFilter),
+            "item-content-filter" => Ok(ComponentRootType::ItemContentFilter),
+            "file-content-filter" => Ok(ComponentRootType::FileContentFilter),
+            "tagger" => Ok(ComponentRootType::Tagger),
+            "file-replacement-decider" => Ok(ComponentRootType::FileReplacementDecider),
+            "file-exists-detector" => Ok(ComponentRootType::FileExistsDetector),
+            "variable-replacer" => Ok(ComponentRootType::VariableReplacer),
+            "trimmer" => Ok(ComponentRootType::Trimmer),
+            _ => Err(ComponentError::from("Invalid component root type")),
+        }
+    }
     pub fn name(&self) -> &str {
         match self {
             ComponentRootType::Trigger => "trigger",
@@ -89,6 +110,23 @@ impl ComponentId {
             component_type,
             name: name.to_string(),
         }
+    }
+
+    pub fn parse(str: &str) -> Result<Self, ComponentError> {
+        let component_ref_pat = ":";
+        let split = str.split(component_ref_pat).collect::<Vec<&str>>();
+        if split.len() < 2 {
+            return Err(ComponentError::from("Invalid component id"));
+        }
+        let root_type_str = split.first().unwrap();
+        let root_type = ComponentRootType::parse(root_type_str)?;
+        Ok(ComponentId {
+            component_type: ComponentType {
+                root_type,
+                name: split[1].to_string(),
+            },
+            name: split.last().unwrap().to_string(),
+        })
     }
 
     pub fn display(&self) -> String {

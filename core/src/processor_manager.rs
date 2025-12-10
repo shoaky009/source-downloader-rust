@@ -51,7 +51,7 @@ impl ProcessorManager {
         self.register_task(&config, processor_wrapper);
     }
 
-    fn register_task(&self, config: &&ProcessorConfig, processor_wrapper: Arc<ProcessorWrapper>) {
+    fn register_task(&self, config: &ProcessorConfig, processor_wrapper: Arc<ProcessorWrapper>) {
         let processor_task = processor_wrapper.processor.as_ref().unwrap();
         for component_ref in config.triggers.iter() {
             let id = &ComponentRootType::Trigger.parse_component_id(component_ref);
@@ -79,6 +79,7 @@ impl ProcessorManager {
             match component.as_trigger() {
                 Ok(x) => {
                     x.add_task(processor_task.clone());
+                    info!("Processor[task-added] {} {}", config.name, component_ref);
                 }
                 Err(e) => {
                     error!("Trigger {} is not a trigger, cause: {}", component_ref, e);
@@ -132,7 +133,10 @@ impl ProcessorManager {
         let removed = self.processor_wrappers.write().remove(name);
         info!("Processor[destroying] {}", name);
         let Some(wrapper) = removed else { return };
-        debug!("ProcessorWp[on-destroy-arc] {}", Arc::strong_count(&wrapper));
+        debug!(
+            "ProcessorWp[on-destroy-arc] {}",
+            Arc::strong_count(&wrapper)
+        );
         let Some(processor) = &wrapper.processor else {
             return;
         };

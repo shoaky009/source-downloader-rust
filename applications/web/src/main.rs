@@ -1,16 +1,27 @@
+use axum::http::Uri;
+use axum::{Router, http::StatusCode, middleware, response::IntoResponse};
 use clap::{Args, Parser};
 use core::*;
+use problem_details::ProblemDetails;
 use sdk::ProcessingStorage;
-use std::path::Path;
+use std::fmt::Debug;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use storage_memory::MemoryProcessingStorage;
 use tokio::net::TcpListener;
+use tower_http::services::ServeDir;
 use tracing::log;
-use web::{ApplicationContext, app};
+use tracing_subscriber::fmt::time::OffsetTime;
+use web::{ApplicationContext, app, component, error_handle, path, processing, processor};
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt().try_init().unwrap();
+    tracing_subscriber::fmt()
+        .with_timer(OffsetTime::local_rfc_3339().unwrap())
+        .with_level(true)
+        .with_ansi(true)
+        .with_thread_names(true)
+        .init();
 
     let config = init_config();
     let storage = create_storage(&config.db);
@@ -75,15 +86,52 @@ fn create_core_application(
 }
 
 async fn run_web_server(core_application: Arc<ApplicationContext>, config: &ApplicationConfig) {
-    // 使用router模块中的register_routers函数获取配置好的路由
-    let app = app::router::register_routers(core_application);
+    let app_router = app::router::register_routers(core_application.clone());
+    let component_routers = component::router::register_routers(core_application.clone());
+    let processor_routers = processor::router::register_routers(core_application.clone());
+    let processing_routers = processing::router::register_routers(core_application.clone());
+    let path_routers = path::router::register_routers(core_application.clone());
+    let api_routers = app_router
+        .merge(component_routers)
+        .merge(processor_routers)
+        .merge(processing_routers)
+        .merge(path_routers)
+        .layer(middleware::from_fn(error_handle::error_handler));
+
+    let root_router = match &config.server.static_dir {
+        None => Router::new().nest("/api", api_routers),
+        Some(dir) => {
+            let dir_path = PathBuf::from(dir);
+            Router::new()
+                .nest("/api", api_routers)
+                .fallback_service(
+                    ServeDir::new(&dir_path)
+                        .precompressed_gzip()
+                        .precompressed_br(),
+                )
+                .fallback(move |uri: Uri| {
+                    let dir = dir_path.clone();
+                    async move { handle_spa_fallback(uri, dir).await }
+                })
+        }
+    };
 
     let addr = format!("{}:{}", config.server.host, config.server.port);
     let listener = TcpListener::bind(&addr).await.unwrap();
     log::info!("Web服务器已启动，监听 {}", &addr);
+    axum::serve(listener, root_router).await.unwrap();
+}
 
-    // 使用axum serve函数启动服务器
-    axum::serve(listener, app).await.unwrap();
+async fn handle_spa_fallback(uri: Uri, dir: PathBuf) -> impl IntoResponse {
+    if uri.path().starts_with("/api") {
+        let problem = ProblemDetails::from_status_code(StatusCode::NOT_FOUND);
+        return (StatusCode::NOT_FOUND, axum::Json(problem)).into_response();
+    }
+    let index_path = dir.join("index.html");
+    match tokio::fs::read(&index_path).await {
+        Ok(content) => axum::response::Html(content).into_response(),
+        Err(_) => (StatusCode::NOT_FOUND, "404 Not Found").into_response(),
+    }
 }
 
 struct ApplicationConfig {
@@ -97,6 +145,7 @@ impl Default for Server {
         Self {
             host: "0.0.0.0".to_string(),
             port: 8080,
+            static_dir: None,
         }
     }
 }
@@ -122,7 +171,7 @@ struct CliArgs {
     #[arg(long, short = 'p', env = "SOURCE_DOWNLOADER_PLUGIN_LOCATION")]
     plugin_location: Option<Box<Path>>,
     /// 配置文件路径, 默认在data_location下的config.yaml
-    #[arg(long, short = 'f')]
+    #[arg(long, short = 'f', env = "SOURCE_DOWNLOADER_CONFIG_FILE")]
     config_file: Option<Box<Path>>,
     #[command(flatten)]
     server: Server,
@@ -133,20 +182,41 @@ struct CliArgs {
 #[derive(Args, Debug)]
 struct Db {
     /// 数据库用户
-    #[arg(long = "db.username", default_value = "sd")]
+    #[arg(
+        long = "db.username",
+        env = "SOURCE_DOWNLOADER_DB_USERNAME",
+        default_value = "sd"
+    )]
     username: String,
     /// 数据库密码
-    #[arg(long = "db.password", default_value = "sd")]
+    #[arg(
+        long = "db.password",
+        env = "SOURCE_DOWNLOADER_DB_PASSWORD",
+        default_value = "sd"
+    )]
     password: String,
     /// 数据库URL, 默认sqlite:{data_location}/source-downloader.db
-    #[arg(long = "db.url")]
+    #[arg(long = "db.url", env = "SOURCE_DOWNLOADER_DB_URL")]
     url: Option<String>,
 }
 
 #[derive(Args, Debug)]
 struct Server {
-    #[arg(long = "server.host", default_value = "0.0.0.0")]
+    #[arg(
+        long = "server.host",
+        env = "SOURCE_DOWNLOADER_SERVER_HOST",
+        default_value = "0.0.0.0"
+    )]
     host: String,
-    #[arg(long = "server.port", default_value_t = 8080)]
+    #[arg(
+        long = "server.port",
+        env = "SOURCE_DOWNLOADER_SERVER_PORT",
+        default_value_t = 8080
+    )]
     port: u16,
+    #[arg(
+        long = "server.static_dir",
+        env = "SOURCE_DOWNLOADER_SERVER_STATIC_DIR"
+    )]
+    static_dir: Option<String>,
 }

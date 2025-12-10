@@ -1,4 +1,4 @@
-use crate::error::error_handle::error_handler;
+use crate::error_handle::error_handler;
 use crate::ApplicationContext;
 use axum::extract::State;
 use axum::routing::get;

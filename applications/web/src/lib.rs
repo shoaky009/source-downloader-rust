@@ -2,12 +2,12 @@ use core::CoreApplication;
 use sdk::ProcessingStorage;
 use std::sync::Arc;
 
-pub mod dao;
-pub mod error;
-pub mod model;
-pub mod service;
-
 pub mod app;
+pub mod component;
+pub mod error_handle;
+pub mod processor;
+pub mod processing;
+pub mod path;
 
 pub struct ApplicationContext {
     pub core: Arc<CoreApplication>,

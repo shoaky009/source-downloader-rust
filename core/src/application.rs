@@ -92,6 +92,7 @@ impl CoreApplication {
         self.destroy_all_component();
         self.destroy_all_instance();
         self.create_processors();
+        self.start_triggers();
     }
 
     fn destroy_all_processor(&self) {

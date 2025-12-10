@@ -1,6 +1,6 @@
 use sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, ProcessTask, SdComponent, SdComponentMetadata,
-    TaskRegistry, Trigger,
+    ComponentError, ComponentSupplier, ComponentType, ProcessTask, SdComponent,
+    SdComponentMetadata, TaskRegistry, Trigger,
 };
 use sdk::{Map, SdComponent, Value};
 use std::fmt::Debug;
@@ -27,10 +27,14 @@ impl ComponentSupplier for FixedScheduleTriggerSupplier {
             .ok_or_else(|| ComponentError::from("Invalid 'interval' property"))?;
         let interval = humantime::parse_duration(interval_str)
             .map_err(|e| ComponentError::from(e.to_string() + " for 'interval' property"))?;
-        let on_start_run_tasks = props
-            .get("on-start-run-tasks")
-            .map(|v| v.as_bool())
-            .is_none_or(|_| false);
+
+        let on_start_run_tasks = match props.get("on-start-run-tasks") {
+            None => false,
+            Some(v) => match v {
+                Value::Bool(b) => *b,
+                _ => return Err("on-start-run-tasks 必须是 true or false".into()),
+            },
+        };
 
         Ok(Arc::new(FixedScheduleTrigger::new(
             interval,
@@ -43,8 +47,9 @@ impl ComponentSupplier for FixedScheduleTriggerSupplier {
     }
 }
 
-#[derive(SdComponent)]
-#[component(Trigger)]
+// TODO 解决实现get_state_detail带来的冲突
+// #[derive(SdComponent)]
+// #[component(Trigger)]
 struct FixedScheduleTrigger {
     interval: Duration,
     on_start_run_tasks: bool,
@@ -63,6 +68,21 @@ impl FixedScheduleTrigger {
     }
 }
 
+impl SdComponent for FixedScheduleTrigger {
+    fn as_trigger(self: Arc<Self>) -> Result<Arc<dyn Trigger>, ComponentError> {
+        Ok(self)
+    }
+
+    fn get_state_detail(&self) -> Option<Map<String, Value>> {
+        let mut state = Map::new();
+        state.insert(
+            "running".to_string(),
+            Value::Bool(self.worker_handle.lock().unwrap().is_some()),
+        );
+        Some(state)
+    }
+}
+
 impl Trigger for FixedScheduleTrigger {
     fn start(&self) {
         let mut handle_lock = self.worker_handle.lock().unwrap();
@@ -71,7 +91,7 @@ impl Trigger for FixedScheduleTrigger {
             return;
         }
 
-        let tasks_arc = self.task_registry.tasks.clone();
+        let tasks = self.task_registry.tasks.clone();
         let duration = self.interval;
         let run_on_start = self.on_start_run_tasks;
 
@@ -84,8 +104,7 @@ impl Trigger for FixedScheduleTrigger {
 
             loop {
                 interval_timer.tick().await;
-                let tasks_to_run = tasks_arc.read().clone();
-                for task in tasks_to_run {
+                for task in tasks.read().clone() {
                     //TODO grouping tasks, then run them in parallel await task.execute()
                     tokio::spawn(async move {
                         let _ = task.run().await;
@@ -112,7 +131,11 @@ impl Trigger for FixedScheduleTrigger {
     }
 
     fn add_task(&self, task: Arc<dyn ProcessTask>) {
-        self.task_registry.add(task)
+        self.task_registry.add(task);
+        info!(
+            "Current task count: {}",
+            self.task_registry.tasks.read().len()
+        );
     }
 
     fn remove_task(&self, task: Arc<dyn ProcessTask>) {
@@ -135,6 +158,12 @@ impl Debug for FixedScheduleTrigger {
                 &self.worker_handle.lock().unwrap().is_some(),
             )
             .finish()
+    }
+}
+
+impl Drop for FixedScheduleTrigger {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 
