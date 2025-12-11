@@ -143,14 +143,17 @@ impl Stream for ComponentStateStream {
                     .filter(|x| self.component_ids.contains(&x.id))
                     .collect::<Vec<_>>();
                 for wrapper in &components {
-                    if let Some(component) = &wrapper.component {
-                        if let Some(state) = component.get_state_detail() {
-                            let event = Event::default()
-                                .id(wrapper.id.display())
-                                .event("component-state")
-                                .data(sdk::to_string(&state).unwrap_or("{}".to_string()));
-                            return Poll::Ready(Some(Ok(event)));
-                        }
+                    if let Some(state) = &wrapper
+                        .component
+                        .clone()
+                        .and_then(|x| x.as_stateful())
+                        .and_then(|x| x.get_state_detail())
+                    {
+                        let event = Event::default()
+                            .id(wrapper.id.display())
+                            .event("component-state")
+                            .data(sdk::to_string(&state).unwrap_or("{}".to_string()));
+                        return Poll::Ready(Some(Ok(event)));
                     }
                 }
                 Poll::Ready(None)

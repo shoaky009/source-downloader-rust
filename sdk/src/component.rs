@@ -325,6 +325,12 @@ pub trait SdComponent: Any + Send + Sync + Debug {
     fn as_async_downloader(self: Arc<Self>) -> Result<Arc<dyn AsyncDownloader>, ComponentError> {
         Err(ComponentError::from("Not a async downloader component"))
     }
+    fn as_stateful(self: Arc<Self>) -> Option<Arc<dyn Stateful>> {
+        None
+    }
+}
+
+pub trait Stateful: SdComponent {
     fn get_state_detail(&self) -> Option<Map<String, Value>> {
         None
     }

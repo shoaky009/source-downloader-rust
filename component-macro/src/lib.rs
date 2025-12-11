@@ -19,10 +19,19 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
 
     let methods = trait_paths.iter().map(|path| {
         let trait_ident = &path.segments.last().unwrap().ident;
+        let trait_name = trait_ident.to_string();
         let method_name = format_ident!("as_{}", to_snake_case(trait_ident.to_string().as_str()));
-        quote! {
-            fn #method_name(self: std::sync::Arc<Self>) -> Result<std::sync::Arc<dyn #path>, sdk::component::ComponentError> {
-                Ok(self)
+        if trait_name == "Stateful" {
+            quote! {
+                fn #method_name(self: std::sync::Arc<Self>) -> Option<std::sync::Arc<dyn #path>> {
+                    None
+                }
+            }
+        } else {
+            quote! {
+                fn #method_name(self: std::sync::Arc<Self>) -> Result<std::sync::Arc<dyn #path>, sdk::component::ComponentError> {
+                    Ok(self)
+                }
             }
         }
     });

@@ -1,6 +1,6 @@
 use sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ProcessTask, SdComponent,
-    SdComponentMetadata, TaskRegistry, Trigger,
+    SdComponentMetadata, Stateful, TaskRegistry, Trigger,
 };
 use sdk::{Map, SdComponent, Value};
 use std::fmt::Debug;
@@ -47,9 +47,8 @@ impl ComponentSupplier for FixedScheduleTriggerSupplier {
     }
 }
 
-// TODO 解决实现get_state_detail带来的冲突
-// #[derive(SdComponent)]
-// #[component(Trigger)]
+#[derive(SdComponent)]
+#[component(Trigger, Stateful)]
 struct FixedScheduleTrigger {
     interval: Duration,
     on_start_run_tasks: bool,
@@ -68,11 +67,7 @@ impl FixedScheduleTrigger {
     }
 }
 
-impl SdComponent for FixedScheduleTrigger {
-    fn as_trigger(self: Arc<Self>) -> Result<Arc<dyn Trigger>, ComponentError> {
-        Ok(self)
-    }
-
+impl Stateful for FixedScheduleTrigger {
     fn get_state_detail(&self) -> Option<Map<String, Value>> {
         let mut state = Map::new();
         state.insert(

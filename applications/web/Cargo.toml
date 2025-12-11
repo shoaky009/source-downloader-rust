@@ -1,5 +1,6 @@
 [package]
 name = "web"
+version = "0.1.0"
 edition = "2024"
 
 [lib]
@@ -20,7 +21,7 @@ tracing-subscriber = { workspace = true, features = ["fmt", "time", "std", "loca
 axum = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
-serde_qs = "1.0.0-rc.3"
+serde_qs = { workspace = true }
 parking_lot = { workspace = true }
 clap = { workspace = true }
 problem_details = { workspace = true }

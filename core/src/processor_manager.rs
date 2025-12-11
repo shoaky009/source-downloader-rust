@@ -48,7 +48,7 @@ impl ProcessorManager {
                 return;
             }
         };
-        self.register_task(&config, processor_wrapper);
+        self.register_task(config, processor_wrapper);
     }
 
     fn register_task(&self, config: &ProcessorConfig, processor_wrapper: Arc<ProcessorWrapper>) {
