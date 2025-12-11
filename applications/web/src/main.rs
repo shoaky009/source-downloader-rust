@@ -1,5 +1,5 @@
 use axum::http::Uri;
-use axum::{Router, http::StatusCode, middleware, response::IntoResponse};
+use axum::{http::StatusCode, middleware, response::IntoResponse, Router};
 use clap::{Args, Parser};
 use core::*;
 use problem_details::ProblemDetails;
@@ -7,12 +7,12 @@ use sdk::ProcessingStorage;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use storage_memory::MemoryProcessingStorage;
+use storage_sqlite::SeaProcessingStorage;
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
-use tracing::log;
+use tracing::{info, log};
 use tracing_subscriber::fmt::time::OffsetTime;
-use web::{ApplicationContext, app, component, error_handle, path, processing, processor};
+use web::{app, component, error_handle, path, processing, processor, ApplicationContext};
 
 #[tokio::main]
 async fn main() {
@@ -24,7 +24,7 @@ async fn main() {
         .init();
 
     let config = init_config();
-    let storage = create_storage(&config.db);
+    let storage = create_storage(&config.db).await;
     let core = create_core_application(&storage, &config.source_downloader);
 
     core.plugin_manager
@@ -51,15 +51,22 @@ fn init_config() -> ApplicationConfig {
     }
 }
 
-fn create_storage(_config: &Db) -> Arc<dyn ProcessingStorage> {
-    // TODO change to sqlite
-    Arc::new(MemoryProcessingStorage::new())
+async fn create_storage(config: &Db) -> Arc<dyn ProcessingStorage> {
+    let url = config
+        .url
+        .clone()
+        .unwrap_or_else(|| "sqlite::memory:".to_string());
+    let url = &url;
+    info!("Using database url={}", url);
+    let storage = SeaProcessingStorage::new(url).await.unwrap();
+    Arc::new(storage)
 }
 
 fn create_core_application(
     processing_storage: &Arc<dyn ProcessingStorage>,
     config: &SourceDownloaderConfig,
 ) -> CoreApplication {
+    info!("Using data location={}", config.data_location.display());
     let config_path = config.data_location.join("config.yaml");
     let config_operator = Arc::new(YamlConfigOperator::new_path(config_path.as_path()));
     config_operator.init().unwrap();
@@ -134,6 +141,7 @@ async fn handle_spa_fallback(uri: Uri, dir: PathBuf) -> impl IntoResponse {
     }
 }
 
+#[derive(Debug)]
 struct ApplicationConfig {
     server: Server,
     source_downloader: SourceDownloaderConfig,
@@ -151,6 +159,7 @@ impl Default for Server {
 }
 
 #[allow(dead_code, unused)]
+#[derive(Debug)]
 struct SourceDownloaderConfig {
     data_location: Box<Path>,
     plugin_location: Option<Box<Path>>,

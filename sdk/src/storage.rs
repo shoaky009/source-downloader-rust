@@ -1,37 +1,56 @@
-use crate::{Serialize, SourceItem};
+use crate::{Deserialize, Serialize, SourceItem};
+use async_trait::async_trait;
 use serde_json::{Map, Value};
-use time::PrimitiveDateTime;
+use time::{OffsetDateTime, UtcDateTime};
 
+#[async_trait]
 pub trait ProcessingStorage: Send + Sync {
-    fn save_processing_content(&self, content: &ProcessingContent);
-    fn find_rename_content(
+    /// If [content.id] is None, required to return a new [ProcessingContent] with id.
+    async fn save_processing_content(
         &self,
-        processor_name: &str,
-        rename_times_threshold: i32,
-    ) -> Vec<ProcessingContent>;
-    fn find_by_name_and_hash(
+        content: &ProcessingContent,
+    ) -> Result<ProcessingContent, Error>;
+    async fn delete_processing_content(&self, id: i64) -> Result<(), Error>;
+    async fn find_by_name_and_hash(
         &self,
         processor_name: &str,
         item_hash: &str,
-    ) -> Option<ProcessingContent>;
-    fn find_content_by_id(&self, id: &str) -> Option<ProcessingContent>;
+    ) -> Result<Option<ProcessingContent>, Error>;
+    async fn find_content_by_id(&self, id: i64) -> Result<Option<ProcessingContent>, Error>;
+    async fn query_processing_content(
+        &self,
+        query: &ProcessingContentQuery,
+    ) -> Result<Vec<ProcessingContent>, Error>;
+
+    async fn find_processor_source_state(
+        &self,
+        processor_name: &str,
+        source_id: &str,
+    ) -> Result<Option<ProcessorSourceState>, Error>;
+    /// If [state.id] is None, required to return a new [ProcessingContent] with id.
+    async fn save_processor_source_state(
+        &self,
+        state: &ProcessorSourceState,
+    ) -> Result<ProcessorSourceState, Error>;
+
+    async fn save_paths(&self, paths: Vec<ProcessingTargetPath>) -> Result<(), Error>;
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProcessingContent {
-    pub id: String,
+    pub id: Option<i64>,
     pub processor_name: String,
     pub item_hash: String,
     pub item_identity: Option<String>,
     pub item_content: ItemContentLite,
-    pub rename_times: i32,
+    pub rename_times: u32,
     pub status: ProcessingStatus,
     pub failure_reason: Option<String>,
-    pub created_at: PrimitiveDateTime,
-    pub updated_at: Option<PrimitiveDateTime>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: Option<OffsetDateTime>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ItemContentLite {
     pub source_item: SourceItem,
     pub item_variables: Map<String, Value>,
@@ -79,4 +98,38 @@ impl From<i32> for ProcessingStatus {
             _ => ProcessingStatus::Failure,
         }
     }
+}
+
+pub struct ProcessingContentQuery {
+    pub processor_name: Option<Vec<String>>,
+    pub rename_times_threshold: Option<u32>,
+    pub item_hash: Option<Vec<String>>,
+    pub item_identity: Option<Vec<String>>,
+    pub status: Option<Vec<ProcessingStatus>>,
+    pub created_at_start: Option<UtcDateTime>,
+    pub created_at_end: Option<UtcDateTime>,
+    pub max_id: Option<i64>,
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProcessorSourceState {
+    pub id: Option<i64>,
+    pub processor_name: String,
+    pub source_id: String,
+    pub last_pointer: Map<String, Value>,
+    pub retry_times: u32,
+    pub last_active_at: Option<UtcDateTime>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProcessingTargetPath {
+    pub path: String,
+    pub processor_name: String,
+    pub item_hash: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct Error {
+    pub message: String,
 }

@@ -16,15 +16,15 @@ time = "0.3"
 libloading = "0.9"
 syn = "2.0"
 quote = "1.0"
-tempfile = "3.19"
+tempfile = "3"
 parking_lot = "0.12"
 cel = "0.11"
-humantime = "2.3.0"
+humantime = "2.3"
 clap = { version = "4", features = ["derive", "env"] }
 
-moka = { version = "0.12.10", features = ["sync"] }
-axum = { version = "0.8.3", features = ["macros"] }
-tokio = { version = "1.44.2", features = ["full"] }
+moka = { version = "0.12", features = ["sync"] }
+axum = { version = "0.8", features = ["macros"] }
+tokio = { version = "1.4", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 problem_details = "0.9"
@@ -32,3 +32,7 @@ async-trait = "0.1"
 tower-http = { version = "0.6" }
 futures-util = { version = "0.3", default-features = false }
 serde_qs = "1.0.0-rc.3"
+
+# 使用cargo tree -p sea-orm -i sqlx查看sea-orm依赖的版本, 因为不喜欢用sea-orm的migration改用sqlx的方式
+sea-orm = { version = "2.0.0-rc.20" }
+sqlx = { version = "0.8.6" }

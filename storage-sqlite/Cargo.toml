@@ -4,4 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
+sdk = { path = "../sdk" }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true, features = ["local-offset"] }
+async-trait = { workspace = true }
+sea-orm = { workspace = true, features = ["runtime-tokio", "sqlx-sqlite", "with-json", "time", "with-time"] }
+sqlx = { workspace = true, features = ["migrate"] }
+
+[dev-dependencies]
+uuid = { version = "1.16.0", features = ["v4"] }

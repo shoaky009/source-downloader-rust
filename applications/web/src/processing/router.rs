@@ -4,7 +4,7 @@ use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use core::CoreApplication;
 use sdk::{
-    Deserialize, ItemContentLite, OffsetDateTime, PrimitiveDateTime, ProcessingContent,
+    Deserialize, ItemContentLite, OffsetDateTime, ProcessingContent,
     ProcessingStatus, SourceItem, UtcDateTime,
 };
 use std::sync::Arc;
@@ -28,12 +28,11 @@ pub fn register_routers(core_application: Arc<ApplicationContext>) -> Router {
 #[axum::debug_handler]
 async fn get_content(
     State(_): State<Arc<CoreApplication>>,
-    Path(id): Path<String>,
+    Path(id): Path<i64>,
 ) -> Json<ProcessingContent> {
     info!("get_content id={}", id);
-    let now = UtcDateTime::now();
     ProcessingContent {
-        id,
+        id: Some(id),
         processor_name: "www".to_string(),
         item_hash: "aaa".to_string(),
         item_identity: None,
@@ -52,7 +51,7 @@ async fn get_content(
         rename_times: 0,
         status: ProcessingStatus::Renamed,
         failure_reason: None,
-        created_at: PrimitiveDateTime::new(now.date(), now.time()),
+        created_at: OffsetDateTime::now_utc(),
         updated_at: None,
     }
     .into()
@@ -117,9 +116,9 @@ struct QueryContents {
     #[serde(rename = "itemHash")]
     item_hash: Option<Vec<String>>,
     #[serde(rename = "createTime.begin")]
-    create_time_begin: Option<PrimitiveDateTime>,
+    create_time_begin: Option<UtcDateTime>,
     #[serde(rename = "createTime.end")]
-    create_time_end: Option<PrimitiveDateTime>,
+    create_time_end: Option<UtcDateTime>,
     //TODO item condition
 }
 

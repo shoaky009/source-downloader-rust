@@ -111,7 +111,7 @@ impl Trigger for FixedScheduleTrigger {
         *handle_lock = Some(join_handle.abort_handle());
 
         info!(
-            "Trigger started, interval: {}, on_start_run_tasks: {}",
+            "Trigger started, interval={} on_start_run_tasks={}",
             humantime::format_duration(duration).to_string(),
             run_on_start
         );

@@ -1,10 +1,15 @@
-use sdk::{ProcessingContent, ProcessingStorage};
+use async_trait::async_trait;
+use sdk::{
+    Error, ProcessingContent, ProcessingContentQuery, ProcessingStorage, ProcessingTargetPath,
+    ProcessorSourceState,
+};
 use std::collections::HashMap;
 use std::sync::RwLock;
 
 #[derive(Default)]
+#[allow(dead_code)]
 pub struct MemoryProcessingStorage {
-    contents: RwLock<HashMap<String, ProcessingContent>>,
+    contents: RwLock<HashMap<i64, ProcessingContent>>,
 }
 
 impl MemoryProcessingStorage {
@@ -15,46 +20,57 @@ impl MemoryProcessingStorage {
     }
 }
 
+#[async_trait]
 impl ProcessingStorage for MemoryProcessingStorage {
-    fn save_processing_content(&self, content: &ProcessingContent) {
-        self.contents.write().unwrap().insert(content.id.clone(), content.clone());
-    }
-
-    fn find_rename_content(
+    async fn save_processing_content(
         &self,
-        processor_name: &str,
-        rename_times_threshold: i32,
-    ) -> Vec<ProcessingContent> {
-        self.contents
-            .read()
-            .unwrap()
-            .values()
-            .filter(|c| {
-                c.processor_name == processor_name && c.rename_times >= rename_times_threshold
-            })
-            .cloned()
-            .collect::<Vec<ProcessingContent>>()
+        _: &ProcessingContent,
+    ) -> Result<ProcessingContent, Error> {
+        todo!()
     }
 
-    fn find_by_name_and_hash(
+    async fn delete_processing_content(&self, _: i64) -> Result<(), Error> {
+        todo!()
+    }
+
+    async fn find_by_name_and_hash(
         &self,
-        processor_name: &str,
-        item_hash: &str,
-    ) -> Option<ProcessingContent> {
-        self.contents
-            .read()
-            .unwrap()
-            .values()
-            .find(|c| c.processor_name == processor_name && c.item_hash == item_hash)
-            .cloned()
+        _: &str,
+        _: &str,
+    ) -> Result<Option<ProcessingContent>, Error> {
+        todo!()
     }
 
-    fn find_content_by_id(&self, id: &str) -> Option<ProcessingContent> {
-        self.contents.read().unwrap().get(id).cloned()
+    async fn find_content_by_id(&self, _: i64) -> Result<Option<ProcessingContent>, Error> {
+        todo!()
+    }
+
+    async fn query_processing_content(
+        &self,
+        _: &ProcessingContentQuery,
+    ) -> Result<Vec<ProcessingContent>, Error> {
+        todo!()
+    }
+
+    async fn find_processor_source_state(
+        &self,
+        _: &str,
+        _: &str,
+    ) -> Result<Option<ProcessorSourceState>, Error> {
+        todo!()
+    }
+
+    async fn save_processor_source_state(
+        &self,
+        _: &ProcessorSourceState,
+    ) -> Result<ProcessorSourceState, Error> {
+        todo!()
+    }
+
+    async fn save_paths(&self, _: Vec<ProcessingTargetPath>) -> Result<(), Error> {
+        todo!()
     }
 }
 
 #[cfg(test)]
-mod tests {
-
-}
+mod tests {}

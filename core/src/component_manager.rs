@@ -13,6 +13,7 @@ use tracing::info;
 pub struct ComponentManager {
     config_operator: Arc<dyn ConfigOperator>,
     component_suppliers: RwLock<HashMap<ComponentType, Arc<dyn ComponentSupplier>>>,
+    // TODO wrapper最好是Box但是这里偷懒了
     component_wrappers: RwLock<HashMap<String, Arc<ComponentWrapper>>>,
 }
 
