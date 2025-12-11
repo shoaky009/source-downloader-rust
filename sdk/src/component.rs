@@ -14,6 +14,7 @@ use std::hash::Hash;
 use std::io::Read;
 use std::sync::Arc;
 
+pub const COMPONENT_REF_PAT: &str = ":";
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Deserialize)]
 pub enum ComponentRootType {
     Trigger,
@@ -112,10 +113,10 @@ impl ComponentId {
         }
     }
 
+    /// Legal format are `root_type:type_name:name` `root_type:type_name`
     pub fn parse(str: &str) -> Result<Self, ComponentError> {
-        let component_ref_pat = ":";
-        let split = str.split(component_ref_pat).collect::<Vec<&str>>();
-        if split.len() < 2 {
+        let split = str.split(COMPONENT_REF_PAT).collect::<Vec<&str>>();
+        if split.len() > 3 || split.len() < 2 {
             return Err(ComponentError::from("Invalid component id"));
         }
         let root_type_str = split.first().unwrap();
@@ -131,15 +132,18 @@ impl ComponentId {
 
     pub fn display(&self) -> String {
         format!(
-            "{}:{}:{}",
+            "{}{}{}{}{}",
             self.component_type.root_type.name(),
+            COMPONENT_REF_PAT,
             self.component_type.name,
+            COMPONENT_REF_PAT,
             self.name
         )
     }
 }
 
 impl ComponentType {
+    /// name不能包含:目前没做校验
     pub fn trigger(name: String) -> ComponentType {
         ComponentType {
             root_type: ComponentRootType::Trigger,
@@ -630,5 +634,35 @@ impl TaskRegistry {
 
     pub fn remove(&self, task: Arc<dyn ProcessTask>) {
         self.tasks.write().retain(|t| !Arc::ptr_eq(t, &task));
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::component::{ComponentId, ComponentRootType};
+
+    #[test]
+    fn parse_component_id_given_raw_string() {
+        let component_id = ComponentId::parse("source:test").unwrap();
+        assert_eq!(
+            ComponentRootType::Source,
+            component_id.component_type.root_type
+        );
+        assert_eq!("test", component_id.component_type.name);
+        assert_eq!("test", component_id.name);
+
+        let component_id = ComponentId::parse("source:system:test").unwrap();
+        assert_eq!(
+            ComponentRootType::Source,
+            component_id.component_type.root_type
+        );
+        assert_eq!("system", component_id.component_type.name);
+        assert_eq!("test", component_id.name);
+
+        let component_id = ComponentId::parse("source");
+        assert!(component_id.is_err());
+
+        let component_id = ComponentId::parse("source:aa:ss:dd");
+        assert!(component_id.is_err());
     }
 }

@@ -29,6 +29,6 @@ pub struct PluginDescription {
 
 impl Display for PluginDescription {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{}:{}", self.name, self.version)
+        write!(f, "{}:{}", self.name, self.version)
     }
 }

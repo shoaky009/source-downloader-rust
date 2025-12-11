@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::task::AbortHandle;
 use tokio::time::MissedTickBehavior;
-use tracing::info;
+use tracing::{debug, info};
 
 pub struct FixedScheduleTriggerSupplier;
 pub const SUPPLIER: FixedScheduleTriggerSupplier = FixedScheduleTriggerSupplier {};
@@ -127,7 +127,7 @@ impl Trigger for FixedScheduleTrigger {
 
     fn add_task(&self, task: Arc<dyn ProcessTask>) {
         self.task_registry.add(task);
-        info!(
+        debug!(
             "Current task count: {}",
             self.task_registry.tasks.read().len()
         );
@@ -135,7 +135,7 @@ impl Trigger for FixedScheduleTrigger {
 
     fn remove_task(&self, task: Arc<dyn ProcessTask>) {
         self.task_registry.remove(task);
-        info!(
+        debug!(
             "Current task count: {}",
             self.task_registry.tasks.read().len()
         );

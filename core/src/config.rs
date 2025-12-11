@@ -116,14 +116,14 @@ impl YamlConfigOperator {
             Ok(cwd) => cwd.join(config_path),
             Err(_) => config_path.to_path_buf(),
         };
-        info!("Config path located at: {}", display_path.display());
+        info!("Config file located at: {}", display_path.display());
         if let Some(parent) = self.config_path.parent().filter(|p| !p.exists()) {
             fs::create_dir_all(parent)
                 .map_err(|e| ComponentError::new(format!("Failed to create directory: {}", e)))?;
         }
 
         if !self.config_path.exists() {
-            info!("Config file not found, creating a empty file");
+            info!("Config file not exists, creating a default config file");
             let mut file = OpenOptions::new()
                 .append(true)
                 .create(true)
