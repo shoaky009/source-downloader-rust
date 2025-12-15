@@ -2,6 +2,13 @@ use async_trait::async_trait;
 use sdk::component::{ProcessTask, Source, VariableProvider};
 use std::sync::Arc;
 use tracing::info;
+// 这些导入是为了让 async_trait 宏在文档测试中能够正确工作
+#[doc(hidden)]
+pub use std::pin;
+#[doc(hidden)]
+pub use std::future;
+#[doc(hidden)]
+pub use std::marker;
 
 pub struct SourceProcessor {
     pub name: String,
