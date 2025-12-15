@@ -24,7 +24,7 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
         if trait_name == "Stateful" {
             quote! {
                 fn #method_name(self: std::sync::Arc<Self>) -> Option<std::sync::Arc<dyn #path>> {
-                    None
+                    Some(self)
                 }
             }
         } else {

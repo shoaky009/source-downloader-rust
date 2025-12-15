@@ -34,6 +34,15 @@ pub struct ProcessorConfig {
     #[serde(default)]
     pub triggers: Vec<String>,
     pub source: String,
+    #[serde(default)]
+    pub options: ProcessorOptionConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct ProcessorOptionConfig {
+    pub save_path_pattern: String,
+    pub filename_pattern: String,
+    pub variable_providers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -58,6 +67,8 @@ impl Properties {
 
 #[allow(dead_code, unused)]
 pub trait ConfigOperator: Send + Sync {
+    fn get_processor_config(&self, name: &str) -> Option<ProcessorConfig>;
+
     fn get_all_processor_config(&self) -> Vec<ProcessorConfig>;
 
     fn get_all_component_config(&self) -> HashMap<String, Vec<ComponentConfig>>;
@@ -182,6 +193,13 @@ struct Config {
 }
 
 impl ConfigOperator for YamlConfigOperator {
+
+    fn get_processor_config(&self, name: &str) -> Option<ProcessorConfig> {
+        self.get_config()
+            .map(|config| config.processors.iter().find(|p| p.name == name).cloned())
+            .unwrap_or_default()
+    }
+
     fn get_all_processor_config(&self) -> Vec<ProcessorConfig> {
         self.get_config()
             .map(|config| config.processors.clone())

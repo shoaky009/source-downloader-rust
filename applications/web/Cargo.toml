@@ -17,7 +17,7 @@ storage-sqlite = { path = "../../storage-sqlite" }
 storage-memory = { path = "../../storage-memory" }
 common = { path = "../../plugins/common" }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["fmt", "time", "std", "local-time"] }
+tracing-subscriber = { workspace = true, features = ["fmt", "time", "std", "local-time", "env-filter"] }
 axum = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

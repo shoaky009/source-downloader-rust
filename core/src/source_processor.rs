@@ -4,11 +4,14 @@ use std::sync::Arc;
 use tracing::info;
 // 这些导入是为了让 async_trait 宏在文档测试中能够正确工作
 #[doc(hidden)]
-pub use std::pin;
-#[doc(hidden)]
 pub use std::future;
 #[doc(hidden)]
 pub use std::marker;
+#[doc(hidden)]
+pub use std::pin;
+use std::sync::atomic::AtomicI64;
+
+static GLOBAL_ID: AtomicI64 = AtomicI64::new(i64::MIN);
 
 pub struct SourceProcessor {
     pub name: String,
@@ -20,6 +23,7 @@ pub struct SourceProcessor {
     // file_mover: Arc<dyn FileMover>,
     // processing_storage: Arc<dyn ProcessingStorage>,
     pub options: ProcessorOptions,
+    instance_id: i64,
 }
 
 pub struct ProcessorOptions {
@@ -48,23 +52,29 @@ impl ProcessTask for SourceProcessor {
 
 impl SourceProcessor {
     pub fn new(
+        name: String,
         source_id: String,
         save_path: String,
         source: Arc<dyn Source>,
         options: ProcessorOptions,
     ) -> Self {
         Self {
-            name: source_id.clone(),
+            name,
             source_id,
             save_path,
             source,
             options,
+            instance_id: GLOBAL_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
+    }
+
+    pub fn instance_id(&self) -> i64 {
+        self.instance_id
     }
 }
 
 impl Drop for SourceProcessor {
     fn drop(&mut self) {
-        info!("Processor[dropped] {}", self.name);
+        info!("Processor[dropped] {}({})", self.name, self.instance_id);
     }
 }

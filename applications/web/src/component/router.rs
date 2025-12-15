@@ -10,7 +10,7 @@ use core::application::CoreApplication;
 use core::component_manager::ComponentManager;
 use core::config::ComponentConfig;
 use futures_util::Stream;
-use sdk::component::{ComponentId, ComponentRootType};
+use sdk::component::{ComponentError, ComponentId, ComponentRootType, ComponentType};
 use sdk::serde::Deserialize;
 use std::collections::HashSet;
 use std::convert::Infallible;
@@ -42,7 +42,7 @@ pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
 
 #[axum::debug_handler]
 async fn query_components(
-    State(_): State<Arc<core::application::CoreApplication>>,
+    State(_): State<Arc<CoreApplication>>,
     Query(query): Query<ComponentQuery>,
 ) -> Json<Vec<String>> {
     info!(
@@ -58,7 +58,9 @@ async fn query_components(
 async fn save_component(
     State(core): State<Arc<CoreApplication>>,
     Json(request): Json<ComponentCreationRequest>,
-) -> Json<String> {
+) -> Result<(), AppError> {
+    check_request(&core, &request)?;
+
     core.config_operator.save_component(
         &request.root_type,
         ComponentConfig {
@@ -66,45 +68,84 @@ async fn save_component(
             name: request.name,
             props: request.props,
         },
-    );
-    Json("".to_string())
-}
-
-#[derive(Deserialize)]
-struct ComponentCreationRequest {
-    root_type: ComponentRootType,
-    type_name: String,
-    name: String,
-    #[serde(default)]
-    props: sdk::serde_json::Map<String, sdk::serde_json::Value>,
+    )?;
+    Ok(())
 }
 
 #[axum::debug_handler]
 async fn delete_component(
-    State(_): State<Arc<CoreApplication>>,
+    State(core): State<Arc<CoreApplication>>,
     Path(path): Path<ComponentIdPath>,
-) -> () {
-    info!(
-        "delete_component: {}:{}:{}",
-        path.root_type, path.type_name, path.name
+) -> Result<(), AppError> {
+    let id = ComponentId::new(
+        ComponentType {
+            root_type: path.root_type.to_owned(),
+            name: path.type_name.to_owned(),
+        },
+        &path.name,
     );
+    let wp = core.component_manager.get_component(&id);
+    if let Ok(wp) = wp {
+        let refs = wp.get_refs();
+        if !refs.is_empty() {
+            return Err(AppError::BadRequest(format!(
+                "Component has been referenced by other processor, can not be deleted. {}",
+                refs.iter().cloned().collect::<Vec<String>>().join(", ")
+            )));
+        }
+    }
+    core.config_operator
+        .delete_component(&path.root_type, &path.type_name, &path.name)?;
+    Ok(())
 }
 
 #[axum::debug_handler]
 async fn reload_component(
-    State(_): State<Arc<CoreApplication>>,
+    State(core): State<Arc<CoreApplication>>,
     Path(path): Path<ComponentIdPath>,
-) -> () {
-    info!(
-        "reload_component: {}:{}:{}",
+) -> Result<(), AppError> {
+    let id = ComponentId::parse(&format!(
+        "{}:{}:{}",
         path.root_type, path.type_name, path.name
-    );
+    ))?;
+    let removed = core.component_manager.destroy(&id);
+    if removed.is_none() {
+        return Err(AppError::NotFound("Component instance not found".to_string()));
+    };
+
+    for name in removed.unwrap().get_refs() {
+        let processor = core.processor_manager.get_processor(&name);
+        if processor.is_none() {
+            continue;
+        }
+
+        let config = core.config_operator.get_processor_config(&name);
+        if config.is_none() {
+            continue;
+        }
+        core.processor_manager.destroy_processor(&name);
+        core.processor_manager.create_processor(&config.unwrap());
+    }
+    Ok(())
 }
 
 #[axum::debug_handler]
-async fn all_types(State(_): State<Arc<CoreApplication>>) -> Json<Vec<String>> {
-    info!("all_types");
-    Json(vec![])
+async fn all_types(
+    State(core): State<Arc<CoreApplication>>,
+    Query(q): Query<TypesQuery>,
+) -> Json<Vec<ComponentTypeInfo>> {
+    Json(
+        core.component_manager
+            .get_all_suppliers()
+            .iter()
+            .flat_map(|x| x.supply_types())
+            .filter(|x| q.root_type.as_ref().map_or(true, |t| *t == x.root_type))
+            .map(|x| ComponentTypeInfo {
+                root_type: x.root_type,
+                name: x.name,
+            })
+            .collect::<Vec<_>>(),
+    )
 }
 
 #[axum::debug_handler]
@@ -131,6 +172,25 @@ async fn state_stream(
             .interval(Duration::from_secs(1))
             .text("keep-alive-text"),
     )
+}
+
+fn check_request(
+    core: &Arc<CoreApplication>,
+    request: &ComponentCreationRequest,
+) -> Result<(), ComponentError> {
+    let c_type = ComponentType {
+        root_type: request.root_type.clone(),
+        name: request.type_name.clone(),
+    };
+    let supplier = core.component_manager.get_supplier(&c_type);
+    if supplier.is_none() {
+        return Err(ComponentError::new(format!(
+            "ComponentType {} not register",
+            c_type
+        )));
+    }
+    let supplier = supplier.unwrap();
+    supplier.apply(&request.props).map(|_| ())
 }
 
 struct ComponentStateStream {
@@ -184,7 +244,7 @@ impl Stream for ComponentStateStream {
 
 #[derive(Deserialize)]
 struct ComponentIdPath {
-    root_type: String,
+    root_type: ComponentRootType,
     type_name: String,
     name: String,
 }
@@ -203,6 +263,32 @@ struct ComponentIds {
     id: Vec<String>,
 }
 
+#[derive(Serialize)]
+struct ComponentTypeInfo {
+    #[serde(rename = "type")]
+    root_type: ComponentRootType,
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct TypesQuery {
+    #[serde(rename = "type")]
+    root_type: Option<ComponentRootType>,
+}
+
+#[derive(Deserialize)]
+struct ComponentCreationRequest {
+    #[serde(rename = "type")]
+    root_type: ComponentRootType,
+    #[serde(rename = "typeName")]
+    type_name: String,
+    name: String,
+    #[serde(default)]
+    props: sdk::serde_json::Map<String, sdk::serde_json::Value>,
+}
+
+use crate::error_handle::AppError;
+use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 struct Qs<T>(pub T);

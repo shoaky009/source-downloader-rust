@@ -16,16 +16,21 @@ use storage_sqlite::SeaProcessingStorage;
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
 use tracing::{info, log};
+use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::time::OffsetTime;
 use web::{app, component, error_handle, path, processing, processor, ApplicationContext};
 
 #[tokio::main]
 async fn main() {
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
         .with_timer(OffsetTime::local_rfc_3339().unwrap())
         .with_level(true)
         .with_ansi(true)
         .with_thread_names(true)
+        .with_thread_ids(true)
+        .with_env_filter(filter)
         .init();
 
     let config = init_config();

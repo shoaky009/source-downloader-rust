@@ -46,7 +46,7 @@ impl<T> From<std::sync::PoisonError<T>> for AppError {
 // 为 ComponentError 添加转换实现
 impl From<ComponentError> for AppError {
     fn from(err: ComponentError) -> Self {
-        Self::InternalError(format!("Component error: {}", err))
+        Self::BadRequest(err.message)
     }
 }
 
@@ -75,7 +75,11 @@ impl IntoResponse for AppError {
             ),
         };
 
-        log::error!("{}", self);
+        if status_code.as_u16() >= 500 {
+            log::error!("{}", self);
+        } else {
+            log::debug!("{}", self);
+        }
 
         let problem = ProblemDetails::from_status_code(status_code).with_title(title);
         let problem = if let Some(detail_msg) = detail {

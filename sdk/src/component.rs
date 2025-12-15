@@ -6,6 +6,7 @@ use crate::serde_json::{Map, Value};
 use async_trait::async_trait;
 use http::Uri;
 use parking_lot::RwLock;
+use serde::Serialize;
 use std::any::Any;
 use std::cmp::PartialEq;
 use std::collections::{HashMap, HashSet};
@@ -16,7 +17,8 @@ use std::io::Read;
 use std::sync::Arc;
 
 pub const COMPONENT_REF_PAT: &str = ":";
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ComponentRootType {
     Trigger,
     Source,
@@ -91,6 +93,12 @@ impl ComponentRootType {
             },
             name.to_owned(),
         )
+    }
+}
+
+impl Display for ComponentRootType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name())
     }
 }
 
@@ -320,6 +328,9 @@ pub trait SdComponent: Any + Send + Sync + Debug {
         self: Arc<Self>,
     ) -> Result<Arc<dyn ItemExistsDetector>, ComponentError> {
         Err(ComponentError::from("Not a item exists detector component"))
+    }
+    fn as_variable_provider(self: Arc<Self>) -> Result<Arc<dyn VariableProvider>, ComponentError> {
+        Err(ComponentError::from("Not a variable provider component"))
     }
     fn as_variable_replacer(self: Arc<Self>) -> Result<Arc<dyn VariableReplacer>, ComponentError> {
         Err(ComponentError::from("Not a variable replacer component"))

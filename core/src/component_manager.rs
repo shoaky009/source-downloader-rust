@@ -1,11 +1,10 @@
 ﻿#![allow(dead_code)]
 
-use crate::config::ComponentConfig;
 use crate::config::{ConfigOperator, Properties};
 use parking_lot::RwLock;
 use sdk::component::{
     ComponentError, ComponentId, ComponentRootType, ComponentSupplier, ComponentType, SdComponent,
-    SdComponentMetadata, Trigger,
+    Trigger,
 };
 use sdk::serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -127,7 +126,7 @@ impl ComponentManager {
                 component: component.clone(),
                 primary: x == &pk_type,
                 creation_error: error_message.to_owned(),
-                processor_ref: RwLock::new(HashSet::new()),
+                processor_refs: RwLock::new(HashSet::new()),
             });
 
             let key = wrapper.id.display();
@@ -186,11 +185,12 @@ impl ComponentManager {
         )))
     }
 
-    pub fn destroy(&self, id: &ComponentId) {
+    pub fn destroy(&self, id: &ComponentId) -> Option<Arc<ComponentWrapper>> {
         let instance_name = id.display();
         let mut guard = self.component_wrappers.write();
-        if guard.remove(&instance_name).is_none() {
-            return;
+        let removed = guard.remove(&instance_name);
+        if removed.is_none() {
+            return removed;
         }
 
         let type_ = &id.component_type;
@@ -202,6 +202,7 @@ impl ComponentManager {
                 }
             }
         }
+        removed
     }
 
     pub fn get_all_suppliers(&self) -> Vec<Arc<dyn ComponentSupplier>> {
@@ -210,6 +211,13 @@ impl ComponentManager {
             suppliers.push(supplier.clone());
         }
         suppliers
+    }
+
+    pub fn get_supplier(
+        &self,
+        component_type: &ComponentType,
+    ) -> Option<Arc<dyn ComponentSupplier>> {
+        self.component_suppliers.read().get(component_type).cloned()
     }
 
     pub fn destroy_all(&self) {
@@ -255,7 +263,7 @@ pub struct ComponentWrapper {
     pub component: Option<Arc<dyn SdComponent>>,
     pub primary: bool,
     pub creation_error: Option<String>,
-    processor_ref: RwLock<HashSet<String>>,
+    processor_refs: RwLock<HashSet<String>>,
 }
 
 impl ComponentWrapper {
@@ -271,14 +279,18 @@ impl ComponentWrapper {
     }
 
     pub fn get_and_mark_ref(&self, processor_name: &str) -> Option<Arc<dyn SdComponent>> {
-        self.processor_ref
+        self.processor_refs
             .write()
             .insert(processor_name.to_string());
         self.component.clone()
     }
 
     pub fn remove_ref(&self, processor_name: &str) {
-        self.processor_ref.write().remove(processor_name);
+        self.processor_refs.write().remove(processor_name);
+    }
+    
+    pub fn get_refs(&self) -> HashSet<String> {
+        self.processor_refs.read().clone()
     }
 }
 
@@ -286,57 +298,6 @@ impl Drop for ComponentWrapper {
     fn drop(&mut self) {
         debug!("Component[drop] {}", self.id.display());
     }
-}
-
-pub struct ComponentService {
-    pub component_manager: Arc<ComponentManager>,
-    pub operator: Arc<dyn ConfigOperator>,
-}
-
-// 后面看实际情况可能会合并到ComponentManager
-impl ComponentService {
-    pub fn new(
-        component_manager: Arc<ComponentManager>,
-        operator: Arc<dyn ConfigOperator>,
-    ) -> Self {
-        Self {
-            component_manager,
-            operator,
-        }
-    }
-    pub fn query_component(
-        &self,
-        query: &ComponentQuery,
-    ) -> Result<Vec<ComponentInfo>, ComponentError> {
-        Ok(vec![])
-    }
-
-    pub fn save_component(
-        &self,
-        id: &ComponentId,
-        props: Map<String, Value>,
-    ) -> Result<(), ComponentError> {
-        self.operator.save_component(
-            &id.component_type.root_type,
-            ComponentConfig {
-                name: id.name.clone(),
-                component_type: id.component_type.name.clone(),
-                props,
-            },
-        )?;
-        Ok(())
-    }
-
-    pub fn delete_component(&self, id: &ComponentId) -> Result<(), ComponentError> {
-        self.component_manager.destroy(id);
-        Ok(())
-    }
-
-    pub fn reload_component(&self, id: &ComponentId) -> Result<(), ComponentError> {
-        Ok(())
-    }
-
-    pub fn state_stream(&self, id: Vec<ComponentId>) {}
 }
 
 pub struct ComponentQuery {
@@ -360,12 +321,12 @@ pub struct ComponentInfo {
 
 #[cfg(test)]
 mod tests {
+    use crate::component_manager::ComponentManager;
     use crate::components::system_file_source::SystemFileSourceSupplier;
     use crate::config::{ConfigOperator, YamlConfigOperator};
     use sdk::component::{ComponentRootType, ComponentSupplier};
     use sdk::serde_json::Map;
     use std::sync::{Arc, OnceLock};
-    use crate::component_manager::ComponentManager;
 
     static CONFIG_OP: OnceLock<Arc<dyn ConfigOperator>> = OnceLock::new();
     fn get_config_op() -> &'static Arc<dyn ConfigOperator> {

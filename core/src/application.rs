@@ -105,7 +105,7 @@ impl CoreApplication {
 
     fn destroy_all_component(&self) {
         for wrapper in self.component_manager.get_all_component() {
-            self.component_manager.destroy(&wrapper.id)
+            self.component_manager.destroy(&wrapper.id);
         }
         info!("All components destroyed");
     }

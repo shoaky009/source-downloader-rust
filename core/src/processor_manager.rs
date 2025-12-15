@@ -1,17 +1,17 @@
+use crate::component_manager::ComponentManager;
 use crate::config::ProcessorConfig;
 use crate::source_processor::{ProcessorOptions, SourceProcessor};
 use parking_lot::RwLock;
+use sdk::component::{ComponentError, ComponentRootType, VariableProvider};
 use sdk::storage::ProcessingStorage;
-use sdk::component::{ComponentError, ComponentRootType};
 use std::collections::{HashMap, HashSet};
 use std::ops::Not;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
-use crate::component_manager::ComponentManager;
 
 pub struct ProcessorManager {
     component_manager: Arc<ComponentManager>,
-    _processing_storage: Arc<dyn ProcessingStorage>,
+    processing_storage: Arc<dyn ProcessingStorage>,
     processor_wrappers: RwLock<HashMap<String, Arc<ProcessorWrapper>>>,
 }
 
@@ -22,7 +22,7 @@ impl ProcessorManager {
     ) -> Self {
         Self {
             component_manager,
-            _processing_storage: processing_storage,
+            processing_storage,
             processor_wrappers: RwLock::new(HashMap::new()),
         }
     }
@@ -98,17 +98,31 @@ impl ProcessorManager {
             .get_component(&source_id)?
             .get_component()?
             .as_source()?;
-        let processor = SourceProcessor {
-            name: config.name.to_owned(),
-            source_id: config.source.to_owned(),
-            save_path: config.save_path.to_owned(),
-            source: source.clone(),
-            options: ProcessorOptions {
-                save_path_pattern: "".to_owned(),
-                filename_pattern: "".to_owned(),
-                variable_providers: vec![],
+
+        let mut variable_providers: Vec<Arc<dyn VariableProvider>> = vec![];
+        for x in &config.options.variable_providers {
+            let component_id = ComponentRootType::VariableProvider.parse_component_id(&x);
+            variable_providers.push(
+                self.component_manager
+                    .get_component(&component_id)?
+                    .get_component()?
+                    .as_variable_provider()?
+                    .clone(),
+            );
+        }
+
+        let processor = SourceProcessor::new(
+            config.name.to_owned(),
+            config.source.to_owned(),
+            config.save_path.to_owned(),
+            source.clone(),
+            ProcessorOptions {
+                save_path_pattern: config.options.save_path_pattern.to_owned(),
+                filename_pattern: config.options.filename_pattern.to_owned(),
+                variable_providers,
             },
-        };
+        );
+        let instance_id = processor.instance_id();
         let wrapper = Arc::new(ProcessorWrapper {
             name: config.name.to_owned(),
             processor: Some(Arc::new(processor)),
@@ -117,7 +131,7 @@ impl ProcessorManager {
         self.processor_wrappers
             .write()
             .insert(config.name.to_owned(), wrapper.clone());
-        info!("Processor[created] {}", config.name);
+        info!("Processor[created] {}({:?})", config.name, instance_id);
         Ok(wrapper)
     }
 
@@ -167,12 +181,12 @@ impl Drop for ProcessorWrapper {
 
 #[cfg(test)]
 mod test {
+    use crate::component_manager::ComponentManager;
     use crate::components::system_file_source::SUPPLIER;
-    use crate::config::{ProcessorConfig, YamlConfigOperator};
+    use crate::config::{ProcessorConfig, ProcessorOptionConfig, YamlConfigOperator};
     use crate::processor_manager::ProcessorManager;
     use std::sync::Arc;
     use storage_memory::MemoryProcessingStorage;
-    use crate::component_manager::ComponentManager;
 
     #[test]
     fn normal_cases() {
@@ -192,6 +206,7 @@ mod test {
             source: "system-file:test".to_string(),
             triggers: vec![],
             save_path: "./tests/resources/output".to_string(),
+            options: ProcessorOptionConfig::default(),
         });
         assert!(manager.processor_exists(name));
         let processor_wp = manager.get_processor(name);
@@ -219,6 +234,7 @@ mod test {
             triggers: vec![],
             source: "system-file:not-exists".to_string(),
             save_path: "./tests/resources/output".to_string(),
+            options: ProcessorOptionConfig::default(),
         });
         let processor_wp = manager.get_processor(name);
         assert!(processor_wp.is_some());
