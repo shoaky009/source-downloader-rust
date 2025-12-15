@@ -8,5 +8,5 @@ sdk = { path = "../../sdk" }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
-[lib]
-crate-type = ["dylib"]
+#[lib]
+#crate-type = ["dylib", "rlib"]
