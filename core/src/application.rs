@@ -2,11 +2,12 @@ use crate::components::get_build_in_component_supplier;
 use crate::instance_manager::InstanceManager;
 use crate::plugin::PluginManager;
 use crate::processor_manager::ProcessorManager;
-use crate::{ComponentManager, ConfigOperator};
 use sdk::plugin::PluginContext;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::info;
+use crate::component_manager::ComponentManager;
+use crate::config::ConfigOperator;
 
 pub struct CoreApplication {
     pub config_operator: Arc<dyn ConfigOperator>,

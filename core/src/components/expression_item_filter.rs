@@ -1,4 +1,5 @@
-use crate::{CelCompiledExpressionFactory, CompiledExpression, CompiledExpressionFactory};
+use crate::expression::cel::CelCompiledExpressionFactory;
+use crate::expression::{CompiledExpression, CompiledExpressionFactory};
 use sdk::SdComponent;
 use sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemFilter, PointedItem, SdComponent,

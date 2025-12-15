@@ -2,12 +2,13 @@ use crate::ApplicationContext;
 use axum::extract::{Path, Query, State};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
-use core::CoreApplication;
+use core::application::CoreApplication;
 use sdk::time::{OffsetDateTime, UtcDateTime};
-use sdk::{ItemContentLite, ProcessingContent, ProcessingStatus, SourceItem};
 use serde::Deserialize;
 use std::sync::Arc;
 use tracing::info;
+use sdk::SourceItem;
+use sdk::storage::{ItemContentLite, ProcessingContent, ProcessingStatus};
 
 pub fn register_routers(core_application: Arc<ApplicationContext>) -> Router {
     let core: Arc<CoreApplication> = core_application.core.clone();

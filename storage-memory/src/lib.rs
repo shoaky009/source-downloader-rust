@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use sdk::{
+use sdk::storage::{
     Error, ProcessingContent, ProcessingContentQuery, ProcessingStorage, ProcessingTargetPath,
     ProcessorSourceState,
 };

@@ -1,13 +1,13 @@
 use crate::config::ProcessorConfig;
-use crate::source_processor::SourceProcessor;
-use crate::{ComponentManager, ProcessorOptions};
+use crate::source_processor::{ProcessorOptions, SourceProcessor};
 use parking_lot::RwLock;
-use sdk::ProcessingStorage;
+use sdk::storage::ProcessingStorage;
 use sdk::component::{ComponentError, ComponentRootType};
 use std::collections::{HashMap, HashSet};
 use std::ops::Not;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
+use crate::component_manager::ComponentManager;
 
 pub struct ProcessorManager {
     component_manager: Arc<ComponentManager>,
@@ -168,11 +168,11 @@ impl Drop for ProcessorWrapper {
 #[cfg(test)]
 mod test {
     use crate::components::system_file_source::SUPPLIER;
-    use crate::config::ProcessorConfig;
+    use crate::config::{ProcessorConfig, YamlConfigOperator};
     use crate::processor_manager::ProcessorManager;
-    use crate::{ComponentManager, YamlConfigOperator};
     use std::sync::Arc;
     use storage_memory::MemoryProcessingStorage;
+    use crate::component_manager::ComponentManager;
 
     #[test]
     fn normal_cases() {

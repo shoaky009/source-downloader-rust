@@ -6,11 +6,12 @@ use axum::response::Sse;
 use axum::response::sse::Event;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
-use core::ComponentManager;
-use core::CoreApplication;
+use core::application::CoreApplication;
+use core::component_manager::ComponentManager;
+use core::config::ComponentConfig;
 use futures_util::Stream;
+use sdk::component::{ComponentId, ComponentRootType};
 use sdk::serde::Deserialize;
-use sdk::component::ComponentId;
 use std::collections::HashSet;
 use std::convert::Infallible;
 use std::pin::Pin;
@@ -26,7 +27,7 @@ pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
             "/component",
             Router::new()
                 .route("/", get(query_components))
-                .route("/", post(create_component))
+                .route("/", post(save_component))
                 .route("/{root_type}/{type_name}/{name}", delete(delete_component))
                 .route(
                     "/{root_type}/{type_name}/{name}/reload",
@@ -41,7 +42,7 @@ pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
 
 #[axum::debug_handler]
 async fn query_components(
-    State(_): State<Arc<CoreApplication>>,
+    State(_): State<Arc<core::application::CoreApplication>>,
     Query(query): Query<ComponentQuery>,
 ) -> Json<Vec<String>> {
     info!(
@@ -54,9 +55,28 @@ async fn query_components(
 }
 
 #[axum::debug_handler]
-async fn create_component(State(_): State<Arc<CoreApplication>>) -> Json<String> {
-    info!("create_component");
+async fn save_component(
+    State(core): State<Arc<CoreApplication>>,
+    Json(request): Json<ComponentCreationRequest>,
+) -> Json<String> {
+    core.config_operator.save_component(
+        &request.root_type,
+        ComponentConfig {
+            component_type: request.type_name,
+            name: request.name,
+            props: request.props,
+        },
+    );
     Json("".to_string())
+}
+
+#[derive(Deserialize)]
+struct ComponentCreationRequest {
+    root_type: ComponentRootType,
+    type_name: String,
+    name: String,
+    #[serde(default)]
+    props: sdk::serde_json::Map<String, sdk::serde_json::Value>,
 }
 
 #[axum::debug_handler]

@@ -3,7 +3,7 @@ use crate::ApplicationContext;
 use axum::extract::State;
 use axum::routing::get;
 use axum::{middleware, Router};
-use core::CoreApplication;
+use core::application::CoreApplication;
 use std::sync::Arc;
 
 pub fn register_routers(core_application: Arc<ApplicationContext>) -> Router {

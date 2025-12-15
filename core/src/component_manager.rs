@@ -1,6 +1,6 @@
 ﻿#![allow(dead_code)]
 
-use crate::ComponentConfig;
+use crate::config::ComponentConfig;
 use crate::config::{ConfigOperator, Properties};
 use parking_lot::RwLock;
 use sdk::component::{
@@ -360,12 +360,12 @@ pub struct ComponentInfo {
 
 #[cfg(test)]
 mod tests {
-    use crate::ComponentManager;
     use crate::components::system_file_source::SystemFileSourceSupplier;
     use crate::config::{ConfigOperator, YamlConfigOperator};
     use sdk::component::{ComponentRootType, ComponentSupplier};
     use sdk::serde_json::Map;
     use std::sync::{Arc, OnceLock};
+    use crate::component_manager::ComponentManager;
 
     static CONFIG_OP: OnceLock<Arc<dyn ConfigOperator>> = OnceLock::new();
     fn get_config_op() -> &'static Arc<dyn ConfigOperator> {

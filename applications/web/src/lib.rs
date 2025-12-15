@@ -1,5 +1,4 @@
-use core::CoreApplication;
-use sdk::ProcessingStorage;
+use sdk::storage::ProcessingStorage;
 use std::sync::Arc;
 
 pub mod app;
@@ -10,6 +9,6 @@ pub mod processing;
 pub mod path;
 
 pub struct ApplicationContext {
-    pub core: Arc<CoreApplication>,
+    pub core: Arc<core::application::CoreApplication>,
     pub storage: Arc<dyn ProcessingStorage>,
 }

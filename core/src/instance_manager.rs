@@ -112,8 +112,7 @@ impl InstanceManager {
 
 #[cfg(test)]
 mod test {
-    use crate::YamlConfigOperator;
-    use crate::config::Properties;
+    use crate::config::{Properties, YamlConfigOperator};
     use crate::instance_manager::InstanceManager;
     use sdk::component::ComponentError;
     use sdk::instance::InstanceFactory;

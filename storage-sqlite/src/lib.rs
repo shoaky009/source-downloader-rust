@@ -1,12 +1,12 @@
 use crate::processing_record::Model;
 use async_trait::async_trait;
-use sdk::{
+use sdk::storage::{
     Error, ProcessingContent, ProcessingContentQuery, ProcessingStatus, ProcessingStorage,
     ProcessingTargetPath, ProcessorSourceState,
 };
+use sea_orm::SqlxSqliteConnector;
 use sea_orm::entity::prelude::*;
 use sea_orm::sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sea_orm::SqlxSqliteConnector;
 use sea_orm::*;
 use serde_json::json;
 use std::str::FromStr;
@@ -160,9 +160,8 @@ impl ProcessingStorage for SeaProcessingStorage {
 #[cfg(test)]
 mod test {
     use crate::SeaProcessingStorage;
-    use sdk::{
-        ItemContentLite, ProcessingContent, ProcessingStatus, ProcessingStorage, SourceItem,
-    };
+    use sdk::SourceItem;
+    use sdk::storage::{ItemContentLite, ProcessingContent, ProcessingStatus, ProcessingStorage};
     use serde_json::Map;
     use time::OffsetDateTime;
     use uuid::Uuid;
