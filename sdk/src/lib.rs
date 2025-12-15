@@ -1,31 +1,27 @@
 pub use component_macro::*;
-pub use http::Uri;
-pub use serde::{Deserialize, Serialize};
-pub use serde_json::{Map, Value, from_str, from_value, to_string, to_value, to_vec};
-use std::collections::HashSet;
+pub use http;
+pub use serde;
+pub use serde_json;
 pub use storage::*;
-pub use time::{
-    Date, Duration, Month, OffsetDateTime, PrimitiveDateTime, UtcDateTime, UtcOffset, Weekday,
-};
-
+pub use time;
 pub mod component;
 pub mod instance;
 pub mod plugin;
 pub mod storage;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceItem {
     pub title: String,
     #[serde(with = "http_serde::uri")]
-    pub link: Uri,
+    pub link: http::Uri,
     #[serde(with = "time::serde::iso8601")]
-    pub datetime: OffsetDateTime,
+    pub datetime: time::OffsetDateTime,
     pub content_type: String,
     #[serde(with = "http_serde::uri")]
-    pub download_uri: Uri,
+    pub download_uri: http::Uri,
     #[serde(default)]
-    pub attrs: Map<String, Value>,
+    pub attrs: serde_json::Map<String, serde_json::Value>,
     #[serde(default)]
-    pub tags: HashSet<String>,
+    pub tags: std::collections::HashSet<String>,
 }

@@ -9,7 +9,7 @@ use axum::{Json, Router};
 use core::ComponentManager;
 use core::CoreApplication;
 use futures_util::Stream;
-use sdk::Deserialize;
+use sdk::serde::Deserialize;
 use sdk::component::ComponentId;
 use std::collections::HashSet;
 use std::convert::Infallible;
@@ -152,7 +152,7 @@ impl Stream for ComponentStateStream {
                         let event = Event::default()
                             .id(wrapper.id.display())
                             .event("component-state")
-                            .data(sdk::to_string(&state).unwrap_or("{}".to_string()));
+                            .data(sdk::serde_json::to_string(&state).unwrap_or("{}".to_string()));
                         return Poll::Ready(Some(Ok(event)));
                     }
                 }
@@ -171,7 +171,7 @@ struct ComponentIdPath {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ComponentQuery {
+pub struct ComponentQuery {
     #[serde(rename = "type")]
     root_type: Option<String>,
     type_name: Option<String>,

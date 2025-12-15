@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use crate::component::ComponentError;
-use crate::{Map, Value};
+use crate::serde_json::{Map, Value};
 use std::any::{type_name, Any, TypeId};
 use std::sync::Arc;
 

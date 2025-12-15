@@ -117,7 +117,7 @@ mod test {
     use crate::instance_manager::InstanceManager;
     use sdk::component::ComponentError;
     use sdk::instance::InstanceFactory;
-    use sdk::{Map, Value};
+    use sdk::serde_json::{Map, Value, from_str};
     use std::any::{Any, TypeId};
     use std::sync::Arc;
 
@@ -134,7 +134,7 @@ mod test {
         );
         let _ = manager.register_instance_factory(Arc::new(ClientFactory {}));
 
-        let vars: Map<String, Value> = sdk::from_str(r#"{"name": "hello"}"#).unwrap();
+        let vars: Map<String, Value> = from_str(r#"{"name": "hello"}"#).unwrap();
         let hello_value1 = manager
             .load_instance::<Client>(instance_name, Some(Properties::from_map(vars.clone())));
         assert!(hello_value1.is_ok());

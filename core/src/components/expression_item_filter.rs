@@ -1,9 +1,11 @@
 use crate::{CelCompiledExpressionFactory, CompiledExpression, CompiledExpressionFactory};
+use sdk::SdComponent;
 use sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemFilter, PointedItem, SdComponent,
     SdComponentMetadata,
 };
-use sdk::{Deserialize, Map, SdComponent, Value};
+use sdk::serde::Deserialize;
+use sdk::serde_json::{Map, Value};
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 use tracing::warn;
@@ -152,8 +154,9 @@ impl ItemFilter for ExpressionItemFilter {
 #[cfg(test)]
 mod test {
     use crate::components::expression_item_filter::ExpressionItemFilterSupplier;
+    use sdk::SourceItem;
     use sdk::component::{ComponentSupplier, PointedItem, empty_pointer};
-    use sdk::{Deserialize, SourceItem};
+    use sdk::serde::Deserialize;
     use serde_json::{Map, Value};
     use serde_yaml::from_str;
     use std::fs::File;

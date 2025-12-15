@@ -1,19 +1,21 @@
 ﻿#![allow(dead_code)]
 
+use crate::ComponentConfig;
 use crate::config::{ConfigOperator, Properties};
 use parking_lot::RwLock;
 use sdk::component::{
-    ComponentError, ComponentId, ComponentSupplier, ComponentType, SdComponent, Trigger,
+    ComponentError, ComponentId, ComponentRootType, ComponentSupplier, ComponentType, SdComponent,
+    SdComponentMetadata, Trigger,
 };
+use sdk::serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
-use tracing::info;
+use tracing::{debug, info};
 
 pub struct ComponentManager {
     config_operator: Arc<dyn ConfigOperator>,
     component_suppliers: RwLock<HashMap<ComponentType, Arc<dyn ComponentSupplier>>>,
-    // TODO wrapper最好是Box但是这里偷懒了
     component_wrappers: RwLock<HashMap<String, Arc<ComponentWrapper>>>,
 }
 
@@ -202,12 +204,12 @@ impl ComponentManager {
         }
     }
 
-    pub fn get_all_suppliers(&self) -> Result<Vec<Arc<dyn ComponentSupplier>>, ComponentError> {
+    pub fn get_all_suppliers(&self) -> Vec<Arc<dyn ComponentSupplier>> {
         let mut suppliers = Vec::new();
         for supplier in self.component_suppliers.read().values() {
             suppliers.push(supplier.clone());
         }
-        Ok(suppliers)
+        suppliers
     }
 
     pub fn destroy_all(&self) {
@@ -280,13 +282,89 @@ impl ComponentWrapper {
     }
 }
 
+impl Drop for ComponentWrapper {
+    fn drop(&mut self) {
+        debug!("Component[drop] {}", self.id.display());
+    }
+}
+
+pub struct ComponentService {
+    pub component_manager: Arc<ComponentManager>,
+    pub operator: Arc<dyn ConfigOperator>,
+}
+
+// 后面看实际情况可能会合并到ComponentManager
+impl ComponentService {
+    pub fn new(
+        component_manager: Arc<ComponentManager>,
+        operator: Arc<dyn ConfigOperator>,
+    ) -> Self {
+        Self {
+            component_manager,
+            operator,
+        }
+    }
+    pub fn query_component(
+        &self,
+        query: &ComponentQuery,
+    ) -> Result<Vec<ComponentInfo>, ComponentError> {
+        Ok(vec![])
+    }
+
+    pub fn save_component(
+        &self,
+        id: &ComponentId,
+        props: Map<String, Value>,
+    ) -> Result<(), ComponentError> {
+        self.operator.save_component(
+            &id.component_type.root_type,
+            ComponentConfig {
+                name: id.name.clone(),
+                component_type: id.component_type.name.clone(),
+                props,
+            },
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_component(&self, id: &ComponentId) -> Result<(), ComponentError> {
+        self.component_manager.destroy(id);
+        Ok(())
+    }
+
+    pub fn reload_component(&self, id: &ComponentId) -> Result<(), ComponentError> {
+        Ok(())
+    }
+
+    pub fn state_stream(&self, id: Vec<ComponentId>) {}
+}
+
+pub struct ComponentQuery {
+    pub root_type: Option<ComponentRootType>,
+    pub type_name: Option<String>,
+    pub name: Option<String>,
+}
+
+pub struct ComponentInfo {
+    pub component_root_type: ComponentRootType,
+    pub type_name: String,
+    pub name: String,
+    pub props: Map<String, Value>,
+    pub state_detail: Option<Map<String, Value>>,
+    pub primary: bool,
+    pub running: bool,
+    pub refs: HashSet<String>,
+    pub modifiable: bool,
+    pub error_message: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use crate::ComponentManager;
     use crate::components::system_file_source::SystemFileSourceSupplier;
     use crate::config::{ConfigOperator, YamlConfigOperator};
-    use sdk::Map;
     use sdk::component::{ComponentRootType, ComponentSupplier};
+    use sdk::serde_json::Map;
     use std::sync::{Arc, OnceLock};
 
     static CONFIG_OP: OnceLock<Arc<dyn ConfigOperator>> = OnceLock::new();
@@ -343,7 +421,7 @@ mod tests {
         let manager = ComponentManager::new(get_config_op().clone());
         let arc: Arc<dyn ComponentSupplier> = Arc::new(SystemFileSourceSupplier {});
         manager.register_supplier(arc.clone()).unwrap();
-        let suppliers = manager.get_all_suppliers().unwrap();
+        let suppliers = manager.get_all_suppliers();
         assert_eq!(suppliers.len(), 1);
         assert!(Arc::ptr_eq(suppliers.first().unwrap(), &arc));
     }

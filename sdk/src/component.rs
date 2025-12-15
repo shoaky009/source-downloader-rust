@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 
-use crate::{Deserialize, SourceItem};
-use crate::{Map, Value};
+use crate::SourceItem;
+use crate::serde::Deserialize;
+use crate::serde_json::{Map, Value};
 use async_trait::async_trait;
 use http::Uri;
 use parking_lot::RwLock;

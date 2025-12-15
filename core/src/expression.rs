@@ -1,6 +1,6 @@
 pub mod cel;
 
-use sdk::{Map, Value};
+use sdk::serde_json::{Map, Value};
 use std::any::Any;
 
 pub trait CompiledExpressionFactory {

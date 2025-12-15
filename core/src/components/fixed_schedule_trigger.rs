@@ -1,8 +1,9 @@
+use sdk::SdComponent;
 use sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ProcessTask, SdComponent,
     SdComponentMetadata, Stateful, TaskRegistry, Trigger,
 };
-use sdk::{Map, SdComponent, Value};
+use sdk::serde_json::{Map, Value};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 

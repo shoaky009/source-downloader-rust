@@ -1,6 +1,6 @@
 use crate::expression::{CompiledExpression, CompiledExpressionFactory, ExprValue};
 use cel::{Context, Program, Value};
-use sdk::Map;
+use sdk::serde_json::Map;
 use std::any::Any;
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -27,7 +27,7 @@ impl<T> CompiledExpression<T> for CelCompiledExpression<T>
 where
     T: ExprValue,
 {
-    fn execute(&self, vars: &Map<String, sdk::Value>) -> Result<T, String> {
+    fn execute(&self, vars: &Map<String, serde_json::Value>) -> Result<T, String> {
         let mut context = Context::default();
         for (k, v) in vars.iter() {
             let _ = context.add_variable(k.as_str(), Self::json_to_cel(v));
@@ -45,21 +45,21 @@ impl<T> CelCompiledExpression<T> {
         }
     }
 
-    fn json_to_cel(value: &sdk::Value) -> Value {
+    fn json_to_cel(value: &serde_json::Value) -> Value {
         match value {
-            sdk::Value::Null => Value::Null,
-            sdk::Value::Bool(b) => Value::Bool(*b),
-            sdk::Value::Number(n) => n
+            serde_json::Value::Null => Value::Null,
+            serde_json::Value::Bool(b) => Value::Bool(*b),
+            serde_json::Value::Number(n) => n
                 .as_i64()
                 .map(Value::Int)
                 .or_else(|| n.as_u64().map(Value::UInt))
                 .or_else(|| n.as_f64().map(Value::Float))
                 .unwrap_or(Value::Null),
-            sdk::Value::String(s) => Value::String(Arc::new(s.to_owned())),
-            sdk::Value::Array(arr) => {
+            serde_json::Value::String(s) => Value::String(Arc::new(s.to_owned())),
+            serde_json::Value::Array(arr) => {
                 Value::List(Arc::new(arr.iter().map(Self::json_to_cel).collect()))
             }
-            sdk::Value::Object(obj) => {
+            serde_json::Value::Object(obj) => {
                 let map: HashMap<String, Value> = obj
                     .iter()
                     .map(|(k, v)| (k.clone(), Self::json_to_cel(v)))
@@ -140,9 +140,9 @@ impl ExprValue for String {
 
 #[cfg(test)]
 mod tests {
-    use crate::expression::cel::CelCompiledExpressionFactory;
     use crate::expression::CompiledExpressionFactory;
-    use sdk::Map;
+    use crate::expression::cel::CelCompiledExpressionFactory;
+    use sdk::serde_json::Map;
 
     #[test]
     fn test_cel_expression() {
@@ -150,7 +150,7 @@ mod tests {
         let expression = fac.create::<i64>("a+c.c1");
         assert!(expression.is_ok());
         let data = r#"{"a": 1, "b": 1, "c": {"c1": 3}}"#;
-        let vars: Map<String, sdk::Value> = sdk::from_str(data).unwrap();
+        let vars: Map<String, serde_json::Value> = serde_json::from_str(data).unwrap();
         let result = expression.unwrap().execute(&vars);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 4);

@@ -2,7 +2,7 @@ use sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemPointer, PointedItem, SdComponent,
     SdComponentMetadata, Source, empty_pointer,
 };
-use sdk::{Map, Value};
+use sdk::serde_json::{Map, Value};
 use std::sync::Arc;
 
 #[derive(Debug)]

@@ -1,7 +1,8 @@
 #[allow(dead_code, unused)]
 use moka::sync::Cache;
 use sdk::component::{ComponentError, ComponentRootType, ComponentType};
-use sdk::{Deserialize, Map, Serialize, Value};
+use sdk::serde::{Deserialize, Serialize};
+use sdk::serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -61,9 +62,17 @@ pub trait ConfigOperator: Send + Sync {
 
     fn get_all_component_config(&self) -> HashMap<String, Vec<ComponentConfig>>;
 
-    fn save_component(&self, root_type: &ComponentRootType, component_config: ComponentConfig);
+    fn save_component(
+        &self,
+        root_type: &ComponentRootType,
+        component_config: ComponentConfig,
+    ) -> Result<(), ComponentError>;
 
-    fn save_processor(&self, name: &str, processor_config: ProcessorConfig);
+    fn save_processor(
+        &self,
+        name: &str,
+        processor_config: ProcessorConfig,
+    ) -> Result<(), ComponentError>;
 
     fn delete_component(
         &self,
@@ -185,22 +194,29 @@ impl ConfigOperator for YamlConfigOperator {
             .unwrap_or_default()
     }
 
-    fn save_component(&self, root_type: &ComponentRootType, component_config: ComponentConfig) {
-        let mut config = self.get_config().unwrap();
+    fn save_component(
+        &self,
+        root_type: &ComponentRootType,
+        component_config: ComponentConfig,
+    ) -> Result<(), ComponentError> {
+        let mut config = self.get_config()?;
         let component_type = root_type.name();
-
-        // 使用 entry API 更优雅地处理存在/不存在的情况
-        // 确保将新的 component_config 添加到对应的 Vec 中
         config
             .components
             .entry(String::from(component_type))
             .or_default()
             .push(component_config);
-        self.write_config(&config).unwrap();
+        self.write_config(&config)
+            .map_err(|e| ComponentError::new(format!("Failed to save config: {}", e)))?;
+        Ok(())
     }
 
-    fn save_processor(&self, name: &str, processor_config: ProcessorConfig) {
-        let mut config = self.get_config().unwrap();
+    fn save_processor(
+        &self,
+        name: &str,
+        processor_config: ProcessorConfig,
+    ) -> Result<(), ComponentError> {
+        let mut config = self.get_config()?;
         match config.processors.iter().position(|p| p.name == name) {
             Some(index) => {
                 // 只更新 enabled 状态
@@ -210,6 +226,7 @@ impl ConfigOperator for YamlConfigOperator {
                 config.processors.push(processor_config);
             }
         }
+        Ok(())
     }
 
     fn delete_component(
@@ -285,8 +302,8 @@ impl ConfigOperator for YamlConfigOperator {
 #[cfg(test)]
 mod test {
     use crate::config::{ComponentConfig, Config, ConfigOperator, YamlConfigOperator};
-    use sdk::Map;
     use sdk::component::ComponentRootType;
+    use sdk::serde_json::Map;
     use std::fs;
     use std::path::Path;
     use tempfile::NamedTempFile;

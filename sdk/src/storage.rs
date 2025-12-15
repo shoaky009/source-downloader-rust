@@ -1,6 +1,8 @@
-use crate::{Deserialize, Serialize, SourceItem};
+use crate::SourceItem;
+
+use crate::serde::{Deserialize, Serialize};
+use crate::serde_json::{Map, Value};
 use async_trait::async_trait;
-use serde_json::{Map, Value};
 use time::{OffsetDateTime, UtcDateTime};
 
 #[async_trait]
