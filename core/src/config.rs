@@ -193,7 +193,6 @@ struct Config {
 }
 
 impl ConfigOperator for YamlConfigOperator {
-
     fn get_processor_config(&self, name: &str) -> Option<ProcessorConfig> {
         self.get_config()
             .map(|config| config.processors.iter().find(|p| p.name == name).cloned())
@@ -218,12 +217,20 @@ impl ConfigOperator for YamlConfigOperator {
         component_config: ComponentConfig,
     ) -> Result<(), ComponentError> {
         let mut config = self.get_config()?;
-        let component_type = root_type.name();
-        config
-            .components
-            .entry(String::from(component_type))
-            .or_default()
-            .push(component_config);
+        let component_type = root_type.name().to_string();
+
+        let components = config.components.entry(component_type).or_default();
+        match components
+            .iter_mut()
+            .find(|c| c.name == component_config.name)
+        {
+            Some(existing) => {
+                *existing = component_config;
+            }
+            None => {
+                components.push(component_config);
+            }
+        }
         self.write_config(&config)
             .map_err(|e| ComponentError::new(format!("Failed to save config: {}", e)))?;
         Ok(())
@@ -400,7 +407,9 @@ mod test {
             component_type: "test".to_string(),
             props: Map::new(),
         };
-        operator.save_component(&ComponentRootType::Source, component_config);
+        operator
+            .save_component(&ComponentRootType::Source, component_config)
+            .unwrap();
 
         let config = operator.get_config().expect("无法加载配置");
         let sources = config.components.get("source").expect("未找到 source 组件");
