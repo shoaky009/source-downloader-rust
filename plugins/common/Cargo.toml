@@ -5,8 +5,14 @@ edition = "2024"
 
 [dependencies]
 sdk = { path = "../../sdk" }
+serde = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+rss-for-mikan = { workspace = true }
+time = {workspace = true}
+reqwest = { workspace = true, features = ["rustls-tls"] }
+moka = { workspace = true, features = ["future"] }
+scraper = { workspace = true }
+parking_lot = { workspace = true }
 
 #[lib]
 #crate-type = ["dylib", "rlib"]

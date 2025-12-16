@@ -32,6 +32,13 @@ async-trait = "0.1"
 tower-http = { version = "0.6" }
 futures-util = { version = "0.3", default-features = false }
 serde_qs = "1.0.0-rc.3"
+retry = "2"
+fastmurmur3 = "0.2.0"
+
+rss-for-mikan = "2.0.4-mikan"
+reqwest = { version = "0.12" }
+scraper = "0.25"
+indexmap = { version = "2" }
 
 # 使用cargo tree -p sea-orm -i sqlx查看sea-orm依赖的版本, 因为不喜欢用sea-orm的migration改用sqlx的方式
 sea-orm = { version = "2.0.0-rc.20" }

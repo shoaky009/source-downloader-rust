@@ -1,5 +1,5 @@
 use axum::http::Uri;
-use axum::{http::StatusCode, middleware, response::IntoResponse, Router};
+use axum::{Router, http::StatusCode, middleware, response::IntoResponse};
 use clap::{Args, Parser};
 use core::application::{CoreApplication, CorePluginContext};
 use core::component_manager::ComponentManager;
@@ -18,12 +18,11 @@ use tower_http::services::ServeDir;
 use tracing::{info, log};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::time::OffsetTime;
-use web::{app, component, error_handle, path, processing, processor, ApplicationContext};
+use web::{ApplicationContext, error_handle, service};
 
 #[tokio::main]
 async fn main() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
         .with_timer(OffsetTime::local_rfc_3339().unwrap())
         .with_level(true)
@@ -103,11 +102,11 @@ fn create_core_application(
 }
 
 async fn run_web_server(core_application: Arc<ApplicationContext>, config: &ApplicationConfig) {
-    let app_router = app::router::register_routers(core_application.clone());
-    let component_routers = component::router::register_routers(core_application.clone());
-    let processor_routers = processor::router::register_routers(core_application.clone());
-    let processing_routers = processing::router::register_routers(core_application.clone());
-    let path_routers = path::router::register_routers(core_application.clone());
+    let app_router = service::app::register_routers(core_application.clone());
+    let component_routers = service::component::register_routers(core_application.clone());
+    let processor_routers = service::processor::register_routers(core_application.clone());
+    let processing_routers = service::processing::register_routers(core_application.clone());
+    let path_routers = service::path::register_routers(core_application.clone());
     let api_routers = app_router
         .merge(component_routers)
         .merge(processor_routers)

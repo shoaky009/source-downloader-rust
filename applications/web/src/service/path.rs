@@ -6,19 +6,18 @@ use core::application::CoreApplication;
 use std::sync::Arc;
 use tracing::info;
 
-pub fn register_routers(core_application: Arc<ApplicationContext>) -> Router {
-    let core: Arc<CoreApplication> = core_application.core.clone();
+pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
     Router::new()
         .nest(
             "/target-path",
             Router::new().route("/", delete(delete_target_paths)),
         )
-        .with_state(core)
+        .with_state(ctx.core.clone())
 }
 
 #[axum::debug_handler]
 async fn delete_target_paths(
-    State(_): State<Arc<CoreApplication>>,
+    State(_core): State<Arc<CoreApplication>>,
     Json(_): Json<Vec<String>>,
 ) -> () {
     info!("delete_target_paths")

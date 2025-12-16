@@ -15,9 +15,23 @@ components:
       name: test
       props:
         path: test_value
+  item-file-resolver:
+    - type: system-file
+      name: test
+  downloader:
+    - type: http
+      name: http
+      props:
+        download-path: /tmp
+  file-mover:
+    - type: system-file
+      name: system-file
 
 processors:
   - name: normal-case
     enabled: true
-    save_path: test1
+    save-path: test1
     source: system-file:test
+    item-file-resolver: system-file:test
+    downloader: http
+    file-mover: system-file

@@ -2,7 +2,7 @@ use crate::config::{ConfigOperator, Properties};
 use parking_lot::RwLock;
 use sdk::component::ComponentError;
 use sdk::instance::InstanceFactory;
-use std::any::{Any, TypeId, type_name};
+use std::any::{type_name, Any, TypeId};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -47,7 +47,7 @@ impl InstanceManager {
             Some(p) => p,
             None => self
                 .config_operator
-                .get_instance_props(name.to_string())
+                .get_instance_props(name)
                 .map_err(|e| e.message)?,
         };
 
@@ -116,7 +116,7 @@ mod test {
     use crate::instance_manager::InstanceManager;
     use sdk::component::ComponentError;
     use sdk::instance::InstanceFactory;
-    use sdk::serde_json::{Map, Value, from_str};
+    use sdk::serde_json::{from_str, Map, Value};
     use std::any::{Any, TypeId};
     use std::sync::Arc;
 

@@ -103,7 +103,8 @@ impl Trigger for FixedScheduleTrigger {
                 for task in tasks.read().clone() {
                     //TODO grouping tasks, then run them in parallel await task.execute()
                     tokio::spawn(async move {
-                        let _ = task.run().await;
+                        let result = task.run().await;
+                        tracing::info!("Task {} finished with result {:?}", task.name(), result);
                     });
                 }
             }

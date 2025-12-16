@@ -6,10 +6,10 @@ edition = "2024"
 [dependencies]
 http = { workspace = true }
 http-serde = { workspace = true }
-time = { workspace = true, features = ["serde", "parsing", "formatting"] }
+time = { workspace = true, features = ["serde", "parsing", "formatting", "macros"] }
 serde_json = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 component-macro = { path = "../component-macro" }
-parking_lot = { workspace = true }
-tracing = { workspace = true }
+parking_lot = { workspace = true, features = ["serde"] }
 async-trait = { workspace = true }
+fastmurmur3 = { workspace = true }

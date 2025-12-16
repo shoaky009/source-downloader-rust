@@ -1,12 +1,11 @@
 #![allow(dead_code)]
 
 use crate::SourceItem;
-use crate::serde::Deserialize;
 use crate::serde_json::{Map, Value};
 use async_trait::async_trait;
 use http::Uri;
 use parking_lot::RwLock;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::cmp::PartialEq;
 use std::collections::{HashMap, HashSet};
@@ -126,7 +125,9 @@ impl ComponentId {
     pub fn parse(str: &str) -> Result<Self, ComponentError> {
         let split = str.split(COMPONENT_REF_PAT).collect::<Vec<&str>>();
         if split.len() > 3 || split.len() < 2 {
-            return Err(ComponentError::from("Invalid component id"));
+            return Err(ComponentError::from(
+                "Invalid component id, should be in format of root_type:type_name:name or root_type:type_name",
+            ));
         }
         let root_type_str = split.first().unwrap();
         let root_type = ComponentRootType::parse(root_type_str)?;
@@ -286,6 +287,9 @@ pub trait SdComponent: Any + Send + Sync + Debug {
     fn as_source(self: Arc<Self>) -> Result<Arc<dyn Source>, ComponentError> {
         Err(ComponentError::from("Not a source component"))
     }
+    fn as_item_file_resolver(self: Arc<Self>) -> Result<Arc<dyn ItemFileResolver>, ComponentError> {
+        Err(ComponentError::from("Not a item file resolver component"))
+    }
     fn as_downloader(self: Arc<Self>) -> Result<Arc<dyn Downloader>, ComponentError> {
         Err(ComponentError::from("Not a downloader component"))
     }
@@ -374,9 +378,14 @@ pub trait AsyncDownloader: Downloader {
     fn is_finished(&self, item: &SourceItem) -> Option<bool>;
 }
 
+#[async_trait]
 pub trait Source: SdComponent {
-    fn fetch(&self, source_pointer: &Map<String, Value>) -> Vec<PointedItem>;
-    fn default_pointer(&self) -> Box<dyn ItemPointer>;
+    async fn fetch(
+        &self,
+        source_pointer: Arc<dyn SourcePointer>,
+    ) -> Result<Vec<PointedItem>, ProcessingError>;
+    fn default_pointer(&self) -> Arc<dyn SourcePointer>;
+    fn parse_raw_pointer(&self, value: Value) -> Arc<dyn SourcePointer>;
     fn headers(&self, _: &SourceItem) -> Option<HashMap<String, String>> {
         None
     }
@@ -473,44 +482,56 @@ pub trait Trimmer: SdComponent {
     fn trim(&self, value: String, expect_size: &i32) -> String;
 }
 
-// </editor-fold>
-
 pub trait ItemFilter: SdComponent {
     fn filter(&self, item: &PointedItem) -> bool;
 }
 
-pub trait ItemPointer: Debug + Send + Sync {
-    fn clone_box(&self) -> Box<dyn ItemPointer>;
+// </editor-fold>
+
+pub trait ItemPointer: Debug + Send + Sync + Any {
+    fn as_any(&self) -> &dyn Any;
 }
 
 #[derive(Debug, Clone)]
 struct EmptyPointer;
 
 impl ItemPointer for EmptyPointer {
-    fn clone_box(&self) -> Box<dyn ItemPointer> {
-        Box::new(self.clone())
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
 const EMPTY_POINTER: EmptyPointer = EmptyPointer {};
 
-pub fn empty_pointer() -> Box<dyn ItemPointer> {
+pub fn empty_item_pointer() -> Box<dyn ItemPointer> {
     Box::new(EMPTY_POINTER)
+}
+
+pub trait SourcePointer: Send + Sync {
+    fn dump(&self) -> Value;
+    fn update(&self, item: &SourceItem, item_pointer: Box<dyn ItemPointer>);
+    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct NullSourcePointer;
+
+impl SourcePointer for NullSourcePointer {
+    fn dump(&self) -> Value {
+        Value::Object(Map::new())
+    }
+
+    fn update(&self, _: &SourceItem, _: Box<dyn ItemPointer>) {}
+
+    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
+        self
+    }
 }
 
 #[derive(Debug)]
 pub struct PointedItem {
     pub source_item: SourceItem,
-    pub pointer: Box<dyn ItemPointer>,
-}
-
-impl Clone for PointedItem {
-    fn clone(&self) -> Self {
-        PointedItem {
-            source_item: self.source_item.clone(),
-            pointer: self.pointer.clone_box(),
-        }
-    }
+    pub item_pointer: Box<dyn ItemPointer>,
 }
 
 #[derive(Clone)]

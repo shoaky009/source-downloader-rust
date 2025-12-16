@@ -66,7 +66,7 @@ impl ProcessorManager {
                 }
             };
 
-            let component = match trigger_wrapper.get_and_mark_ref(&config.name) {
+            let component = match trigger_wrapper.get_and_mark_ref(config.name.to_owned()) {
                 None => {
                     error!(
                         "Trigger {} state not expected, it may be a bug",
@@ -96,7 +96,7 @@ impl ProcessorManager {
         let source = self
             .component_manager
             .get_component(&source_id)?
-            .get_component()?
+            .require_component()?
             .as_source()?;
 
         let mut variable_providers: Vec<Arc<dyn VariableProvider>> = vec![];
@@ -105,17 +105,41 @@ impl ProcessorManager {
             variable_providers.push(
                 self.component_manager
                     .get_component(&component_id)?
-                    .get_component()?
+                    .require_component()?
                     .as_variable_provider()?
                     .clone(),
             );
         }
+
+        let item_file_resolver = self
+            .component_manager
+            .get_component(
+                &ComponentRootType::ItemFileResolver.parse_component_id(&config.item_file_resolver),
+            )?
+            .require_component()?
+            .as_item_file_resolver()?;
+
+        let downloader = self
+            .component_manager
+            .get_component(&ComponentRootType::Downloader.parse_component_id(&config.downloader))?
+            .require_component()?
+            .as_downloader()?;
+
+        let file_mover = self
+            .component_manager
+            .get_component(&ComponentRootType::FileMover.parse_component_id(&config.file_mover))?
+            .require_component()?
+            .as_file_mover()?;
 
         let processor = SourceProcessor::new(
             config.name.to_owned(),
             config.source.to_owned(),
             config.save_path.to_owned(),
             source.clone(),
+            item_file_resolver.clone(),
+            downloader.clone(),
+            file_mover.clone(),
+            self.processing_storage.clone(),
             ProcessorOptions {
                 save_path_pattern: config.options.save_path_pattern.to_owned(),
                 filename_pattern: config.options.filename_pattern.to_owned(),
@@ -182,7 +206,7 @@ impl Drop for ProcessorWrapper {
 #[cfg(test)]
 mod test {
     use crate::component_manager::ComponentManager;
-    use crate::components::system_file_source::SUPPLIER;
+    use crate::components::get_build_in_component_supplier;
     use crate::config::{ProcessorConfig, ProcessorOptionConfig, YamlConfigOperator};
     use crate::processor_manager::ProcessorManager;
     use std::sync::Arc;
@@ -194,7 +218,7 @@ mod test {
         let component_manager = ComponentManager::new(Arc::new(YamlConfigOperator::new(
             "./tests/resources/config.yaml",
         )));
-        let _ = component_manager.register_supplier(Arc::new(SUPPLIER));
+        let _ = component_manager.register_suppliers(get_build_in_component_supplier());
         let manager = ProcessorManager::new(
             Arc::new(component_manager),
             Arc::new(MemoryProcessingStorage::new()),
@@ -203,8 +227,11 @@ mod test {
         manager.create_processor(&ProcessorConfig {
             name: name.to_string(),
             enabled: true,
-            source: "system-file:test".to_string(),
             triggers: vec![],
+            source: "system-file:test".to_string(),
+            item_file_resolver: "system-file:test".to_string(),
+            downloader: "http".to_string(),
+            file_mover: "system-file".to_string(),
             save_path: "./tests/resources/output".to_string(),
             options: ProcessorOptionConfig::default(),
         });
@@ -233,6 +260,9 @@ mod test {
             enabled: true,
             triggers: vec![],
             source: "system-file:not-exists".to_string(),
+            item_file_resolver: "system-file:test".to_string(),
+            downloader: "http".to_string(),
+            file_mover: "system-file".to_string(),
             save_path: "./tests/resources/output".to_string(),
             options: ProcessorOptionConfig::default(),
         });

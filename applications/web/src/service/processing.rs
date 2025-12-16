@@ -10,8 +10,7 @@ use tracing::info;
 use sdk::SourceItem;
 use sdk::storage::{ItemContentLite, ProcessingContent, ProcessingStatus};
 
-pub fn register_routers(core_application: Arc<ApplicationContext>) -> Router {
-    let core: Arc<CoreApplication> = core_application.core.clone();
+pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
     Router::new()
         .nest(
             "/processing-content",
@@ -22,12 +21,12 @@ pub fn register_routers(core_application: Arc<ApplicationContext>) -> Router {
                 .route("/{id}", delete(delete_content))
                 .route("/{id}/reprocess", post(reprocess)),
         )
-        .with_state(core)
+        .with_state(ctx.core.clone())
 }
 
 #[axum::debug_handler]
 async fn get_content(
-    State(_): State<Arc<CoreApplication>>,
+    State(_core): State<Arc<CoreApplication>>,
     Path(id): Path<i64>,
 ) -> Json<ProcessingContent> {
     info!("get_content id={}", id);
@@ -59,7 +58,7 @@ async fn get_content(
 
 #[axum::debug_handler]
 async fn query_contents(
-    State(_): State<Arc<CoreApplication>>,
+    State(_core): State<Arc<CoreApplication>>,
     Query(query): Query<QueryContents>,
 ) -> Json<Vec<ProcessingContent>> {
     info!(
@@ -71,7 +70,7 @@ async fn query_contents(
 
 #[axum::debug_handler]
 async fn update_content(
-    State(_): State<Arc<CoreApplication>>,
+    State(_core): State<Arc<CoreApplication>>,
     Path(id): Path<String>,
     Json(body): Json<UpdateContent>,
 ) -> () {
@@ -84,12 +83,12 @@ async fn update_content(
 }
 
 #[axum::debug_handler]
-async fn delete_content(State(_): State<Arc<CoreApplication>>, Path(id): Path<String>) -> () {
+async fn delete_content(State(_core): State<Arc<CoreApplication>>, Path(id): Path<String>) -> () {
     info!("delete_content id={}", id);
 }
 
 #[axum::debug_handler]
-async fn reprocess(State(_): State<Arc<CoreApplication>>, Path(id): Path<String>) -> () {
+async fn reprocess(State(_core): State<Arc<CoreApplication>>, Path(id): Path<String>) -> () {
     info!("reprocess id={}", id);
 }
 

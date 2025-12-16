@@ -1,9 +1,9 @@
+use indexmap::IndexMap;
 #[allow(dead_code, unused)]
 use moka::sync::Cache;
 use sdk::component::{ComponentError, ComponentRootType, ComponentType};
-use sdk::serde::{Deserialize, Serialize};
 use sdk::serde_json::{Map, Value};
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
@@ -22,10 +22,12 @@ pub struct ComponentConfig {
     pub name: String,
     #[serde(rename = "type")]
     pub component_type: String,
+    #[serde(default)]
     pub props: Map<String, Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct ProcessorConfig {
     /// 处理器名称
     pub name: String,
@@ -34,6 +36,9 @@ pub struct ProcessorConfig {
     #[serde(default)]
     pub triggers: Vec<String>,
     pub source: String,
+    pub item_file_resolver: String,
+    pub downloader: String,
+    pub file_mover: String,
     #[serde(default)]
     pub options: ProcessorOptionConfig,
 }
@@ -71,7 +76,7 @@ pub trait ConfigOperator: Send + Sync {
 
     fn get_all_processor_config(&self) -> Vec<ProcessorConfig>;
 
-    fn get_all_component_config(&self) -> HashMap<String, Vec<ComponentConfig>>;
+    fn get_all_component_config(&self) -> IndexMap<String, Vec<ComponentConfig>>;
 
     fn save_component(
         &self,
@@ -79,11 +84,7 @@ pub trait ConfigOperator: Send + Sync {
         component_config: ComponentConfig,
     ) -> Result<(), ComponentError>;
 
-    fn save_processor(
-        &self,
-        name: &str,
-        processor_config: ProcessorConfig,
-    ) -> Result<(), ComponentError>;
+    fn save_processor(&self, processor_config: ProcessorConfig) -> Result<(), ComponentError>;
 
     fn delete_component(
         &self,
@@ -92,9 +93,9 @@ pub trait ConfigOperator: Send + Sync {
         name: &str,
     ) -> Result<(), ComponentError>;
 
-    fn delete_processor(&self, name: String) -> bool;
+    fn delete_processor(&self, name: &str) -> Result<bool, ComponentError>;
 
-    fn get_instance_props(&self, name: String) -> Result<Properties, ComponentError>;
+    fn get_instance_props(&self, name: &str) -> Result<Properties, ComponentError>;
 
     fn get_component_config(
         &self,
@@ -160,7 +161,7 @@ impl YamlConfigOperator {
             .map_err(|e| ComponentError::new(format!("Failed to open config file: {}", e)))?;
         let reader = std::io::BufReader::new(file);
         let yaml: Config = serde_yaml::from_reader(reader)
-            .map_err(|e| ComponentError::new(format!("Failed to parse config: {}", e)))?;
+            .map_err(|e| ComponentError::new(format!("Failed to parse config cause: {}", e)))?;
         Ok(yaml)
     }
 
@@ -168,7 +169,7 @@ impl YamlConfigOperator {
         let path = self.config_path.to_str().unwrap().to_string();
         self.config_cache.get_with(path, move || {
             self.load_yaml()
-                .map_err(|e| ComponentError::new(format!("Failed to get config: {}", e)))
+                .map_err(|e| ComponentError::new(format!("Failed to get config cause: {}", e)))
         })
     }
 
@@ -187,7 +188,7 @@ struct Config {
     #[serde(default)]
     instances: Vec<InstanceConfig>,
     #[serde(default)]
-    components: HashMap<String, Vec<ComponentConfig>>,
+    components: IndexMap<String, Vec<ComponentConfig>>,
     #[serde(default)]
     processors: Vec<ProcessorConfig>,
 }
@@ -196,19 +197,28 @@ impl ConfigOperator for YamlConfigOperator {
     fn get_processor_config(&self, name: &str) -> Option<ProcessorConfig> {
         self.get_config()
             .map(|config| config.processors.iter().find(|p| p.name == name).cloned())
-            .unwrap_or_default()
+            .unwrap_or_else(|e| {
+                tracing::warn!("{}", e);
+                None
+            })
     }
 
     fn get_all_processor_config(&self) -> Vec<ProcessorConfig> {
         self.get_config()
             .map(|config| config.processors.clone())
-            .unwrap()
+            .unwrap_or_else(|e| {
+                tracing::warn!("{}", e);
+                vec![]
+            })
     }
 
-    fn get_all_component_config(&self) -> HashMap<String, Vec<ComponentConfig>> {
+    fn get_all_component_config(&self) -> IndexMap<String, Vec<ComponentConfig>> {
         self.get_config()
             .map(|config| config.components.clone())
-            .unwrap_or_default()
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to get config: {}", e);
+                IndexMap::new()
+            })
     }
 
     fn save_component(
@@ -236,13 +246,13 @@ impl ConfigOperator for YamlConfigOperator {
         Ok(())
     }
 
-    fn save_processor(
-        &self,
-        name: &str,
-        processor_config: ProcessorConfig,
-    ) -> Result<(), ComponentError> {
+    fn save_processor(&self, processor_config: ProcessorConfig) -> Result<(), ComponentError> {
         let mut config = self.get_config()?;
-        match config.processors.iter().position(|p| p.name == name) {
+        match config
+            .processors
+            .iter()
+            .position(|p| p.name == processor_config.name)
+        {
             Some(index) => {
                 // 只更新 enabled 状态
                 config.processors[index].enabled = processor_config.enabled;
@@ -275,16 +285,16 @@ impl ConfigOperator for YamlConfigOperator {
         Ok(())
     }
 
-    fn delete_processor(&self, name: String) -> bool {
-        let mut config = self.get_config().unwrap();
+    fn delete_processor(&self, name: &str) -> Result<bool, ComponentError> {
+        let mut config = self.get_config()?;
         if let Some(pos) = config.processors.iter().position(|p| p.name == name) {
             config.processors.remove(pos);
-            return true;
+            return Ok(true);
         }
-        false
+        Ok(false)
     }
 
-    fn get_instance_props(&self, name: String) -> Result<Properties, ComponentError> {
+    fn get_instance_props(&self, name: &str) -> Result<Properties, ComponentError> {
         let config = self.get_config()?;
         if let Some(instance) = config.instances.iter().find(|i| i.name == name) {
             Ok(Properties::from_map(instance.props.clone()))

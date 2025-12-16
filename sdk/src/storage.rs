@@ -1,6 +1,6 @@
 use crate::SourceItem;
 
-use crate::serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use crate::serde_json::{Map, Value};
 use async_trait::async_trait;
 use time::{OffsetDateTime, UtcDateTime};
@@ -119,9 +119,7 @@ pub struct ProcessorSourceState {
     pub id: Option<i64>,
     pub processor_name: String,
     pub source_id: String,
-    pub last_pointer: Map<String, Value>,
-    pub retry_times: u32,
-    pub last_active_at: Option<UtcDateTime>,
+    pub last_pointer: Value,
 }
 
 #[derive(Debug, Clone, Serialize)]

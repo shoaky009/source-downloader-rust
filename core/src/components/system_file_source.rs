@@ -1,6 +1,6 @@
 use sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, ItemPointer, PointedItem, SdComponent,
-    SdComponentMetadata, Source, empty_pointer,
+    ComponentError, ComponentSupplier, ComponentType, NullSourcePointer, PointedItem,
+    ProcessingError, SdComponent, SdComponentMetadata, Source, SourcePointer, empty_item_pointer,
 };
 
 use sdk::serde_json::{Map, Value};
@@ -42,14 +42,14 @@ struct SystemFileSource {
     mode: i8,
 }
 
+#[async_trait::async_trait]
 impl Source for SystemFileSource {
-    fn fetch(&self, _: &Map<String, Value>) -> Vec<PointedItem> {
+    async fn fetch(&self, _: Arc<dyn SourcePointer>) -> Result<Vec<PointedItem>, ProcessingError> {
         if self.mode == 1 {
-            let _ = fs::read_dir(&self.path).unwrap();
-            return vec![];
+            let _ = fs::read_dir(&self.path);
+            return Ok(vec![]);
         }
-
-        vec![PointedItem {
+        Ok(vec![PointedItem {
             source_item: SourceItem {
                 title: "test".to_string(),
                 link: "https://example.com".parse().unwrap(),
@@ -59,11 +59,15 @@ impl Source for SystemFileSource {
                 attrs: Map::new(),
                 tags: HashSet::new(),
             },
-            pointer: empty_pointer(),
-        }]
+            item_pointer: empty_item_pointer(),
+        }])
     }
 
-    fn default_pointer(&self) -> Box<dyn ItemPointer> {
-        empty_pointer()
+    fn default_pointer(&self) -> Arc<dyn SourcePointer> {
+        Arc::new(NullSourcePointer {})
+    }
+
+    fn parse_raw_pointer(&self, _: Value) -> Arc<dyn SourcePointer> {
+        Arc::new(NullSourcePointer {})
     }
 }

@@ -1,6 +1,9 @@
-mod components;
+mod component;
+mod instance;
+pub mod util;
 
-use crate::components::test_source;
+use crate::component::mikan_source;
+use sdk::component::ComponentSupplier;
 use sdk::instance::InstanceFactory;
 use sdk::plugin::{Plugin, PluginContext, PluginDescription};
 use std::sync::Arc;
@@ -17,8 +20,8 @@ impl Plugin for CommonPlugin {
         vec![]
     }
 
-    fn get_component_suppliers(&self) -> Vec<Arc<dyn sdk::component::ComponentSupplier>> {
-        vec![Arc::new(test_source::SUPPLIER)]
+    fn get_component_suppliers(&self) -> Vec<Arc<dyn ComponentSupplier>> {
+        vec![Arc::new(mikan_source::SUPPLIER)]
     }
 
     fn description(&self) -> PluginDescription {

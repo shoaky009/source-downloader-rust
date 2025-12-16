@@ -33,7 +33,7 @@ impl CoreApplication {
         let path = match &self.plugin_location {
             Some(p) => p,
             None => {
-                info!("未配置插件路径不加载插件");
+                info!("未配置插件路径不加载外部插件");
                 return;
             }
         };

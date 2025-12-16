@@ -1,17 +1,22 @@
 use crate::ApplicationContext;
+use crate::error_handle::AppError;
 use axum::extract::{FromRequestParts, Path, Query, State};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::response::Sse;
 use axum::response::sse::Event;
-use axum::routing::{delete, get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use core::application::CoreApplication;
 use core::component_manager::ComponentManager;
 use core::config::ComponentConfig;
 use futures_util::Stream;
+use sdk::component::ComponentRootType::Trigger;
 use sdk::component::{ComponentError, ComponentId, ComponentRootType, ComponentType};
-use sdk::serde::Deserialize;
+use sdk::serde_json::{Map, Value};
+use serde::Deserialize;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::collections::HashSet;
 use std::convert::Infallible;
 use std::pin::Pin;
@@ -21,14 +26,15 @@ use std::time::Duration;
 use tracing::info;
 
 pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
-    let core = ctx.core.clone();
     Router::new()
         .nest(
             "/component",
             Router::new()
-                .route("/", get(query_components))
-                .route("/", post(save_component))
-                .route("/{root_type}/{type_name}/{name}", delete(delete_component))
+                .route("/", get(query_components).post(save_component))
+                .route(
+                    "/{root_type}/{type_name}/{name}",
+                    put(save_component_props).delete(delete_component),
+                )
                 .route(
                     "/{root_type}/{type_name}/{name}/reload",
                     post(reload_component),
@@ -37,30 +43,118 @@ pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
                 .route("/schema", get(component_schema))
                 .route("/state-stream", get(state_stream)),
         )
-        .with_state(core)
+        .with_state(ctx.core.clone())
 }
 
 #[axum::debug_handler]
 async fn query_components(
-    State(_): State<Arc<CoreApplication>>,
+    State(_core): State<Arc<CoreApplication>>,
     Query(query): Query<ComponentQuery>,
-) -> Json<Vec<String>> {
+) -> Json<Vec<ComponentInfo>> {
     info!(
         "query_components: root_type={} type_name={} name={}",
-        query.root_type.unwrap_or("*".to_string()),
-        query.type_name.unwrap_or("*".to_string()),
-        query.name.unwrap_or("*".to_string())
+        query.root_type.as_ref().unwrap_or(&"*".to_string()),
+        query.type_name.as_ref().unwrap_or(&"*".to_string()),
+        query.name.as_ref().unwrap_or(&"*".to_string())
     );
-    Json(vec![])
+
+    let all_configs = _core.config_operator.get_all_component_config();
+    let all_components = _core.component_manager.get_all_component();
+
+    let mut results: Vec<ComponentInfo> = all_configs
+        .into_iter()
+        .filter(|(root_type_str, _)| {
+            query
+                .root_type
+                .as_ref()
+                .map_or(true, |t| t == root_type_str)
+        })
+        .flat_map(|(root_type_str, configs)| {
+            let all_components = all_components.clone();
+            configs
+                .into_iter()
+                .filter(|config| {
+                    query
+                        .type_name
+                        .as_ref()
+                        .map_or(true, |t| t == &config.component_type)
+                })
+                .filter(|config| query.name.as_ref().map_or(true, |n| n == &config.name))
+                .map(move |config| {
+                    let all_components = all_components.clone();
+                    let root_type = ComponentRootType::parse(&root_type_str)
+                        .unwrap_or(ComponentRootType::Source);
+                    let component_id = ComponentId::new(
+                        ComponentType {
+                            root_type: root_type.clone(),
+                            name: config.component_type.clone(),
+                        },
+                        &config.name,
+                    );
+
+                    let wrapper = all_components
+                        .iter()
+                        .find(|w| w.id == component_id)
+                        .cloned();
+
+                    let state_detail = wrapper.as_ref().and_then(|w| {
+                        if w.primary {
+                            w.component
+                                .as_ref()
+                                .cloned()
+                                .and_then(|c| c.as_stateful())
+                                .and_then(|s| s.get_state_detail())
+                                .map(|m| Value::Object(m))
+                        } else {
+                            None
+                        }
+                    });
+
+                    let (running, error_message, refs, modifiable) = wrapper
+                        .as_ref()
+                        .map(|w| {
+                            (
+                                w.component.is_some(),
+                                w.creation_error.clone(),
+                                w.get_refs().iter().cloned().collect::<Vec<_>>(),
+                                w.component.is_some(),
+                            )
+                        })
+                        .unwrap_or((false, None, vec![], true));
+
+                    ComponentInfo {
+                        root_type,
+                        type_name: config.component_type,
+                        name: config.name,
+                        props: config.props,
+                        state_detail,
+                        primary: wrapper.as_ref().map_or(true, |w| w.primary),
+                        running,
+                        refs,
+                        modifiable,
+                        error_message,
+                    }
+                })
+        })
+        .collect();
+
+    results.sort_by(|a, b| a.type_name.cmp(&b.type_name));
+    Json(results)
 }
 
 #[axum::debug_handler]
 async fn save_component(
-    State(core): State<Arc<CoreApplication>>,
-    Json(request): Json<ComponentCreationRequest>,
+    State(_core): State<Arc<CoreApplication>>,
+    Json(request): Json<ComponentSaveRequest>,
+) -> Result<(), AppError> {
+    _save_component(_core, request)
+}
+
+fn _save_component(
+    core: Arc<CoreApplication>,
+    request: ComponentSaveRequest,
 ) -> Result<(), AppError> {
     check_request(&core, &request)?;
-
     core.config_operator.save_component(
         &request.root_type,
         ComponentConfig {
@@ -73,8 +167,23 @@ async fn save_component(
 }
 
 #[axum::debug_handler]
+async fn save_component_props(
+    State(_core): State<Arc<CoreApplication>>,
+    Path(_path): Path<ComponentIdPath>,
+    Json(props): Json<Map<String, Value>>,
+) -> Result<(), AppError> {
+    let req = ComponentSaveRequest {
+        root_type: _path.root_type,
+        type_name: _path.type_name,
+        name: _path.name,
+        props,
+    };
+    _save_component(_core, req)
+}
+
+#[axum::debug_handler]
 async fn delete_component(
-    State(core): State<Arc<CoreApplication>>,
+    State(_core): State<Arc<CoreApplication>>,
     Path(path): Path<ComponentIdPath>,
 ) -> Result<(), AppError> {
     let id = ComponentId::new(
@@ -84,7 +193,7 @@ async fn delete_component(
         },
         &path.name,
     );
-    let wp = core.component_manager.get_component(&id);
+    let wp = _core.component_manager.get_component(&id);
     if let Ok(wp) = wp {
         let refs = wp.get_refs();
         if !refs.is_empty() {
@@ -94,38 +203,50 @@ async fn delete_component(
             )));
         }
     }
-    core.config_operator
+    _core
+        .config_operator
         .delete_component(&path.root_type, &path.type_name, &path.name)?;
     Ok(())
 }
 
 #[axum::debug_handler]
 async fn reload_component(
-    State(core): State<Arc<CoreApplication>>,
+    State(_core): State<Arc<CoreApplication>>,
     Path(path): Path<ComponentIdPath>,
 ) -> Result<(), AppError> {
     let id = ComponentId::parse(&format!(
         "{}:{}:{}",
         path.root_type, path.type_name, path.name
     ))?;
-    let removed = core.component_manager.destroy(&id);
+    let removed = _core.component_manager.destroy(&id);
     if removed.is_none() {
-        return Err(AppError::NotFound("Component instance not found".to_string()));
+        return Err(AppError::NotFound(
+            "Component instance not found".to_string(),
+        ));
     };
 
     for name in removed.unwrap().get_refs() {
-        let processor = core.processor_manager.get_processor(&name);
+        let processor = _core.processor_manager.get_processor(&name);
         if processor.is_none() {
             continue;
         }
 
-        let config = core.config_operator.get_processor_config(&name);
+        let config = _core.config_operator.get_processor_config(&name);
         if config.is_none() {
             continue;
         }
-        core.processor_manager.destroy_processor(&name);
-        core.processor_manager.create_processor(&config.unwrap());
+        _core.processor_manager.destroy_processor(&name);
+        _core.processor_manager.create_processor(&config.unwrap());
     }
+
+    if path.root_type == Trigger {
+        let trigger = _core
+            .component_manager
+            .get_component(&id)?
+            .require_component()?
+            .as_trigger()?;
+        trigger.start();
+    };
     Ok(())
 }
 
@@ -149,14 +270,14 @@ async fn all_types(
 }
 
 #[axum::debug_handler]
-async fn component_schema(State(_): State<Arc<CoreApplication>>) -> Json<Vec<String>> {
+async fn component_schema(State(_core): State<Arc<CoreApplication>>) -> Json<Vec<String>> {
     info!("component_schema");
     Json(vec![])
 }
 
 #[axum::debug_handler]
 async fn state_stream(
-    State(core): State<Arc<CoreApplication>>,
+    State(_core): State<Arc<CoreApplication>>,
     Qs(query): Qs<ComponentIds>,
 ) -> Sse<ComponentStateStream> {
     info!("state_stream");
@@ -166,17 +287,13 @@ async fn state_stream(
         .map(|x| ComponentId::parse(x))
         .collect::<Result<HashSet<_>, _>>()
         .unwrap();
-    let stream = ComponentStateStream::new(core.component_manager.clone(), component_ids);
-    Sse::new(stream).keep_alive(
-        axum::response::sse::KeepAlive::new()
-            .interval(Duration::from_secs(1))
-            .text("keep-alive-text"),
-    )
+    let stream = ComponentStateStream::new(_core.component_manager.clone(), component_ids);
+    Sse::new(stream)
 }
 
 fn check_request(
     core: &Arc<CoreApplication>,
-    request: &ComponentCreationRequest,
+    request: &ComponentSaveRequest,
 ) -> Result<(), ComponentError> {
     let c_type = ComponentType {
         root_type: request.root_type.clone(),
@@ -277,19 +394,33 @@ struct TypesQuery {
 }
 
 #[derive(Deserialize)]
-struct ComponentCreationRequest {
+struct ComponentSaveRequest {
     #[serde(rename = "type")]
     root_type: ComponentRootType,
     #[serde(rename = "typeName")]
     type_name: String,
     name: String,
     #[serde(default)]
-    props: sdk::serde_json::Map<String, sdk::serde_json::Value>,
+    props: Map<String, Value>,
 }
 
-use crate::error_handle::AppError;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
+#[derive(Serialize)]
+struct ComponentInfo {
+    #[serde(rename = "type")]
+    root_type: ComponentRootType,
+    #[serde(rename = "typeName")]
+    type_name: String,
+    name: String,
+    props: Map<String, Value>,
+    #[serde(rename = "stateDetail")]
+    state_detail: Option<Value>,
+    primary: bool,
+    running: bool,
+    refs: Vec<String>,
+    modifiable: bool,
+    #[serde(rename = "errorMessage")]
+    error_message: Option<String>,
+}
 
 struct Qs<T>(pub T);
 

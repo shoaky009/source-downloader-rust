@@ -175,7 +175,7 @@ impl ComponentManager {
         }
 
         Err(ComponentError::new(format!(
-            "Component config not found types {:?} name:{}",
+            "Component config not found, types {:?} name:{}",
             types
                 .iter()
                 .map(|x| x.to_string())
@@ -267,7 +267,7 @@ pub struct ComponentWrapper {
 }
 
 impl ComponentWrapper {
-    pub fn get_component(&self) -> Result<Arc<dyn SdComponent>, ComponentError> {
+    pub fn require_component(&self) -> Result<Arc<dyn SdComponent>, ComponentError> {
         if self.component.is_some() {
             return Ok(self.component.as_ref().unwrap().clone());
         }
@@ -278,17 +278,15 @@ impl ComponentWrapper {
         ))
     }
 
-    pub fn get_and_mark_ref(&self, processor_name: &str) -> Option<Arc<dyn SdComponent>> {
-        self.processor_refs
-            .write()
-            .insert(processor_name.to_string());
+    pub fn get_and_mark_ref(&self, processor_name: String) -> Option<Arc<dyn SdComponent>> {
+        self.processor_refs.write().insert(processor_name);
         self.component.clone()
     }
 
     pub fn remove_ref(&self, processor_name: &str) {
         self.processor_refs.write().remove(processor_name);
     }
-    
+
     pub fn get_refs(&self) -> HashSet<String> {
         self.processor_refs.read().clone()
     }
@@ -324,8 +322,7 @@ mod tests {
     use crate::component_manager::ComponentManager;
     use crate::components::system_file_source::SystemFileSourceSupplier;
     use crate::config::{ConfigOperator, YamlConfigOperator};
-    use sdk::component::{ComponentRootType, ComponentSupplier};
-    use sdk::serde_json::Map;
+    use sdk::component::{ComponentRootType, ComponentSupplier, NullSourcePointer};
     use std::sync::{Arc, OnceLock};
 
     static CONFIG_OP: OnceLock<Arc<dyn ConfigOperator>> = OnceLock::new();
@@ -333,8 +330,8 @@ mod tests {
         CONFIG_OP.get_or_init(|| Arc::new(YamlConfigOperator::new("./tests/resources/config.yaml")))
     }
     // 预期一切正常
-    #[test]
-    fn normal_case() {
+    #[tokio::test]
+    async fn normal_case() {
         let manager = ComponentManager::new(get_config_op().clone());
         // register supplier case
         let result = manager.register_supplier(Arc::new(SystemFileSourceSupplier {}));
@@ -346,7 +343,7 @@ mod tests {
         let component_arc = component_wrapper.component.as_ref().unwrap();
         let source = component_arc.clone().as_source().unwrap();
         assert_eq!(component_wrapper.id.name, "test");
-        let items = source.fetch(&Map::new());
+        let items = source.fetch(Arc::new(NullSourcePointer {})).await.unwrap();
         assert!(items.len() > 0);
         println!("{:?}", items);
 
@@ -403,10 +400,6 @@ mod tests {
         let result2 = manager.get_component(id);
         assert!(result2.is_err());
         let error2 = result2.unwrap_err();
-        assert!(
-            error2
-                .message
-                .starts_with("Component config not found types")
-        );
+        assert!(error2.message.starts_with("Component config not found"));
     }
 }

@@ -62,6 +62,17 @@ impl SeaProcessingStorage {
             updated_at: saved.updated_at,
         })
     }
+
+    fn model_to_processor_source_state(
+        saved: processor_source_state::Model,
+    ) -> Result<ProcessorSourceState, Error> {
+        Ok(ProcessorSourceState {
+            id: Some(saved.id),
+            processor_name: saved.processor_name,
+            source_id: saved.source_id,
+            last_pointer: saved.last_pointer_json,
+        })
+    }
 }
 
 #[allow(dead_code, unused)]
@@ -142,14 +153,51 @@ impl ProcessingStorage for SeaProcessingStorage {
         processor_name: &str,
         source_id: &str,
     ) -> Result<Option<ProcessorSourceState>, Error> {
-        todo!()
+        let entity = processor_source_state::Entity::find()
+            .filter(
+                processor_source_state::Column::ProcessorName
+                    .eq(processor_name)
+                    .and(processor_source_state::Column::SourceId.eq(source_id)),
+            )
+            .one(&self.db)
+            .await
+            .map_err(|e| Error {
+                message: format!("Failed to find source state {}", e),
+            })?;
+        if entity.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(Self::model_to_processor_source_state(
+            entity.unwrap(),
+        )?))
     }
 
     async fn save_processor_source_state(
         &self,
         state: &ProcessorSourceState,
     ) -> Result<ProcessorSourceState, Error> {
-        todo!()
+        let model = processor_source_state::ActiveModel {
+            id: if let Some(id) = state.id {
+                Set(id)
+            } else {
+                NotSet
+            },
+            processor_name: Set(state.processor_name.to_owned()),
+            source_id: Set(state.source_id.to_owned()),
+            last_pointer_json: Set(state.last_pointer.clone()),
+            retry_times: Set(0),
+            last_active_at: Set(Some(time::OffsetDateTime::now_utc().to_string())),
+        };
+
+        let saved = model
+            .save(&self.db)
+            .await
+            .map(|x| x.try_into_model())
+            .flatten()
+            .map_err(|x| Error {
+                message: x.to_string(),
+            })?;
+        Ok(Self::model_to_processor_source_state(saved)?)
     }
 
     async fn save_paths(&self, paths: Vec<ProcessingTargetPath>) -> Result<(), Error> {
@@ -269,6 +317,25 @@ mod processing_record {
         pub failure_reason: Option<String>,
         pub created_at: OffsetDateTime,
         pub updated_at: Option<OffsetDateTime>,
+    }
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+mod processor_source_state {
+    use sea_orm::entity::prelude::*;
+
+    #[sea_orm::model]
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+    #[sea_orm(table_name = "processor_source_state")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = true)]
+        pub id: i64,
+        pub processor_name: String,
+        pub source_id: String,
+        pub last_pointer_json: Json,
+        pub retry_times: i32,
+        pub last_active_at: Option<String>,
     }
 
     impl ActiveModelBehavior for ActiveModel {}
