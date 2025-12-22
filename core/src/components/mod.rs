@@ -7,6 +7,7 @@ pub mod system_file_source;
 pub mod system_file_resolver;
 pub mod http_downloader;
 pub mod system_file_mover;
+pub mod source_item_identity_filter;
 
 #[allow(dead_code)]
 pub fn get_build_in_component_supplier() -> Vec<Arc<dyn ComponentSupplier>> {

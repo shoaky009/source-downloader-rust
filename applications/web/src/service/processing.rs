@@ -3,12 +3,12 @@ use axum::extract::{Path, Query, State};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use core::application::CoreApplication;
+use sdk::SourceItem;
+use sdk::storage::{ItemContentLite, ProcessingContent, ProcessingStatus};
 use sdk::time::{OffsetDateTime, UtcDateTime};
 use serde::Deserialize;
 use std::sync::Arc;
 use tracing::info;
-use sdk::SourceItem;
-use sdk::storage::{ItemContentLite, ProcessingContent, ProcessingStatus};
 
 pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
     Router::new()
@@ -44,6 +44,7 @@ async fn get_content(
                 download_uri: "localhost".parse().unwrap(),
                 attrs: Default::default(),
                 tags: Default::default(),
+                identity: None,
             },
             item_variables: Default::default(),
         },

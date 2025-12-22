@@ -1,15 +1,16 @@
 use sdk::async_trait::async_trait;
+use sdk::component::ProcessingError;
 use sdk::http::Uri;
-use std::collections::HashMap;
-use sdk::time::format_description::well_known;
 use sdk::time::OffsetDateTime;
+use sdk::time::format_description::well_known;
+use std::collections::HashMap;
 
 /// 异步展开处理器 trait，用于定义如何异步展开一个 Item
 #[async_trait]
 #[allow(dead_code)]
 pub trait ExpandHandler<T, U>: Send + Sync {
     /// 异步展开一个 Item 为多个 Items
-    async fn expand(&self, item: T) ->  IterationResult<U>;
+    async fn expand(&self, item: T) -> Result<IterationResult<U>, ProcessingError>;
 }
 
 /// AsyncExpandIterator - 支持异步 trait 实现的展开迭代器
@@ -45,10 +46,14 @@ impl<T: Send + 'static, U: Send + 'static> AsyncExpandIterator<T, U> {
     /// let expanded_items = expand_iter.collect_all().await;
     /// ```
     #[allow(dead_code)]
-    pub fn new(items: Vec<T>, limit: usize, expander: Box<dyn ExpandHandler<T, U>>) -> Self {
+    pub fn new(items: Vec<T>, limit: u32, expander: Box<dyn ExpandHandler<T, U>>) -> Self {
         Self {
             items,
-            limit: if limit == 0 { usize::MAX } else { limit },
+            limit: if limit == 0 {
+                usize::MAX
+            } else {
+                limit as usize
+            },
             current_index: 0,
             current_expanded: Vec::new(),
             expander,
@@ -57,42 +62,42 @@ impl<T: Send + 'static, U: Send + 'static> AsyncExpandIterator<T, U> {
 
     /// 异步迭代，返回所有展开后的 Items
     #[allow(dead_code)]
-    pub async fn collect_all(mut self) -> Vec<U> {
+    pub async fn collect_all(mut self) -> Result<Vec<U>, ProcessingError> {
         let mut result = Vec::new();
 
-        while let Some(item) = self.next().await {
+        while let Some(item) = self.next().await? {
             result.push(item);
             if result.len() >= self.limit {
                 break;
             }
         }
 
-        result
+        Ok(result)
     }
 
     /// 获取下一个展开的 Item
     #[allow(dead_code)]
-    pub async fn next(&mut self) -> Option<U> {
+    pub async fn next(&mut self) -> Result<Option<U>, ProcessingError> {
         loop {
             // 如果当前展开的列表有元素，直接返回
             if !self.current_expanded.is_empty() {
-                return Some(self.current_expanded.remove(0));
+                return Ok(Some(self.current_expanded.remove(0)));
             }
 
             // 如果已经处理完所有初始 Items，结束迭代
             if self.current_index >= self.items.len() {
-                return None;
+                return Ok(None);
             }
 
             // 从初始 Items 中取出下一个 Item 进行异步展开
             let item = self.items.remove(self.current_index);
-            let result = self.expander.expand(item).await;
+            let result = self.expander.expand(item).await?;
 
             self.current_expanded = result.items;
 
             // 如果展开器返回 false，停止继续展开
-            if !result.continue_expand {
-                return self.current_expanded.pop();
+            if !result.has_next {
+                return Ok(self.current_expanded.pop());
             }
 
             // 检查是否达到了 limit
@@ -108,7 +113,7 @@ impl<T: Send + 'static, U: Send + 'static> AsyncExpandIterator<T, U> {
 #[derive(Debug, Clone)]
 pub struct IterationResult<T> {
     pub items: Vec<T>,
-    pub continue_expand: bool,
+    pub has_next: bool,
 }
 
 /// ExpandIterator - 用于展开迭代的核心结构
@@ -167,7 +172,7 @@ impl<T, U> Iterator for ExpandIterator<T, U> {
             self.current_expanded = result.items;
 
             // 如果展开器返回 false，停止继续展开
-            if !result.continue_expand {
+            if !result.has_next {
                 return self.current_expanded.pop();
             }
 
@@ -197,10 +202,11 @@ pub fn query_map(uri: &Uri) -> HashMap<String, String> {
     map
 }
 
-
 /// 从 RFC 2822 格式的日期字符串解析为 OffsetDateTime
 /// RSS 的 pub_date 通常采用 RFC 2822 格式
-pub fn parse_rfc2822_datetime(date_str: &str) -> Result<OffsetDateTime, Box<dyn std::error::Error>> {
+pub fn parse_rfc2822_datetime(
+    date_str: &str,
+) -> Result<OffsetDateTime, Box<dyn std::error::Error>> {
     // 解析 RFC 2822 格式的日期字符串
     // RSS 的 pub_date 格式: "Wed, 16 Dec 2025 12:30:45 +0800"
     let dt: OffsetDateTime = OffsetDateTime::parse(date_str, &well_known::Rfc2822)?;

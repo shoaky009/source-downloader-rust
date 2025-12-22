@@ -8,8 +8,8 @@ sdk = { path = "../../sdk" }
 serde = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
 rss-for-mikan = { workspace = true }
-time = {workspace = true}
-reqwest = { workspace = true, features = ["rustls-tls"] }
+time = { workspace = true }
+reqwest = { workspace = true, features = ["rustls-tls", "json", "system-proxy", "http2", "charset"] }
 moka = { workspace = true, features = ["future"] }
 scraper = { workspace = true }
 parking_lot = { workspace = true }

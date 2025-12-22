@@ -4,6 +4,7 @@ use moka::sync::Cache;
 use sdk::component::{ComponentError, ComponentRootType, ComponentType};
 use sdk::serde_json::{Map, Value};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
@@ -31,6 +32,7 @@ pub struct ComponentConfig {
 pub struct ProcessorConfig {
     /// 处理器名称
     pub name: String,
+    #[serde(default = "default_enabled")]
     pub enabled: bool,
     pub save_path: String,
     #[serde(default)]
@@ -41,13 +43,109 @@ pub struct ProcessorConfig {
     pub file_mover: String,
     #[serde(default)]
     pub options: ProcessorOptionConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "HashSet::is_empty")]
+    pub tags: HashSet<String>,
+}
+
+fn default_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct ProcessorOptionConfig {
+    #[serde(skip_serializing_if = "is_default")]
+    pub save_path_pattern: String,
+    #[serde(skip_serializing_if = "is_default")]
+    pub filename_pattern: String,
+    #[serde(skip_serializing_if = "is_default")]
+    pub variable_providers: Vec<String>,
+    #[serde(skip_serializing_if = "is_default")]
+    pub item_filters: Vec<String>,
+    #[serde(skip_serializing_if = "is_default")]
+    pub source_file_filters: Vec<String>,
+    #[serde(skip_serializing_if = "is_default")]
+    pub file_taggers: Vec<String>,
+    #[serde(skip_serializing_if = "is_default")]
+    pub variable_conflict_strategy: Option<String>,
+    #[serde(skip_serializing_if = "is_default")]
+    pub variable_name_replace: HashMap<String, String>,
+    #[serde(skip_serializing_if = "Clone::clone")]
+    pub save_processing_content: bool,
+    #[serde(skip_serializing_if = "is_rename_task_interval_default")]
+    pub rename_task_interval: String,
+    #[serde(skip_serializing_if = "is_rename_times_threshold_default")]
+    pub rename_times_threshold: u32,
+    #[serde(skip_serializing_if = "is_parallelism_default")]
+    pub parallelism: u32,
+    #[serde(skip_serializing_if = "is_default")]
+    pub task_group: Option<String>,
+    #[serde(skip_serializing_if = "is_fetch_limit_default")]
+    pub fetch_limit: u32,
+    #[serde(skip_serializing_if = "is_pointer_batch_mode_default")]
+    pub pointer_batch_mode: bool,
+    #[serde(skip_serializing_if = "is_default")]
+    pub item_error_continue: bool,
+}
+
+fn is_rename_times_threshold_default(value: &u32) -> bool {
+    *value == ProcessorOptionConfig::default().rename_times_threshold
+}
+
+fn is_rename_task_interval_default(value: &String) -> bool {
+    *value == ProcessorOptionConfig::default().rename_task_interval
+}
+
+fn is_parallelism_default(value: &u32) -> bool {
+    *value == ProcessorOptionConfig::default().parallelism
+}
+
+fn is_fetch_limit_default(value: &u32) -> bool {
+    *value == ProcessorOptionConfig::default().fetch_limit
+}
+
+fn is_pointer_batch_mode_default(value: &bool) -> bool {
+    *value == ProcessorOptionConfig::default().pointer_batch_mode
+}
+
+fn is_default<T: PartialEq + Default>(val: &T) -> bool {
+    val == &T::default()
+}
+
+impl Default for ProcessorOptionConfig {
+    fn default() -> Self {
+        ProcessorOptionConfig {
+            save_path_pattern: "".to_string(),
+            filename_pattern: "".to_string(),
+            variable_providers: vec![],
+            item_filters: vec![],
+            source_file_filters: vec![],
+            file_taggers: vec![],
+            variable_name_replace: HashMap::new(),
+            variable_conflict_strategy: None,
+            save_processing_content: true,
+            rename_task_interval: "5m".to_string(),
+            rename_times_threshold: 3,
+            parallelism: 1,
+            task_group: None,
+            fetch_limit: 50,
+            pointer_batch_mode: true,
+            item_error_continue: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
-pub struct ProcessorOptionConfig {
-    pub save_path_pattern: String,
-    pub filename_pattern: String,
-    pub variable_providers: Vec<String>,
+#[serde(default)]
+pub struct DownloadOptions {
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub tags: HashSet<String>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub headers: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -336,7 +434,9 @@ impl ConfigOperator for YamlConfigOperator {
 
 #[cfg(test)]
 mod test {
-    use crate::config::{ComponentConfig, Config, ConfigOperator, YamlConfigOperator};
+    use crate::config::{
+        ComponentConfig, Config, ConfigOperator, ProcessorOptionConfig, YamlConfigOperator,
+    };
     use sdk::component::ComponentRootType;
     use sdk::serde_json::Map;
     use std::fs;
@@ -464,5 +564,20 @@ mod test {
             .get("source")
             .expect("未找到 source 组件");
         assert!(!sources.iter().any(|c| c.name == "system-file"));
+    }
+    #[test]
+    fn ser_de_config() {
+        let c = serde_json::from_str::<ProcessorOptionConfig>(
+            r#"{"save-path-pattern": "/mnt/p1/{name}", "fetch-limit": 51, "rename-task-interval": "5m"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            c.rename_times_threshold,
+            ProcessorOptionConfig::default().rename_times_threshold
+        );
+        assert_eq!(c.rename_task_interval, "5m");
+        let s = serde_json::to_string(&c).unwrap();
+        assert!(!s.contains("\"rename-task-interval\":\"5m\""));
+        assert!(s.contains("\"fetch-limit\":51"));
     }
 }

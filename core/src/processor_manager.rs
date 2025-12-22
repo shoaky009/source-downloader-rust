@@ -1,11 +1,17 @@
 use crate::component_manager::ComponentManager;
+use crate::components::source_item_identity_filter::SourceItemIdentityFilter;
 use crate::config::ProcessorConfig;
+use crate::process::variable::{AnyStrategy, SmartStrategy, VariableAggregation, VoteStrategy};
 use crate::source_processor::{ProcessorOptions, SourceProcessor};
 use parking_lot::RwLock;
-use sdk::component::{ComponentError, ComponentRootType, VariableProvider};
+use sdk::component::{
+    ComponentError, ComponentRootType, FileTagger, SourceFileFilter, SourceItemFilter,
+    VariableProvider,
+};
 use sdk::storage::ProcessingStorage;
 use std::collections::{HashMap, HashSet};
 use std::ops::Not;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
@@ -99,18 +105,6 @@ impl ProcessorManager {
             .require_component()?
             .as_source()?;
 
-        let mut variable_providers: Vec<Arc<dyn VariableProvider>> = vec![];
-        for x in &config.options.variable_providers {
-            let component_id = ComponentRootType::VariableProvider.parse_component_id(&x);
-            variable_providers.push(
-                self.component_manager
-                    .get_component(&component_id)?
-                    .require_component()?
-                    .as_variable_provider()?
-                    .clone(),
-            );
-        }
-
         let item_file_resolver = self
             .component_manager
             .get_component(
@@ -131,20 +125,24 @@ impl ProcessorManager {
             .require_component()?
             .as_file_mover()?;
 
+        let b = config
+            .options
+            .task_group
+            .clone()
+            .or(source.group())
+            .unwrap_or_else(|| source_id.component_type.name);
         let processor = SourceProcessor::new(
             config.name.to_owned(),
             config.source.to_owned(),
-            config.save_path.to_owned(),
-            source.clone(),
-            item_file_resolver.clone(),
-            downloader.clone(),
-            file_mover.clone(),
-            self.processing_storage.clone(),
-            ProcessorOptions {
-                save_path_pattern: config.options.save_path_pattern.to_owned(),
-                filename_pattern: config.options.filename_pattern.to_owned(),
-                variable_providers,
-            },
+            PathBuf::from(&config.save_path),
+            source.to_owned(),
+            item_file_resolver.to_owned(),
+            downloader.to_owned(),
+            file_mover.to_owned(),
+            self.processing_storage.to_owned(),
+            config.category.to_owned(),
+            config.tags.to_owned(),
+            self.create_options(&config, b)?,
         );
         let instance_id = processor.instance_id();
         let wrapper = Arc::new(ProcessorWrapper {
@@ -157,6 +155,97 @@ impl ProcessorManager {
             .insert(config.name.to_owned(), wrapper.clone());
         info!("Processor[created] {}({:?})", config.name, instance_id);
         Ok(wrapper)
+    }
+
+    fn create_options(
+        &self,
+        config: &ProcessorConfig,
+        group: String,
+    ) -> Result<ProcessorOptions, ComponentError> {
+        let opt = &config.options;
+        let mut item_filters: Vec<Arc<dyn SourceItemFilter>> = vec![];
+        for x in &opt.item_filters {
+            let component_id = ComponentRootType::SourceItemFilter.parse_component_id(&x);
+            item_filters.push(
+                self.component_manager
+                    .get_component(&component_id)?
+                    .require_component()?
+                    .as_source_item_filter()?
+                    .clone(),
+            );
+        }
+
+        let mut source_file_filters: Vec<Arc<dyn SourceFileFilter>> = vec![];
+        for x in &opt.source_file_filters {
+            let component_id = ComponentRootType::SourceFileFilter.parse_component_id(&x);
+            source_file_filters.push(
+                self.component_manager
+                    .get_component(&component_id)?
+                    .require_component()?
+                    .as_source_file_filter()?
+                    .clone(),
+            );
+        }
+
+        let mut variable_providers: Vec<Arc<dyn VariableProvider>> = vec![];
+        for x in &opt.variable_providers {
+            let component_id = ComponentRootType::VariableProvider.parse_component_id(&x);
+            variable_providers.push(
+                self.component_manager
+                    .get_component(&component_id)?
+                    .require_component()?
+                    .as_variable_provider()?
+                    .clone(),
+            );
+        }
+
+        if opt.save_processing_content {
+            item_filters.push(Arc::new(SourceItemIdentityFilter {
+                processor_name: config.name.clone(),
+                storage: self.processing_storage.clone(),
+            }))
+        }
+
+        let mut file_taggers: Vec<Arc<dyn FileTagger>> = vec![];
+        for x in &opt.file_taggers {
+            let component_id = ComponentRootType::FileTagger.parse_component_id(&x);
+            file_taggers.push(
+                self.component_manager
+                    .get_component(&component_id)?
+                    .require_component()?
+                    .as_file_tagger()?
+                    .clone(),
+            );
+        }
+
+        Ok(ProcessorOptions {
+            save_path_pattern: config.options.save_path_pattern.to_owned(),
+            filename_pattern: config.options.filename_pattern.to_owned(),
+            variable_providers,
+            item_filters,
+            source_file_filters,
+            file_taggers,
+            variable_aggregation: VariableAggregation::new(
+                match &opt.variable_conflict_strategy {
+                    None => Box::new(SmartStrategy),
+                    Some(s) => match s.as_str() {
+                        "ANY" => Box::new(AnyStrategy),
+                        "VOTE" => Box::new(VoteStrategy),
+                        _ => Box::new(SmartStrategy),
+                    },
+                },
+                opt.variable_name_replace.to_owned(),
+            ),
+            save_processing_content: config.options.save_processing_content.to_owned(),
+            rename_task_interval: humantime::parse_duration(&config.options.rename_task_interval)
+                .map_err(|e| e.to_string())?,
+            rename_times_threshold: config.options.rename_times_threshold.to_owned(),
+            parallelism: config.options.parallelism.to_owned(),
+            task_group: Some(group),
+            fetch_limit: config.options.fetch_limit.to_owned(),
+            item_error_continue: config.options.item_error_continue,
+            pointer_batch_mode: config.options.pointer_batch_mode,
+        })
     }
 
     pub fn get_processor(&self, name: &str) -> Option<Arc<ProcessorWrapper>> {
@@ -209,6 +298,7 @@ mod test {
     use crate::components::get_build_in_component_supplier;
     use crate::config::{ProcessorConfig, ProcessorOptionConfig, YamlConfigOperator};
     use crate::processor_manager::ProcessorManager;
+    use std::collections::HashSet;
     use std::sync::Arc;
     use storage_memory::MemoryProcessingStorage;
 
@@ -234,6 +324,8 @@ mod test {
             file_mover: "system-file".to_string(),
             save_path: "./tests/resources/output".to_string(),
             options: ProcessorOptionConfig::default(),
+            category: None,
+            tags: HashSet::new(),
         });
         assert!(manager.processor_exists(name));
         let processor_wp = manager.get_processor(name);
@@ -265,6 +357,8 @@ mod test {
             file_mover: "system-file".to_string(),
             save_path: "./tests/resources/output".to_string(),
             options: ProcessorOptionConfig::default(),
+            category: None,
+            tags: HashSet::new(),
         });
         let processor_wp = manager.get_processor(name);
         assert!(processor_wp.is_some());

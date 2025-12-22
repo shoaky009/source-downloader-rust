@@ -35,3 +35,10 @@ processors:
     item-file-resolver: system-file:test
     downloader: http
     file-mover: system-file
+  - name: sync_downloader_case
+    enabled: true
+    save-path: test1
+    source: system-file:test
+    item-file-resolver: system-file:test
+    downloader: http
+    file-mover: system-file

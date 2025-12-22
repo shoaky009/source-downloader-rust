@@ -1,8 +1,9 @@
 use crate::SourceItem;
+use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
-use crate::serde_json::{Map, Value};
+use crate::serde_json::Value;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, UtcDateTime};
 
 #[async_trait]
@@ -11,7 +12,8 @@ pub trait ProcessingStorage: Send + Sync {
     async fn save_processing_content(
         &self,
         content: &ProcessingContent,
-    ) -> Result<ProcessingContent, Error>;
+    ) -> Result<i64, Error>;
+    async fn processing_content_exists(&self, name: &str, hashing: &str) -> Result<bool, Error>;
     async fn delete_processing_content(&self, id: i64) -> Result<(), Error>;
     async fn find_by_name_and_hash(
         &self,
@@ -23,6 +25,8 @@ pub trait ProcessingStorage: Send + Sync {
         &self,
         query: &ProcessingContentQuery,
     ) -> Result<Vec<ProcessingContent>, Error>;
+
+    async fn save_file_contents(&self, content_id:i64, files: Vec<u8>) -> Result<(), Error>;
 
     async fn find_processor_source_state(
         &self,
@@ -55,7 +59,7 @@ pub struct ProcessingContent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ItemContentLite {
     pub source_item: SourceItem,
-    pub item_variables: Map<String, Value>,
+    pub item_variables: HashMap<String, String>,
 }
 
 #[repr(i32)]

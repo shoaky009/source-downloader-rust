@@ -17,10 +17,18 @@ cel = { workspace = true, features = ["json", "regex"] }
 humantime = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 async-trait = { workspace = true }
-retry = { workspace = true }
+backon = { workspace = true }
 indexmap = { workspace = true, features = ["serde"] }
+walkdir = { workspace = true }
+url = { workspace = true, features = ["std"] }
+rkyv = { workspace = true }
+postcard = { workspace = true, features = ["use-std"] }
+zstd = { workspace = true }
+regex = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
 storage-memory = { path = "../storage-memory" }
 storage-sqlite = { path = "../storage-sqlite" }
+sdk = { path = "../sdk", features = ["test"] }
+maplit = "1.0.2"

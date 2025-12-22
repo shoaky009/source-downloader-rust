@@ -44,12 +44,12 @@ struct SystemFileSource {
 
 #[async_trait::async_trait]
 impl Source for SystemFileSource {
-    async fn fetch(&self, _: Arc<dyn SourcePointer>) -> Result<Vec<PointedItem>, ProcessingError> {
+    async fn fetch(&self, _: Arc<dyn SourcePointer>, _: u32) -> Result<Vec<PointedItem>, ProcessingError> {
         if self.mode == 1 {
             let _ = fs::read_dir(&self.path);
             return Ok(vec![]);
         }
-        Ok(vec![PointedItem {
+        let p = PointedItem {
             source_item: SourceItem {
                 title: "test".to_string(),
                 link: "https://example.com".parse().unwrap(),
@@ -58,9 +58,17 @@ impl Source for SystemFileSource {
                 download_uri: "https://example.com/download".parse().unwrap(),
                 attrs: Map::new(),
                 tags: HashSet::new(),
+                identity: None,
             },
             item_pointer: empty_item_pointer(),
-        }])
+        };
+        Ok(vec![
+            PointedItem {
+                source_item: p.source_item.clone(),
+                item_pointer: empty_item_pointer(),
+            },
+            p,
+        ])
     }
 
     fn default_pointer(&self) -> Arc<dyn SourcePointer> {

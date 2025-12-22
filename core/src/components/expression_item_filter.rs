@@ -1,12 +1,12 @@
 use crate::expression::cel::CelCompiledExpressionFactory;
 use crate::expression::{CompiledExpression, CompiledExpressionFactory};
-use sdk::SdComponent;
 use sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, ItemFilter, PointedItem, SdComponent,
-    SdComponentMetadata,
+    ComponentError, ComponentSupplier, ComponentType, SdComponent, SdComponentMetadata,
+    SourceItemFilter,
 };
-use serde::Deserialize;
 use sdk::serde_json::{Map, Value};
+use sdk::{SdComponent, SourceItem};
+use serde::Deserialize;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 use tracing::warn;
@@ -47,7 +47,7 @@ impl ComponentSupplier for ExpressionItemFilterSupplier {
 }
 
 #[derive(SdComponent)]
-#[component(ItemFilter)]
+#[component(SourceItemFilter)]
 struct ExpressionItemFilter {
     exclusions: Vec<Box<dyn CompiledExpression<bool>>>,
     inclusions: Vec<Box<dyn CompiledExpression<bool>>>,
@@ -67,56 +67,43 @@ impl Debug for ExpressionItemFilter {
     }
 }
 
-impl ItemFilter for ExpressionItemFilter {
-    fn filter(&self, item: &PointedItem) -> bool {
+#[async_trait::async_trait]
+impl SourceItemFilter for ExpressionItemFilter {
+    async fn filter(&self, item: &SourceItem) -> bool {
         if self.exclusions.is_empty() && self.inclusions.is_empty() {
             return true;
         }
 
         let mut vars = Map::new();
-        vars.insert(
-            "title".to_owned(),
-            Value::from(item.source_item.title.to_owned()),
-        );
+        vars.insert("title".to_owned(), Value::from(item.title.to_owned()));
         vars.insert(
             "datetime".to_owned(),
-            Value::from(item.source_item.link.to_string()),
+            Value::from(item.datetime.to_string()),
         );
-        vars.insert(
-            "year".to_owned(),
-            Value::from(item.source_item.datetime.year()),
-        );
-        vars.insert(
-            "month".to_owned(),
-            Value::from(item.source_item.datetime.month() as u8),
-        );
-        vars.insert(
-            "link".to_owned(),
-            Value::from(item.source_item.link.to_string()),
-        );
+        vars.insert("year".to_owned(), Value::from(item.datetime.year()));
+        vars.insert("date".to_owned(), Value::from(item.datetime.date().to_string()));
+        vars.insert("month".to_owned(), Value::from(item.datetime.month() as u8));
+        vars.insert("day".to_owned(), Value::from(item.datetime.day()));
+        vars.insert("link".to_owned(), Value::from(item.link.to_string()));
         vars.insert(
             "downloadUri".to_owned(),
-            Value::from(item.source_item.download_uri.to_string()),
+            Value::from(item.download_uri.to_string()),
         );
         vars.insert(
             "contentType".to_owned(),
-            Value::from(item.source_item.content_type.to_string()),
+            Value::from(item.content_type.to_string()),
         );
         vars.insert(
             "tags".to_owned(),
             Value::from(
-                item.source_item
-                    .tags
+                item.tags
                     .iter()
                     .map(|x| Value::from(x.to_string()))
                     .collect::<Vec<Value>>(),
             ),
         );
 
-        vars.insert(
-            "attrs".to_owned(),
-            Value::from(item.source_item.attrs.to_owned()),
-        );
+        vars.insert("attrs".to_owned(), Value::from(item.attrs.to_owned()));
 
         let mut item_var = Map::new();
         item_var.insert("item".to_string(), Value::Object(vars));
@@ -156,7 +143,7 @@ impl ItemFilter for ExpressionItemFilter {
 mod test {
     use crate::components::expression_item_filter::ExpressionItemFilterSupplier;
     use sdk::SourceItem;
-    use sdk::component::{ComponentSupplier, PointedItem, empty_item_pointer};
+    use sdk::component::ComponentSupplier;
     use serde::Deserialize;
     use serde_json::{Map, Value};
     use serde_yaml::from_str;
@@ -165,8 +152,8 @@ mod test {
 
     const SUPPLIER: ExpressionItemFilterSupplier = ExpressionItemFilterSupplier {};
 
-    #[test]
-    fn test_all() {
+    #[tokio::test]
+    async fn test_all() {
         let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
         let path = Path::new("./tests/component/expression_item_filter_test_data.json");
         let file = File::open(path).unwrap();
@@ -177,13 +164,14 @@ mod test {
             let mut props = Map::new();
             props.insert("exclusions".into(), Value::from(data.exclusions.clone()));
             props.insert("inclusions".into(), Value::from(data.inclusions.clone()));
-            let filter = SUPPLIER.apply(&props).unwrap().as_item_filter().unwrap();
+            let filter = SUPPLIER
+                .apply(&props)
+                .unwrap()
+                .as_source_item_filter()
+                .unwrap();
             let item = data.item.as_ref().unwrap_or(&default_item);
-            let p = PointedItem {
-                source_item: item.clone(), // 这个必要，因为 filter.filter 需要 owned
-                item_pointer: empty_item_pointer(),
-            };
-            let actual = filter.filter(&p);
+            let p = item.clone();
+            let actual = filter.filter(&p).await;
             let expected = data.expected;
             assert_eq!(expected, actual, "{:#?}", data);
         }

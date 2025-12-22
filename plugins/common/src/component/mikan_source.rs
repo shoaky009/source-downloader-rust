@@ -2,6 +2,7 @@ use crate::instance::mikan::MikanClient;
 use crate::util;
 use crate::util::{AsyncExpandIterator, ExpandHandler, IterationResult};
 use parking_lot::RwLock;
+use reqwest::StatusCode;
 use rss_for_mikan::{Channel, Item};
 use sdk::async_trait::async_trait;
 use sdk::component::{
@@ -50,7 +51,11 @@ impl ComponentSupplier for MikanSourceSupplier {
         Ok(Arc::new(MikanSource {
             url,
             all_episode,
-            client: Arc::new(MikanClient::new(None)),
+            mikan_client: Arc::new(MikanClient::new(None)),
+            http_client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("Failed to build client"),
         }))
     }
 
@@ -64,7 +69,8 @@ impl ComponentSupplier for MikanSourceSupplier {
 struct MikanSource {
     pub url: String,
     pub all_episode: bool,
-    pub client: Arc<MikanClient>,
+    pub mikan_client: Arc<MikanClient>,
+    pub http_client: reqwest::Client,
 }
 
 impl Debug for MikanSource {
@@ -80,25 +86,21 @@ impl Debug for MikanSource {
 impl Source for MikanSource {
     async fn fetch(
         &self,
-        pointer: Arc<dyn SourcePointer>,
+        source_pointer: Arc<dyn SourcePointer>,
+        limit: u32,
     ) -> Result<Vec<PointedItem>, ProcessingError> {
-        let content = reqwest::get(self.url.as_str())
+        let content = self
+            .http_client
+            .get(self.url.as_str())
+            .send()
             .await
-            .map_err(|e| ProcessingError {
-                message: format!("Failed to fetch RSS: {}", e),
-                skip: false,
-            })?
+            .map_err(|e| reqwest_error(&e, "Failed to fetch RSS"))?
             .bytes()
             .await
-            .map_err(|e| ProcessingError {
-                message: format!("Failed to read bytes: {}", e),
-                skip: false,
-            })?;
+            .map_err(|e| reqwest_error(&e, "Failed to read bytes"))?;
 
-        let channel = Channel::read_from(&content[..]).map_err(|e| ProcessingError {
-            message: format!("Failed to parse RSS: {}", e),
-            skip: false,
-        })?;
+        let channel = Channel::read_from(&content[..])
+            .map_err(|e| ProcessingError::non_retryable(format!("Failed to parse RSS, {}", e)))?;
 
         let items: Vec<SourceItem> = channel
             .items
@@ -117,14 +119,17 @@ impl Source for MikanSource {
             return Ok(result);
         }
 
-        let mp = pointer.into_any().downcast::<MikanSourcePointer>().unwrap();
+        let mp = source_pointer
+            .into_any()
+            .downcast::<MikanSourcePointer>()
+            .unwrap();
         let handler = MikanItemExpandHandler {
-            client: self.client.clone(),
+            client: self.mikan_client.clone(),
             pointer: mp,
         };
-        let expanded_items = AsyncExpandIterator::new(items, 100, Box::new(handler))
+        let expanded_items = AsyncExpandIterator::new(items, limit, Box::new(handler))
             .collect_all()
-            .await;
+            .await?;
 
         Ok(expanded_items)
     }
@@ -142,6 +147,7 @@ impl Source for MikanSource {
 }
 
 impl MikanSource {
+    // TODO如果失败要打印一下日志
     fn convert_item(item: &Item) -> Option<SourceItem> {
         let title = item.title.as_ref()?.to_string();
         let link_str = item.link.as_ref()?;
@@ -164,6 +170,7 @@ impl MikanSource {
             download_uri,
             attrs: Default::default(),
             tags: Default::default(),
+            identity: None,
         })
     }
 }
@@ -175,60 +182,51 @@ struct MikanItemExpandHandler {
 
 #[async_trait]
 impl ExpandHandler<SourceItem, PointedItem> for MikanItemExpandHandler {
-    async fn expand(&self, item: SourceItem) -> IterationResult<PointedItem> {
+    async fn expand(
+        &self,
+        item: SourceItem,
+    ) -> Result<IterationResult<PointedItem>, ProcessingError> {
         let fansub_rss = self
             .client
             .get_episode_page_info(&item.link.to_string())
             .await
-            .unwrap()
+            .map_err(|e| ProcessingError::retryable(e.to_string()))?
             .fansub_rss;
         if fansub_rss.is_none() {
-            return IterationResult {
+            return Ok(IterationResult {
                 items: vec![],
-                continue_expand: false,
-            };
+                has_next: false,
+            });
         }
         let fansub_rss = fansub_rss.unwrap();
         let fansub_uri = Uri::from_str(&fansub_rss).unwrap();
         let fansub_query = util::query_map(&fansub_uri);
         let bangumi_id = fansub_query.get("bangumiId");
         if bangumi_id.is_none() {
-            return IterationResult {
+            return Ok(IterationResult {
                 items: vec![],
-                continue_expand: false,
-            };
+                has_next: false,
+            });
         }
         let subgroup_id = fansub_query.get("subgroupid");
         if subgroup_id.is_none() {
-            return IterationResult {
+            return Ok(IterationResult {
                 items: vec![],
-                continue_expand: false,
-            };
+                has_next: false,
+            });
         }
         let bangumi_id = bangumi_id.unwrap();
         let subgroup_id = subgroup_id.unwrap();
 
         let content = reqwest::get(&fansub_rss)
             .await
-            .map_err(|e| ProcessingError {
-                message: e.to_string(),
-                skip: false,
-            })
-            .unwrap()
+            .map_err(|e| ProcessingError::retryable(e.to_string()))?
             .bytes()
             .await
-            .map_err(|e| ProcessingError {
-                message: e.to_string(),
-                skip: false,
-            })
-            .unwrap();
+            .map_err(|e| ProcessingError::retryable(e.to_string()))?;
 
         let channel = Channel::read_from(&content[..])
-            .map_err(|e| ProcessingError {
-                message: e.to_string(),
-                skip: false,
-            })
-            .unwrap();
+            .map_err(|e| ProcessingError::non_retryable(e.to_string()))?;
         let mut fansub_items: Vec<SourceItem> = channel
             .items
             .iter()
@@ -237,7 +235,6 @@ impl ExpandHandler<SourceItem, PointedItem> for MikanItemExpandHandler {
         fansub_items.sort_by(|a, b| a.datetime.cmp(&b.datetime));
         if !fansub_items.contains(&item) {
             tracing::debug!("Item不在RSS列表中: {:?}", item);
-            // Rust中通常需要 clone 所有权放入 Vec，或者 item 本身就是 Copy 的
             fansub_items.push(item);
         }
 
@@ -263,11 +260,33 @@ impl ExpandHandler<SourceItem, PointedItem> for MikanItemExpandHandler {
             })
             .collect();
 
-        IterationResult {
+        Ok(IterationResult {
             items: result,
-            continue_expand: false,
+            has_next: false,
+        })
+    }
+}
+
+pub fn reqwest_error(e: &reqwest::Error, prefix: &str) -> ProcessingError {
+    if e.is_timeout() || e.is_connect() {
+        return ProcessingError::retryable(format!("{}, {}", prefix, e));
+    }
+
+    if let Some(status) = e.status() {
+        let retry = matches!(
+            status,
+            StatusCode::REQUEST_TIMEOUT
+                | StatusCode::TOO_MANY_REQUESTS
+                | StatusCode::INTERNAL_SERVER_ERROR
+                | StatusCode::BAD_GATEWAY
+                | StatusCode::SERVICE_UNAVAILABLE
+                | StatusCode::GATEWAY_TIMEOUT
+        );
+        if retry {
+            return ProcessingError::retryable(format!("{}, {}", prefix, e));
         }
     }
+    ProcessingError::non_retryable(format!("{}, {}", prefix, e))
 }
 
 #[derive(Debug)]
@@ -309,7 +328,7 @@ impl SourcePointer for MikanSourcePointer {
         serde_json::to_value(self).unwrap()
     }
 
-    fn update(&self, _: &SourceItem, item_pointer: Box<dyn ItemPointer>) {
+    fn update(&self, _: &SourceItem, item_pointer: &Box<dyn ItemPointer>) {
         if let Some(p) = item_pointer.as_any().downcast_ref::<FansubPointer>() {
             self.shows.write().insert(p.key(), p.date);
             let mut g = self.latest.write();

@@ -6,6 +6,7 @@ use sdk::storage::{
 };
 use sea_orm::SqlxSqliteConnector;
 use sea_orm::entity::prelude::*;
+use sea_orm::sea_query::OnConflict;
 use sea_orm::sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sea_orm::*;
 use serde_json::json;
@@ -78,10 +79,7 @@ impl SeaProcessingStorage {
 #[allow(dead_code, unused)]
 #[async_trait]
 impl ProcessingStorage for SeaProcessingStorage {
-    async fn save_processing_content(
-        &self,
-        content: &ProcessingContent,
-    ) -> Result<ProcessingContent, Error> {
+    async fn save_processing_content(&self, content: &ProcessingContent) -> Result<i64, Error> {
         let model = processing_record::ActiveModel {
             id: if let Some(id) = content.id {
                 Set(id)
@@ -98,16 +96,28 @@ impl ProcessingStorage for SeaProcessingStorage {
             created_at: Set(content.created_at),
             updated_at: Set(content.updated_at),
         };
-
-        let saved = model
+        let id = model
             .save(&self.db)
             .await
-            .map(|x| x.try_into_model())
-            .flatten()
+            .map(|x| x.id.unwrap())
             .map_err(|x| Error {
                 message: x.to_string(),
             })?;
-        Ok(Self::model_to_content(saved)?)
+        Ok(id)
+    }
+
+    async fn processing_content_exists(&self, name: &str, hashing: &str) -> Result<bool, Error> {
+        processing_record::Entity::find()
+            .filter(
+                processing_record::Column::ProcessorName
+                    .eq(name)
+                    .and(processing_record::Column::ItemHash.eq(hashing)),
+            )
+            .exists(&self.db)
+            .await
+            .map_err(|x| Error {
+                message: x.to_string(),
+            })
     }
 
     async fn delete_processing_content(&self, id: i64) -> Result<(), Error> {
@@ -146,6 +156,29 @@ impl ProcessingStorage for SeaProcessingStorage {
         query: &ProcessingContentQuery,
     ) -> Result<Vec<ProcessingContent>, Error> {
         todo!()
+    }
+
+    async fn save_file_contents(&self, content_id: i64, files: Vec<u8>) -> Result<(), Error> {
+        let model = item_file_content::ActiveModel {
+            id: Set(content_id),
+            file_content: Set(files),
+        };
+
+        // 使用 Entity::insert 来构建查询
+        item_file_content::Entity::insert(model)
+            .on_conflict(
+                // 定义冲突的目标列（通常是主键）
+                OnConflict::column(item_file_content::Column::Id)
+                    // 定义冲突时要更新的列
+                    .update_column(item_file_content::Column::FileContent)
+                    .to_owned(),
+            )
+            .exec(&self.db)
+            .await
+            .map(|_| ())
+            .map_err(|e| Error {
+                message: e.to_string(),
+            })
     }
 
     async fn find_processor_source_state(
@@ -210,7 +243,7 @@ mod test {
     use crate::SeaProcessingStorage;
     use sdk::SourceItem;
     use sdk::storage::{ItemContentLite, ProcessingContent, ProcessingStatus, ProcessingStorage};
-    use serde_json::Map;
+    use std::collections::HashMap;
     use time::OffsetDateTime;
     use uuid::Uuid;
 
@@ -232,8 +265,9 @@ mod test {
                     download_uri: "https://example.com/download".parse().unwrap(),
                     attrs: Default::default(),
                     tags: Default::default(),
+                    identity: None,
                 },
-                item_variables: Map::new(),
+                item_variables: HashMap::new(),
             },
             rename_times: 0,
             status,
@@ -249,9 +283,9 @@ mod test {
         let s = SeaProcessingStorage::new(db_url).await.unwrap();
 
         let content = create_test_processing_content("test_processor", ProcessingStatus::Renamed);
-        let res = s.save_processing_content(&content).await.unwrap();
+        let id = s.save_processing_content(&content).await.unwrap();
 
-        // 验证返回的内容包含生成的 ID
+        let res = s.find_content_by_id(id).await.unwrap().unwrap();
         assert!(res.id.is_some());
         assert_eq!(res.processor_name, "test_processor");
         assert_eq!(res.item_hash, content.item_hash);
@@ -268,16 +302,16 @@ mod test {
             create_test_processing_content("test_processor_2", ProcessingStatus::WaitingToRename);
 
         // 第一次保存获取 ID
-        let saved = s.save_processing_content(&content).await.unwrap();
-        assert!(saved.id.is_some());
+        let id = s.save_processing_content(&content).await.unwrap();
 
         // 使用获取的 ID 进行第二次保存
-        content.id = saved.id;
+        content.id = Some(id);
         content.rename_times = 5;
-        let updated = s.save_processing_content(&content).await.unwrap();
+        let updated_id = s.save_processing_content(&content).await.unwrap();
 
         // 验证更新
-        assert_eq!(updated.id, saved.id);
+        assert_eq!(updated_id, id);
+        let updated = s.find_content_by_id(id).await.unwrap().unwrap();
         assert_eq!(updated.rename_times, 5);
     }
 
@@ -290,8 +324,9 @@ mod test {
             create_test_processing_content("test_processor_3", ProcessingStatus::Failure);
         content.failure_reason = Some("Download failed".to_string());
 
-        let res = s.save_processing_content(&content).await.unwrap();
+        let id = s.save_processing_content(&content).await.unwrap();
 
+        let res = s.find_content_by_id(id).await.unwrap().unwrap();
         assert!(res.id.is_some());
         assert_eq!(res.failure_reason, Some("Download failed".to_string()));
         assert_eq!(res.status, ProcessingStatus::Failure);
@@ -336,6 +371,21 @@ mod processor_source_state {
         pub last_pointer_json: Json,
         pub retry_times: i32,
         pub last_active_at: Option<String>,
+    }
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+mod item_file_content {
+    use sea_orm::entity::prelude::*;
+
+    #[sea_orm::model]
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+    #[sea_orm(table_name = "item_file_content")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub id: i64,
+        pub file_content: Vec<u8>,
     }
 
     impl ActiveModelBehavior for ActiveModel {}

@@ -343,7 +343,7 @@ mod tests {
         let component_arc = component_wrapper.component.as_ref().unwrap();
         let source = component_arc.clone().as_source().unwrap();
         assert_eq!(component_wrapper.id.name, "test");
-        let items = source.fetch(Arc::new(NullSourcePointer {})).await.unwrap();
+        let items = source.fetch(Arc::new(NullSourcePointer {}), 100).await.unwrap();
         assert!(items.len() > 0);
         println!("{:?}", items);
 

@@ -18,7 +18,7 @@ syn = "2.0"
 quote = "1.0"
 tempfile = "3"
 parking_lot = "0.12"
-cel = "0.11"
+cel = "0.12"
 humantime = "2.3"
 clap = { version = "4", features = ["derive", "env"] }
 
@@ -33,12 +33,20 @@ tower-http = { version = "0.6" }
 futures-util = { version = "0.3", default-features = false }
 serde_qs = "1.0.0-rc.3"
 retry = "2"
+tokio-retry2 = "0.7.0"
 fastmurmur3 = "0.2.0"
 
 rss-for-mikan = "2.0.4-mikan"
-reqwest = { version = "0.12" }
+reqwest = { version = "0.12", default-features = false }
 scraper = "0.25"
 indexmap = { version = "2" }
+backon = "1.6"
+walkdir = "2"
+url = "2"
+rkyv = { version = "0.8" }
+postcard = { version = "1.1", features = ["use-std"] }
+zstd = "0.13"
+regex = "1.12.2"
 
 # 使用cargo tree -p sea-orm -i sqlx查看sea-orm依赖的版本, 因为不喜欢用sea-orm的migration改用sqlx的方式
 sea-orm = { version = "2.0.0-rc.20" }

@@ -39,7 +39,7 @@ impl Downloader for HttpDownloader {
     }
 
     fn default_download_path(&self) -> &str {
-        todo!()
+        &self.path
     }
 
     fn cancel(&self, item: &DownloadTask, files: &[SourceFile]) -> Result<(), ComponentError> {

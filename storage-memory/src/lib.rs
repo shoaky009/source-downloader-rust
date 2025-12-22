@@ -22,10 +22,11 @@ impl MemoryProcessingStorage {
 
 #[async_trait]
 impl ProcessingStorage for MemoryProcessingStorage {
-    async fn save_processing_content(
-        &self,
-        _: &ProcessingContent,
-    ) -> Result<ProcessingContent, Error> {
+    async fn save_processing_content(&self, _: &ProcessingContent) -> Result<i64, Error> {
+        todo!()
+    }
+
+    async fn processing_content_exists(&self, _: &str, _: &str) -> Result<bool, Error> {
         todo!()
     }
 
@@ -49,6 +50,10 @@ impl ProcessingStorage for MemoryProcessingStorage {
         &self,
         _: &ProcessingContentQuery,
     ) -> Result<Vec<ProcessingContent>, Error> {
+        todo!()
+    }
+
+    async fn save_file_contents(&self, _: i64, _: Vec<u8>) -> Result<(), Error> {
         todo!()
     }
 

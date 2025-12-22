@@ -30,7 +30,8 @@ where
     fn execute(&self, vars: &Map<String, serde_json::Value>) -> Result<T, String> {
         let mut context = Context::default();
         for (k, v) in vars.iter() {
-            let _ = context.add_variable(k.as_str(), Self::json_to_cel(v));
+            // 预期不应该错误
+            let _ = context.add_variable(k.as_str(), Self::json_to_cel(v)).unwrap();
         }
         let value = self.program.execute(&context).map_err(|e| e.to_string())?;
         T::from_value(&value)

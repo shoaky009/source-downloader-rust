@@ -13,9 +13,12 @@ use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::io::Read;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub const COMPONENT_REF_PAT: &str = ":";
+pub type PatternVariables = HashMap<String, String>;
+
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ComponentRootType {
@@ -30,7 +33,7 @@ pub enum ComponentRootType {
     SourceFileFilter,
     ItemContentFilter,
     FileContentFilter,
-    Tagger,
+    FileTagger,
     FileReplacementDecider,
     FileExistsDetector,
     VariableReplacer,
@@ -51,7 +54,7 @@ impl ComponentRootType {
             "source-file-filter" => Ok(ComponentRootType::SourceFileFilter),
             "item-content-filter" => Ok(ComponentRootType::ItemContentFilter),
             "file-content-filter" => Ok(ComponentRootType::FileContentFilter),
-            "tagger" => Ok(ComponentRootType::Tagger),
+            "file-tagger" => Ok(ComponentRootType::FileTagger),
             "file-replacement-decider" => Ok(ComponentRootType::FileReplacementDecider),
             "file-exists-detector" => Ok(ComponentRootType::FileExistsDetector),
             "variable-replacer" => Ok(ComponentRootType::VariableReplacer),
@@ -72,7 +75,7 @@ impl ComponentRootType {
             ComponentRootType::SourceFileFilter => "source-file-filter",
             ComponentRootType::ItemContentFilter => "item-content-filter",
             ComponentRootType::FileContentFilter => "file-content-filter",
-            ComponentRootType::Tagger => "tagger",
+            ComponentRootType::FileTagger => "tagger",
             ComponentRootType::FileReplacementDecider => "file-replacement-decider",
             ComponentRootType::FileExistsDetector => "file-exists-detector",
             ComponentRootType::VariableReplacer => "variable-replacer",
@@ -222,7 +225,7 @@ impl ComponentType {
     }
     pub fn file_tagger(name: String) -> ComponentType {
         ComponentType {
-            root_type: ComponentRootType::Tagger,
+            root_type: ComponentRootType::FileTagger,
             name,
         }
     }
@@ -292,9 +295,6 @@ pub trait SdComponent: Any + Send + Sync + Debug {
     }
     fn as_downloader(self: Arc<Self>) -> Result<Arc<dyn Downloader>, ComponentError> {
         Err(ComponentError::from("Not a downloader component"))
-    }
-    fn as_item_filter(self: Arc<Self>) -> Result<Arc<dyn ItemFilter>, ComponentError> {
-        Err(ComponentError::from("Not a item filter component"))
     }
     fn as_file_mover(self: Arc<Self>) -> Result<Arc<dyn FileMover>, ComponentError> {
         Err(ComponentError::from("Not a file mover component"))
@@ -383,6 +383,7 @@ pub trait Source: SdComponent {
     async fn fetch(
         &self,
         source_pointer: Arc<dyn SourcePointer>,
+        limit: u32,
     ) -> Result<Vec<PointedItem>, ProcessingError>;
     fn default_pointer(&self) -> Arc<dyn SourcePointer>;
     fn parse_raw_pointer(&self, value: Value) -> Arc<dyn SourcePointer>;
@@ -394,8 +395,9 @@ pub trait Source: SdComponent {
     }
 }
 
+#[async_trait]
 pub trait ItemFileResolver: SdComponent {
-    fn resolve_files(&self, item: &SourceItem) -> Vec<SourceFile>;
+    async fn resolve_files(&self, item: &SourceItem) -> Vec<SourceFile>;
 }
 
 pub trait FileMover: SdComponent {
@@ -413,10 +415,9 @@ pub trait FileMover: SdComponent {
         false
     }
     fn batch_move(&self, _: &ItemContent) -> Result<(), ProcessingError> {
-        Err(ProcessingError {
-            message: "Batch move is not supported".to_string(),
-            skip: false,
-        })
+        Err(ProcessingError::non_retryable(
+            "Batch move is not supported",
+        ))
     }
 }
 
@@ -426,8 +427,9 @@ pub trait ProcessListener: SdComponent {
     fn on_process_completed(&self, ctx: &dyn ProcessContext);
 }
 
+#[async_trait::async_trait]
 pub trait SourceItemFilter: SdComponent {
-    fn filter(&self, item: &SourceItem) -> bool;
+    async fn filter(&self, item: &SourceItem) -> bool;
 }
 
 pub trait SourceFileFilter: SdComponent {
@@ -442,8 +444,9 @@ pub trait FileContentFilter: SdComponent {
     fn filter(&self, file_content: &FileContent) -> bool;
 }
 
+#[async_trait]
 pub trait FileTagger: SdComponent {
-    fn tag(&self, source_file: &SourceFile) -> Option<String>;
+    async fn tag(&self, source_file: &SourceFile) -> Option<String>;
 }
 
 pub trait FileReplacementDecider: SdComponent {
@@ -459,18 +462,19 @@ pub trait ItemExistsDetector: SdComponent {
     fn exists(&self, file_mover: &dyn FileMover, item_content: &ItemContent) -> bool;
 }
 
+#[async_trait]
 pub trait VariableProvider: SdComponent {
     fn accuracy(&self) -> i32 {
         1
     }
-    fn item_variables(&self, item: &SourceItem) -> Map<String, Value>;
-    fn file_variables(
+    async fn item_variables(&self, item: &SourceItem) -> HashMap<String, String>;
+    async fn file_variables(
         &self,
         item: &SourceItem,
-        item_variables: &Map<String, Value>,
+        item_variables: &PatternVariables,
         files: &[SourceFile],
-    ) -> Map<String, Value>;
-    fn extract_from(&self, item: &SourceItem, value: &str) -> Option<Map<String, Value>>;
+    ) -> Vec<PatternVariables>;
+    async fn extract_from(&self, item: &SourceItem, value: &str) -> Option<HashMap<String, Value>>;
     fn primary_variable_name(&self) -> Option<String>;
 }
 
@@ -479,11 +483,7 @@ pub trait VariableReplacer: SdComponent {
 }
 
 pub trait Trimmer: SdComponent {
-    fn trim(&self, value: String, expect_size: &i32) -> String;
-}
-
-pub trait ItemFilter: SdComponent {
-    fn filter(&self, item: &PointedItem) -> bool;
+    fn trim(&self, value: String, expect_size: usize) -> String;
 }
 
 // </editor-fold>
@@ -509,7 +509,7 @@ pub fn empty_item_pointer() -> Box<dyn ItemPointer> {
 
 pub trait SourcePointer: Send + Sync {
     fn dump(&self) -> Value;
-    fn update(&self, item: &SourceItem, item_pointer: Box<dyn ItemPointer>);
+    fn update(&self, item: &SourceItem, item_pointer: &Box<dyn ItemPointer>);
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
 }
 
@@ -521,7 +521,7 @@ impl SourcePointer for NullSourcePointer {
         Value::Object(Map::new())
     }
 
-    fn update(&self, _: &SourceItem, _: Box<dyn ItemPointer>) {}
+    fn update(&self, _: &SourceItem, _: &Box<dyn ItemPointer>) {}
 
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
@@ -574,16 +574,45 @@ impl From<String> for ComponentError {
 }
 
 #[derive(Debug)]
-pub struct ProcessingError {
-    pub message: String,
-    pub skip: bool,
+pub enum ProcessingError {
+    Retryable { message: String },
+    NonRetryable { message: String, skip: bool },
+}
+
+impl ProcessingError {
+    pub fn retryable<S: Into<String>>(message: S) -> Self {
+        Self::Retryable {
+            message: message.into(),
+        }
+    }
+
+    pub fn non_retryable<S: Into<String>>(message: S) -> Self {
+        Self::NonRetryable {
+            message: message.into(),
+            skip: false,
+        }
+    }
+
+    pub fn skip<S: Into<String>>(message: S) -> Self {
+        Self::NonRetryable {
+            message: message.into(),
+            skip: true,
+        }
+    }
+
+    pub fn message(&self) -> &str {
+        match self {
+            ProcessingError::Retryable { message } => message,
+            ProcessingError::NonRetryable { message, .. } => message,
+        }
+    }
 }
 
 impl Error for ProcessingError {}
 
 impl Display for ProcessingError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
+        write!(f, "{}", self.message())
     }
 }
 
@@ -594,12 +623,25 @@ pub struct DownloadTask<'a> {
     pub download_options: &'a DownloadOptions,
 }
 
+#[derive(Clone)]
 pub struct SourceFile {
-    pub path: String,
+    pub path: PathBuf,
     pub attrs: Map<String, Value>,
     pub download_uri: Option<Uri>,
-    pub tags: HashSet<String>,
+    pub tags: Vec<String>,
     pub data: Option<Arc<dyn Read + Send + Sync>>,
+}
+
+impl SourceFile {
+    pub fn new(path: PathBuf) -> Self {
+        SourceFile {
+            path,
+            attrs: Map::new(),
+            download_uri: None,
+            tags: vec![],
+            data: None,
+        }
+    }
 }
 
 pub struct DownloadOptions {
@@ -615,16 +657,95 @@ pub trait ProcessTask: Send + Sync {
     fn group(&self) -> Option<String>;
 }
 
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct FileContent {
-    pub download_path: String,
-    pub file_download_path: String,
-    pub pattern_variables: Map<String, Value>,
-    pub tags: HashSet<String>,
+    /// /mnt/downloads
+    pub download_path: PathBuf,
+    /// /mnt/downloads/1.txt
+    pub file_download_path: PathBuf,
+    pub source_save_path: PathBuf,
+    pub pattern_variables: HashMap<String, String>,
+    pub tags: Vec<String>,
     pub attrs: Map<String, Value>,
+    #[serde(with = "http_serde::option::uri")]
     pub file_uri: Option<Uri>,
-    pub target_save_path: String,
+    /// /mnt/target
+    pub target_save_path: PathBuf,
+    /// 1.txt
     pub target_filename: String,
-    pub exist_target_path: Option<String>,
+    /// /mnt/target/1.txt
+    pub exist_target_path: Option<PathBuf>,
+    pub errors: Vec<String>,
+    pub status: FileContentStatus,
+}
+
+impl FileContent {
+    pub fn target_path(&self) -> PathBuf {
+        self.target_save_path.join(&self.target_filename)
+    }
+    pub fn file_save_root_dir(&self) -> Option<PathBuf> {
+        if self.source_save_path == self.target_save_path {
+            return None;
+        }
+        if let Ok(relative) = self.target_save_path.strip_prefix(&self.source_save_path) {
+            // 3. 获取相对路径的第一级目录 (对应 Kotlin 的 Path(prefix).firstOrNull())
+            // components().next() 获取第一项
+            if let Some(first_component) = relative.components().next() {
+                // 4. 将第一级目录拼接到 source_save_path (对应 Kotlin 的 resolve)
+                let resolve = self.source_save_path.join(first_component);
+                // 5. 判断结果是否与源码路径不同 (对应 Kotlin 的 takeIf)
+                if resolve != self.source_save_path {
+                    return Some(resolve);
+                }
+            }
+        }
+        None
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub enum FileContentStatus {
+    UNDETECTED,
+
+    /**
+     * 正常没有任何文件冲突
+     */
+    NORMAL,
+
+    /**
+     * 已下载
+     */
+    DOWNLOADED,
+
+    /**
+     * 路径模板变量不存在
+     */
+    VariableError,
+
+    /**
+     * 目标文件已经存在
+     */
+    TargetExists,
+
+    /**
+     * SourceItem中的目标文件冲突
+     */
+    FileConflict,
+
+    /**
+     * 准备替换
+     */
+    ReadyReplace,
+
+    /**
+     * 该文件是被替换了的
+     */
+    REPLACED,
+
+    /**
+     * 该文件是替换的
+     */
+    REPLACE,
 }
 
 pub struct ItemContent {
@@ -672,7 +793,8 @@ impl TaskRegistry {
 
 #[cfg(test)]
 mod test {
-    use crate::component::{ComponentId, ComponentRootType};
+    use crate::component::{ComponentId, ComponentRootType, FileContent, FileContentStatus};
+    use std::path::PathBuf;
 
     #[test]
     fn parse_component_id_given_raw_string() {
@@ -697,5 +819,39 @@ mod test {
 
         let component_id = ComponentId::parse("source:aa:ss:dd");
         assert!(component_id.is_err());
+    }
+
+    #[test]
+    fn test_file_save_root_dir() {
+        // 2 depth
+        let mut f = FileContent {
+            file_download_path: PathBuf::from("src/test/resources/downloads/1.txt"),
+            source_save_path: PathBuf::from("src/test/resources/target"),
+            download_path: PathBuf::from("src/test/resources/downloads"),
+            pattern_variables: Default::default(),
+            tags: vec![],
+            attrs: Default::default(),
+            file_uri: None,
+            target_save_path: PathBuf::from("src/test/resources/target/test/S01"),
+            target_filename: "1.txt".to_string(),
+            exist_target_path: None,
+            errors: vec![],
+            status: FileContentStatus::UNDETECTED,
+        };
+        assert_eq!(
+            PathBuf::from("src/test/resources/target/test"),
+            f.file_save_root_dir().unwrap()
+        );
+
+        // 1 depth
+        f.target_save_path = PathBuf::from("src/test/resources/target/test");
+        assert_eq!(
+            PathBuf::from("src/test/resources/target/test"),
+            f.file_save_root_dir().unwrap()
+        );
+
+        // 0 depth
+        f.target_save_path = PathBuf::from("src/test/resources/target");
+        assert_eq!(None, f.file_save_root_dir());
     }
 }
