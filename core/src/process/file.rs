@@ -161,13 +161,13 @@ impl PathPattern {
     ) -> Vec<ExpressionWrapper> {
         let mut expressions: Vec<ExpressionWrapper> = Vec::new();
         // 迭代所有正则匹配项
-        for cap in crate::process::file::VARIABLE_PATTERN_REGEX.captures_iter(pattern) {
+        for cap in VARIABLE_PATTERN_REGEX.captures_iter(pattern) {
             // 获取完整的原始文本，例如 "{name}" 或 ":{age}"
             let raw_full_text = cap.get(0).unwrap().as_str();
 
             // 判断是否为可选 (以 : 开头)
             let is_optional =
-                raw_full_text.starts_with(crate::process::file::OPTIONAL_EXPRESSION_PREFIX);
+                raw_full_text.starts_with(OPTIONAL_EXPRESSION_PREFIX);
 
             // 提取中间的表达式内容
             // 如果是 Group 1 (normal) 有值则取它，否则取 Group 2 (optional)

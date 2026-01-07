@@ -6,7 +6,7 @@ use std::collections::HashMap;
 pub struct Candidate<'a> {
     pub value: &'a String,
     pub accuracy: i32,
-    pub index: usize, // 用于在权重相同时保持原始顺序 (Stable Tie-breaking)
+    pub index: usize, // 用于在权重相同时保持原始顺序
 }
 
 // --- 冲突策略 Trait ---

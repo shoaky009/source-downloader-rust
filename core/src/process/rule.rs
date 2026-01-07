@@ -1,9 +1,8 @@
-use crate::expression::{CompiledExpression, source_file_variables, source_item_variables};
+use crate::expression::{source_file_variables, source_item_variables, CompiledExpression};
 use crate::process::file::PathPattern;
+use sdk::component::{FileContentFilter, SourceFile, SourceItemFilter, VariableProvider};
 use sdk::SourceItem;
-use sdk::component::{
-    FileContentFilter, SourceFile, SourceFileFilter, SourceItemFilter, VariableProvider,
-};
+use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -53,17 +52,18 @@ pub struct ItemRule {
 // ====
 
 pub trait SourceFileMatcher: Send + Sync {
-    fn matches(&self, file: &SourceFile) -> bool;
+    fn matches(&self, file: &SourceFile, file_count: usize) -> bool;
 }
 
 impl SourceFileMatcher for ExpressionAndTagMatcher {
-    fn matches(&self, file: &SourceFile) -> bool {
+    fn matches(&self, file: &SourceFile, file_count: usize) -> bool {
         if let Some(required_tags) = &self.tags {
             return required_tags.iter().all(|t| file.tags.contains(t));
         }
         if let Some(expr) = &self.expression {
-            let variables = &source_file_variables(file);
-            return expr.execute(variables).unwrap_or(false);
+            let mut variables = source_file_variables(file);
+            variables.insert("fileCount".to_string(), Value::from(file_count));
+            return expr.execute(&variables).unwrap_or(false);
         }
         false
     }

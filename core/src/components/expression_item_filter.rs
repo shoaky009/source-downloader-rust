@@ -86,41 +86,31 @@ impl SourceItemFilter for ExpressionItemFilter {
         }
 
         let item_var = source_item_variables(item);
-        for excl in &self.exclusions {
-            let result = excl.execute(&item_var);
-            if result.is_err() {
-                warn!(
-                    "Exclusions expression execution error will be false, error: {}",
-                    result.clone().unwrap_err()
-                );
-            }
-            if result.unwrap_or(false) {
-                return false;
-            }
+        if self.exclusions.iter().any(|expr| {
+            expr.execute(&item_var)
+                .inspect_err(|e| {
+                    warn!("Exclusions expression execution error will be false, error: {e}")
+                })
+                .unwrap_or(false)
+        }) {
+            return false;
         }
         if self.inclusions.is_empty() {
             return true;
         }
-        for incl in &self.inclusions {
-            let result = incl.execute(&item_var);
-            if result.is_err() {
-                warn!(
-                    "Inclusions expression execution error will be false, error: {}",
-                    result.clone().unwrap_err()
-                );
-            }
-
-            if result.unwrap_or(false) {
-                return true;
-            }
-        }
-        false
+        self.inclusions.iter().any(|expr| {
+            expr.execute(&item_var)
+                .inspect_err(|e| {
+                    warn!("Inclusions expression execution error will be false, error: {e}")
+                })
+                .unwrap_or(false)
+        })
     }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::components::expression_item_filter::ExpressionItemFilterSupplier;
+    use crate::components::expression_item_filter::SUPPLIER;
     use sdk::SourceItem;
     use sdk::component::ComponentSupplier;
     use serde::Deserialize;
@@ -128,8 +118,6 @@ mod test {
     use serde_yaml::from_str;
     use std::fs::File;
     use std::path::Path;
-
-    const SUPPLIER: ExpressionItemFilterSupplier = ExpressionItemFilterSupplier {};
 
     #[tokio::test]
     async fn test_all() {

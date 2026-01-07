@@ -1,5 +1,3 @@
-use crate::expression::CompiledExpression;
-use crate::expression::source_item_variables;
 use crate::process::file::{PathPattern, RawFileContent, Renamer};
 use crate::process::variable::VariableAggregation;
 use async_trait::async_trait;

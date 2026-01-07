@@ -1,8 +1,9 @@
 use crate::expression::{CompiledExpression, CompiledExpressionFactory, ExprValue};
+use cel::extractors::This;
 use cel::{Context, Program, Value};
 use sdk::serde_json::Map;
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -30,6 +31,7 @@ where
 {
     fn execute(&self, vars: &Map<String, serde_json::Value>) -> Result<T, String> {
         let mut context = Context::default();
+        context.add_function("containsAny", contains_any);
         for (k, v) in vars.iter() {
             // 预期不应该错误
             let _ = context
@@ -139,6 +141,44 @@ impl ExprValue for String {
             },
             None => Err("Value type mismatch".into()),
         }
+    }
+}
+
+fn contains_any_not_ignore_case(This(source): This<Arc<Vec<Value>>>, target: Arc<Vec<Value>>) -> bool {
+    contains_any(This(source), target, false)
+}
+
+fn contains_any(
+    This(source): This<Arc<Vec<Value>>>,
+    target: Arc<Vec<Value>>,
+    ignore_case: bool,
+) -> bool {
+    if ignore_case {
+        let target_set: HashSet<String> = target
+            .iter()
+            .filter_map(|v| match v {
+                Value::String(s) => Some(s.to_lowercase()),
+                _ => None,
+            })
+            .collect();
+
+        source.iter().any(|v| match v {
+            Value::String(s) => target_set.contains(&s.to_lowercase()),
+            _ => false,
+        })
+    } else {
+        let target_set: HashSet<&str> = target
+            .iter()
+            .filter_map(|v| match v {
+                Value::String(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect();
+
+        source.iter().any(|v| match v {
+            Value::String(s) => target_set.contains(s.as_str()),
+            _ => false,
+        })
     }
 }
 

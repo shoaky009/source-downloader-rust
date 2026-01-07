@@ -32,3 +32,8 @@ storage-memory = { path = "../storage-memory" }
 storage-sqlite = { path = "../storage-sqlite" }
 sdk = { path = "../sdk", features = ["test"] }
 maplit = "1.0.2"
+criterion = { workspace = true }
+
+[[bench]]
+name = "filter"
+harness = false

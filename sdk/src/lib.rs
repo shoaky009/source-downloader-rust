@@ -76,9 +76,11 @@ mod test {
 
 #[cfg(feature = "test")]
 pub mod test_utils {
-    use std::path::PathBuf;
-    use crate::component::SourceFile;
     use crate::SourceItem;
+    use crate::component::FileContentStatus::UNDETECTED;
+    use crate::component::{FileContent, SourceFile};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
 
     impl Default for SourceItem {
         fn default() -> Self {
@@ -103,6 +105,25 @@ pub mod test_utils {
                 download_uri: None,
                 tags: vec![],
                 data: None,
+            }
+        }
+    }
+
+    impl Default for FileContent {
+        fn default() -> Self {
+            FileContent {
+                download_path: PathBuf::new(),
+                file_download_path: PathBuf::new(),
+                source_save_path: PathBuf::new(),
+                pattern_variables: HashMap::new(),
+                tags: vec![],
+                attrs: serde_json::Map::new(),
+                file_uri: None,
+                target_save_path: PathBuf::new(),
+                target_filename: "".to_string(),
+                exist_target_path: None,
+                errors: vec![],
+                status: UNDETECTED,
             }
         }
     }
