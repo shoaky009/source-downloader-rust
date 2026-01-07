@@ -1,8 +1,13 @@
 use crate::component_manager::ComponentManager;
+use crate::components::expression_item_filter::ExpressionItemFilter;
 use crate::components::source_item_identity_filter::SourceItemIdentityFilter;
-use crate::config::ProcessorConfig;
+use crate::config::{ProcessorConfig, ProcessorOptionConfig};
+use crate::expression::CompiledExpressionFactory;
+use crate::expression::cel::FACTORY;
+use crate::process::file::PathPattern;
+use crate::process::rule::{ExpressionAndTagMatcher, ItemRule, ItemStrategy};
 use crate::process::variable::{AnyStrategy, SmartStrategy, VariableAggregation, VoteStrategy};
-use crate::source_processor::{ProcessorOptions, SourceProcessor};
+use crate::source_processor::{ProcessorOptions, SourceProcessor, };
 use parking_lot::RwLock;
 use sdk::component::{
     ComponentError, ComponentRootType, FileTagger, SourceFileFilter, SourceItemFilter,
@@ -199,11 +204,12 @@ impl ProcessorManager {
             );
         }
 
+        let identity_filter = Arc::new(SourceItemIdentityFilter {
+            processor_name: config.name.clone(),
+            storage: self.processing_storage.clone(),
+        });
         if opt.save_processing_content {
-            item_filters.push(Arc::new(SourceItemIdentityFilter {
-                processor_name: config.name.clone(),
-                storage: self.processing_storage.clone(),
-            }))
+            item_filters.push(identity_filter.clone())
         }
 
         let mut file_taggers: Vec<Arc<dyn FileTagger>> = vec![];
@@ -219,8 +225,12 @@ impl ProcessorManager {
         }
 
         Ok(ProcessorOptions {
-            save_path_pattern: config.options.save_path_pattern.to_owned(),
-            filename_pattern: config.options.filename_pattern.to_owned(),
+            save_path_pattern: Arc::new(PathPattern::new_cel(
+                config.options.save_path_pattern.to_owned(),
+            )),
+            filename_pattern: Arc::new(PathPattern::new_cel(
+                config.options.filename_pattern.to_owned(),
+            )),
             variable_providers,
             item_filters,
             source_file_filters,
@@ -245,6 +255,7 @@ impl ProcessorManager {
             fetch_limit: config.options.fetch_limit.to_owned(),
             item_error_continue: config.options.item_error_continue,
             pointer_batch_mode: config.options.pointer_batch_mode,
+            item_rules: self.apply_item_grouping(config, opt, identity_filter)?,
         })
     }
 
@@ -277,6 +288,115 @@ impl ProcessorManager {
 
     pub fn get_all_processor_names(&self) -> HashSet<String> {
         self.processor_wrappers.read().keys().cloned().collect()
+    }
+
+    fn apply_item_grouping(
+        &self,
+        cfg: &ProcessorConfig,
+        opt: &ProcessorOptionConfig,
+        identity_filter: Arc<SourceItemIdentityFilter>,
+    ) -> Result<Vec<ItemRule>, ComponentError> {
+        let mut result = vec![];
+        for item_opt_cfg in opt.item_grouping.iter() {
+            // ====
+            let expression_filters = if item_opt_cfg.item_expression_inclusions.is_some()
+                || item_opt_cfg.item_expression_exclusions.is_some()
+            {
+                let exclusions = item_opt_cfg
+                    .item_expression_exclusions
+                    .as_deref()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|x| FACTORY.create(x))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                let inclusions = item_opt_cfg
+                    .item_expression_inclusions
+                    .as_deref()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|x| FACTORY.create(x))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let filter = ExpressionItemFilter::new(exclusions, inclusions);
+                Some(vec![Arc::new(filter) as Arc<dyn SourceItemFilter>])
+            } else {
+                None
+            };
+
+            // ===
+            let source_item_filters =
+                if let Some(ref filter_names) = item_opt_cfg.source_item_filters {
+                    let mut filters = Vec::new();
+                    for name in filter_names {
+                        let cid = ComponentRootType::SourceItemFilter.parse_component_id(name);
+                        let wp = self.component_manager.get_component(&cid)?;
+
+                        let filter = wp.require_component()?.as_source_item_filter()?;
+                        filters.push(filter);
+                        wp.get_and_mark_ref(cfg.name.to_owned());
+                    }
+                    Some(filters)
+                } else {
+                    None
+                };
+
+            let mut item_filters = if expression_filters.is_some() || source_item_filters.is_some()
+            {
+                let mut filters = Vec::new();
+                filters.extend(expression_filters.unwrap_or_default());
+                filters.extend(source_item_filters.unwrap_or_default());
+                Some(filters)
+            } else {
+                None
+            };
+            // ===
+
+            let providers = if let Some(ref provider_names) = item_opt_cfg.variable_providers {
+                let mut providers = Vec::new();
+                for name in provider_names {
+                    let cid = ComponentRootType::VariableProvider.parse_component_id(name);
+                    let wp = self.component_manager.get_component(&cid)?;
+                    let provider = wp.require_component()?.as_variable_provider()?;
+                    providers.push(provider);
+                    wp.get_and_mark_ref(cfg.name.to_owned());
+                }
+                Some(providers)
+            } else {
+                None
+            };
+
+            if opt.save_processing_content {
+                if let Some(filters) = item_filters.as_mut() {
+                    filters.push(identity_filter.clone());
+                }
+            }
+            // ===
+            let expression_matching = item_opt_cfg
+                .expression_matching
+                .as_ref()
+                .map(|x| FACTORY.create(&x))
+                .transpose()?;
+            let matcher =
+                ExpressionAndTagMatcher::new(expression_matching, item_opt_cfg.tags.to_owned());
+
+            let strategy = ItemStrategy {
+                save_path_pattern: item_opt_cfg
+                    .save_path_pattern
+                    .as_ref()
+                    .map(|x| Arc::new(PathPattern::new_cel(x.clone()))),
+                filename_pattern: item_opt_cfg
+                    .filename_pattern
+                    .as_ref()
+                    .map(|x| Arc::new(PathPattern::new_cel(x.clone()))),
+                item_filters,
+                variable_providers: providers,
+            };
+            result.push(ItemRule {
+                matcher: Box::new(matcher),
+                strategy,
+            })
+        }
+        Ok(result)
     }
 }
 

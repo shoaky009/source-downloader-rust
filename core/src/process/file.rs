@@ -1,32 +1,31 @@
-use crate::expression::cel::CelCompiledExpressionFactory;
+use crate::expression::cel::{CelCompiledExpressionFactory, FACTORY};
 use crate::expression::{CompiledExpression, CompiledExpressionFactory};
 use regex::Regex;
-use sdk::SourceItem;
 use sdk::component::{
     FileContent, FileContentStatus, PatternVariables, SourceFile, Trimmer, VariableReplacer,
 };
-use serde_json::{Map, Value, json};
+use sdk::SourceItem;
+use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock, OnceLock};
 
-static EXPRESSION_REGEX: LazyLock<Regex> =
+pub static EXPRESSION_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\{(.+?)}|:\{(.+?)}").unwrap());
-static EXTENSION_REGEX: LazyLock<Regex> =
+pub static EXTENSION_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\.([a-zA-Z0-9]{1,10})$").unwrap());
-static VARIABLE_PATTERN_REGEX: LazyLock<Regex> =
+pub static VARIABLE_PATTERN_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\{(?P<normal>.+?)}|:\{(?P<optional>.+?)}").unwrap());
-static CEL_FACTORY: CelCompiledExpressionFactory = CelCompiledExpressionFactory {};
-const OPTIONAL_EXPRESSION_PREFIX: &str = ":";
+pub const OPTIONAL_EXPRESSION_PREFIX: &str = ":";
 
 #[derive(Clone)]
 pub struct RawFileContent {
     pub save_path: PathBuf,
     pub download_path: PathBuf,
     pub variables: PatternVariables,
-    pub save_path_pattern: String,
-    pub filename_pattern: String,
+    pub save_path_pattern: Arc<PathPattern>,
+    pub filename_pattern: Arc<PathPattern>,
     pub source_file: SourceFile,
 }
 
@@ -132,6 +131,67 @@ impl Default for Renamer {
     }
 }
 
+pub struct PathPattern {
+    pub pattern: String,
+    expressions: Vec<ExpressionWrapper>,
+}
+
+impl PathPattern {
+    pub fn new(pattern: String, fac: &CelCompiledExpressionFactory) -> Self {
+        if pattern.is_empty() {
+            return Self {
+                pattern,
+                expressions: vec![],
+            };
+        }
+        let expressions = Self::compile_expressions(&pattern, fac);
+        Self {
+            pattern,
+            expressions,
+        }
+    }
+
+    pub fn new_cel(pattern: String) -> Self {
+        Self::new(pattern, &FACTORY)
+    }
+
+    fn compile_expressions(
+        pattern: &str,
+        expression_factory: &CelCompiledExpressionFactory,
+    ) -> Vec<ExpressionWrapper> {
+        let mut expressions: Vec<ExpressionWrapper> = Vec::new();
+        // 迭代所有正则匹配项
+        for cap in crate::process::file::VARIABLE_PATTERN_REGEX.captures_iter(pattern) {
+            // 获取完整的原始文本，例如 "{name}" 或 ":{age}"
+            let raw_full_text = cap.get(0).unwrap().as_str();
+
+            // 判断是否为可选 (以 : 开头)
+            let is_optional =
+                raw_full_text.starts_with(crate::process::file::OPTIONAL_EXPRESSION_PREFIX);
+
+            // 提取中间的表达式内容
+            // 如果是 Group 1 (normal) 有值则取它，否则取 Group 2 (optional)
+            let expression_content = cap
+                .name("normal")
+                .or_else(|| cap.name("optional"))
+                .map(|m| m.as_str())
+                .unwrap_or("");
+
+            // 调用工厂创建表达式对象
+            let expression = expression_factory
+                .create::<String>(expression_content)
+                .unwrap();
+            expressions.push(ExpressionWrapper {
+                expression,
+                optional: is_optional,
+                original: expression_content.to_owned(),
+            });
+        }
+
+        expressions
+    }
+}
+
 struct ExpressionWrapper {
     expression: Box<dyn CompiledExpression<String>>,
     optional: bool,
@@ -180,7 +240,7 @@ impl Renamer {
             if filename_result.path.as_bytes().len() > self.path_name_length_limit {
                 let mut trim_vars = variables.trim_variables.clone();
                 self.execute_trim(
-                    &file.filename_pattern,
+                    &file.filename_pattern.pattern,
                     &filename_result.path,
                     &variables.variables,
                     &mut trim_vars,
@@ -199,7 +259,11 @@ impl Renamer {
             for (index, component) in rel_path.components().enumerate() {
                 let segment_name = component.as_os_str().to_str().unwrap_or("");
                 if segment_name.as_bytes().len() > self.path_name_length_limit {
-                    let segments = file.save_path_pattern.split("/").collect::<Vec<_>>();
+                    let segments = file
+                        .save_path_pattern
+                        .pattern
+                        .split("/")
+                        .collect::<Vec<_>>();
                     if let Some(pattern_part) = segments.get(index) {
                         self.execute_trim(
                             pattern_part,
@@ -266,8 +330,8 @@ impl Renamer {
         }
     }
 
-    fn parse(&self, variables: &RenameVariables, pattern: &str) -> ParseResult {
-        if pattern.is_empty() {
+    fn parse(&self, variables: &RenameVariables, path_pattern: &PathPattern) -> ParseResult {
+        if path_pattern.pattern.is_empty() {
             return ParseResult {
                 path: "".to_owned(),
                 success: true,
@@ -280,15 +344,16 @@ impl Renamer {
         let mut expression_index = 0;
         let mut last_match_end = 0;
         // TODO 要从上游引用表达式
-        let expressions = self.compile_expressions(pattern, &CEL_FACTORY);
+        let expressions = &path_pattern.expressions;
         let mut path_builder = String::new();
 
         // 遍历所有匹配项
-        for mat in EXPRESSION_REGEX.find_iter(pattern) {
+        let raw_pattern = &path_pattern.pattern;
+        for mat in EXPRESSION_REGEX.find_iter(raw_pattern) {
             let expression = &expressions[expression_index];
             let value = expression.expression.execute(variables.all_variables());
             // 1. 添加当前匹配项之前的普通文本 (类似 matcher.appendReplacement 的非替换部分)
-            path_builder.push_str(&pattern[last_match_end..mat.start()]);
+            path_builder.push_str(&raw_pattern[last_match_end..mat.start()]);
             if value.is_err() && !expression.optional {
                 success = false;
                 failed_expressions.push(format!(
@@ -314,7 +379,7 @@ impl Renamer {
         }
 
         // 3. 添加剩余的文本 (类似 matcher.appendTail)
-        path_builder.push_str(&pattern[last_match_end..]);
+        path_builder.push_str(&raw_pattern[last_match_end..]);
 
         ParseResult {
             path: path_builder,
@@ -326,7 +391,7 @@ impl Renamer {
     fn target_filename(&self, file: &RawFileContent, variables: &RenameVariables) -> ParseResult {
         let file_download_path = file.file_download_path();
         let pattern = &file.filename_pattern;
-        if pattern.is_empty() {
+        if pattern.pattern.is_empty() {
             return ParseResult {
                 path: file_download_path
                     .file_name()
@@ -474,42 +539,6 @@ impl Renamer {
             .collect()
     }
 
-    fn compile_expressions(
-        &self,
-        pattern: &str,
-        expression_factory: &CelCompiledExpressionFactory,
-    ) -> Vec<ExpressionWrapper> {
-        let mut expressions: Vec<ExpressionWrapper> = Vec::new();
-        // 迭代所有正则匹配项
-        for cap in VARIABLE_PATTERN_REGEX.captures_iter(pattern) {
-            // 获取完整的原始文本，例如 "{name}" 或 ":{age}"
-            let raw_full_text = cap.get(0).unwrap().as_str();
-
-            // 判断是否为可选 (以 : 开头)
-            let is_optional = raw_full_text.starts_with(OPTIONAL_EXPRESSION_PREFIX);
-
-            // 提取中间的表达式内容
-            // 如果是 Group 1 (normal) 有值则取它，否则取 Group 2 (optional)
-            let expression_content = cap
-                .name("normal")
-                .or_else(|| cap.name("optional"))
-                .map(|m| m.as_str())
-                .unwrap_or("");
-
-            // 调用工厂创建表达式对象
-            let expression = expression_factory
-                .create::<String>(expression_content)
-                .unwrap();
-            expressions.push(ExpressionWrapper {
-                expression,
-                optional: is_optional,
-                original: expression_content.to_owned(),
-            });
-        }
-
-        expressions
-    }
-
     // TODO 未完成
     pub fn item_rename_variables(
         &self,
@@ -566,8 +595,8 @@ mod tests {
                 save_path: SOURCE_SAVE_PATH.to_path_buf(),
                 download_path: DOWNLOAD_PATH.to_path_buf(),
                 variables: Default::default(),
-                save_path_pattern: "".to_owned(),
-                filename_pattern: "".to_owned(),
+                save_path_pattern: Arc::new(PathPattern::new_cel("".to_owned())),
+                filename_pattern: Arc::new(PathPattern::new_cel("".to_owned())),
                 source_file: SourceFile {
                     path: PathBuf::from_str("1.txt").unwrap(),
                     attrs: Default::default(),
@@ -582,8 +611,11 @@ mod tests {
     #[test]
     fn given_empty_should_filename_use_origin_name() {
         let raw = RawFileContent::default();
-        let content =
-            DEFAULT_RENAMER.create_file_content(&SourceItem::default(), raw, &RenameVariables::default());
+        let content = DEFAULT_RENAMER.create_file_content(
+            &SourceItem::default(),
+            raw,
+            &RenameVariables::default(),
+        );
         assert_eq!("1.txt", content.target_filename);
 
         assert_eq!(
@@ -595,12 +627,15 @@ mod tests {
     #[test]
     fn given_constant_pattern_should_filename_expected() {
         let raw = RawFileContent {
-            filename_pattern: "3".to_string(),
-            save_path_pattern: "2".to_string(),
+            filename_pattern: Arc::new(PathPattern::new_cel("3".to_owned())),
+            save_path_pattern: Arc::new(PathPattern::new_cel("2".to_owned())),
             ..Default::default()
         };
-        let content =
-            DEFAULT_RENAMER.create_file_content(&SourceItem::default(), raw, &RenameVariables::default());
+        let content = DEFAULT_RENAMER.create_file_content(
+            &SourceItem::default(),
+            raw,
+            &RenameVariables::default(),
+        );
         assert_eq!("3.txt", content.target_filename);
         assert_eq!(SOURCE_SAVE_PATH.join("2/3.txt"), content.target_path());
     }
@@ -608,8 +643,8 @@ mod tests {
     #[test]
     fn given_vars_pattern_should_filename_expected() {
         let raw = RawFileContent {
-            filename_pattern: "{date} - {title}".to_string(),
-            save_path_pattern: "{year}/{work}".to_string(),
+            filename_pattern: Arc::new(PathPattern::new_cel("{date} - {title}".to_owned())),
+            save_path_pattern: Arc::new(PathPattern::new_cel("{year}/{work}".to_owned())),
             variables: hashmap! {
               "date".to_owned() => "2022-01-01".to_owned(),
               "work".to_owned() => "test".to_owned(),
@@ -618,8 +653,11 @@ mod tests {
             },
             ..Default::default()
         };
-        let content =
-            DEFAULT_RENAMER.create_file_content(&SourceItem::default(), raw, &RenameVariables::default());
+        let content = DEFAULT_RENAMER.create_file_content(
+            &SourceItem::default(),
+            raw,
+            &RenameVariables::default(),
+        );
         assert_eq!(
             SOURCE_SAVE_PATH.join("2022/test/2022-01-01 - 123.txt"),
             content.target_path()
@@ -629,7 +667,7 @@ mod tests {
     #[test]
     fn given_extra_vars() {
         let raw = RawFileContent {
-            save_path_pattern: "{name}/S{season}".to_string(),
+            save_path_pattern: Arc::new(PathPattern::new_cel("{name}/S{season}".to_owned())),
             variables: hashmap! {
               "name".to_owned() => "test".to_owned(),
             },
@@ -647,7 +685,7 @@ mod tests {
     #[test]
     fn given_extension_pattern_should_expected() {
         let raw = RawFileContent {
-            filename_pattern: "{name} - {season}.mp4".to_owned(),
+            filename_pattern: Arc::new(PathPattern::new_cel("{name} - {season}.mp4".to_owned())),
             variables: hashmap! {
               "name".to_owned() => "test".to_owned(),
             },
@@ -674,8 +712,8 @@ mod tests {
     #[test]
     fn test_variable_error_given_original_strategy() {
         let mut raw = RawFileContent {
-            filename_pattern: "{name} - {season}".to_string(),
-            save_path_pattern: "{name}/S{season}".to_string(),
+            filename_pattern: Arc::new(PathPattern::new_cel("{name} - {season}".to_owned())),
+            save_path_pattern: Arc::new(PathPattern::new_cel("{name}/S{season}".to_owned())),
             variables: hashmap! {
               "season".to_owned() => "01".to_owned(),
             },
@@ -690,17 +728,20 @@ mod tests {
         assert_eq!(2, content.errors.len());
 
         // 1 depth
-        raw.save_path_pattern = "S{season}".to_string();
-        let content =
-            DEFAULT_RENAMER.create_file_content(&SourceItem::default(), raw, &RenameVariables::default());
+        raw.save_path_pattern = Arc::new(PathPattern::new_cel("S{season}".to_owned()));
+        let content = DEFAULT_RENAMER.create_file_content(
+            &SourceItem::default(),
+            raw,
+            &RenameVariables::default(),
+        );
         assert_eq!(content.file_download_path, content.target_path());
     }
 
     #[test]
     fn test_variable_error_given_pattern_strategy() {
         let raw = RawFileContent {
-            filename_pattern: "{name} - {season}".to_string(),
-            save_path_pattern: "{name}/S{season}".to_string(),
+            filename_pattern: Arc::new(PathPattern::new_cel("{name} - {season}".to_owned())),
+            save_path_pattern: Arc::new(PathPattern::new_cel("{name}/S{season}".to_owned())),
             variables: hashmap! {
               "season".to_owned() => "01".to_owned(),
             },
@@ -724,8 +765,10 @@ mod tests {
     #[test]
     fn given_unresolved_filename_with_dir_item() {
         let raw = RawFileContent {
-            save_path_pattern: "{title}/S{season}".to_string(),
-            filename_pattern: "{title} S{season}E{episode}".to_string(),
+            save_path_pattern: Arc::new(PathPattern::new_cel("{title}/S{season}".to_owned())),
+            filename_pattern: Arc::new(PathPattern::new_cel(
+                "{title} S{season}E{episode}".to_owned(),
+            )),
             variables: hashmap! {
                 "season".to_owned() => "01".to_owned(),
                 "title".to_owned() => "test 01".to_owned(),
@@ -757,8 +800,8 @@ mod tests {
                 path: PathBuf::from_iter(["FATE", "AAAAA.mp4"]),
                 ..Default::default()
             },
-            save_path_pattern: "{title}".to_string(),
-            filename_pattern: "S{season}E{episode}".to_string(),
+            save_path_pattern: Arc::new(PathPattern::new_cel("{title}".to_string())),
+            filename_pattern: Arc::new(PathPattern::new_cel("S{season}E{episode}".to_string())),
             variables: hashmap! {
                 "season".to_owned() => "01".to_owned(),
                 "episode".to_owned() => "02".to_owned(),
@@ -786,8 +829,8 @@ mod tests {
                 path: PathBuf::from_iter(["FATE", "AAAAA.mp4"]),
                 ..Default::default()
             },
-            save_path_pattern: "{Title}".to_string(), // 拼写不匹配
-            filename_pattern: "S{Season}E{Episod}".to_string(), // 拼写不匹配
+            save_path_pattern: Arc::new(PathPattern::new_cel("{Title}".to_string())),
+            filename_pattern: Arc::new(PathPattern::new_cel("S{Season}E{Episod}".to_string())),
             variables: hashmap! {
                 "season".to_owned() => "01".to_owned(),
                 "episode".to_owned() => "02".to_owned(),
@@ -815,7 +858,10 @@ mod tests {
         variables
             .variables
             .insert("title".to_owned(), json!("test"));
-        let parse_result = DEFAULT_RENAMER.parse(&variables, "{name}/{title}abc");
+        let parse_result = DEFAULT_RENAMER.parse(
+            &variables,
+            &PathPattern::new_cel("{name}/{title}abc".to_string()),
+        );
         assert_eq!("111/testabc", parse_result.path);
         assert!(parse_result.success && parse_result.failed_expressions.is_empty());
     }
@@ -825,7 +871,10 @@ mod tests {
         let mut variables = RenameVariables::default();
         variables.variables.insert("name".to_owned(), json!("111"));
         // : 代表可选
-        let parse_result = DEFAULT_RENAMER.parse(&variables, "{name}/:{title}abc");
+        let parse_result = DEFAULT_RENAMER.parse(
+            &variables,
+            &PathPattern::new_cel("{name}/:{title}abc".to_string()),
+        );
         assert_eq!("111/abc", parse_result.path);
         assert!(parse_result.success && parse_result.failed_expressions.is_empty());
     }
@@ -837,8 +886,10 @@ mod tests {
         variables.variables.insert("episode".to_owned(), json!("2"));
         variables.variables.insert("source".to_owned(), json!("1"));
 
-        let pattern = "{'test '+name} E{episode + '1'}:{' - '+source}";
-        let parse_result = DEFAULT_RENAMER.parse(&variables, pattern);
+        let pattern =
+            PathPattern::new_cel("{'test '+name} E{episode + '1'}:{' - '+source}".to_string());
+
+        let parse_result = DEFAULT_RENAMER.parse(&variables, &pattern);
         assert_eq!("test 111 E21 - 1", parse_result.path);
 
         // 测试 source 缺失的情况
@@ -846,7 +897,7 @@ mod tests {
         variables.variables.insert("name".to_owned(), json!("111"));
         variables.variables.insert("episode".to_owned(), json!("2"));
 
-        let result2 = DEFAULT_RENAMER.parse(&variables, pattern);
+        let result2 = DEFAULT_RENAMER.parse(&variables, &pattern);
         assert_eq!("test 111 E21", result2.path);
     }
 
@@ -890,8 +941,10 @@ mod tests {
                 "year".to_owned() => "2022".to_owned(),
                 "title".to_owned() => "123".to_owned(),
             },
-            save_path_pattern: "{item.attrs.creatorId}/{date}".to_string(),
-            filename_pattern: "{file.attrs.seq}".to_string(),
+            save_path_pattern: Arc::new(PathPattern::new_cel(
+                "{item.attrs.creatorId}/{date}".to_owned(),
+            )),
+            filename_pattern: Arc::new(PathPattern::new_cel("{file.attrs.seq}".to_owned())),
             // 假设 attrs 在 RawFileContent 中被放入了 file.attrs
             source_file: SourceFile {
                 path: PathBuf::from("2.txt"),
@@ -920,7 +973,9 @@ mod tests {
                 path: PathBuf::from_iter(["wp", "mp3", "origin", "1.mp3"]),
                 ..Default::default()
             },
-            save_path_pattern: "wp-test/{file.originalLayout}".to_string(),
+            save_path_pattern: Arc::new(PathPattern::new_cel(
+                "wp-test/{file.originalLayout}".to_owned(),
+            )),
             ..Default::default()
         };
         let content = DEFAULT_RENAMER.create_file_content(
@@ -947,7 +1002,7 @@ mod tests {
                 ]),
                 ..Default::default()
             },
-            filename_pattern: "test".to_string(),
+            filename_pattern: Arc::new(PathPattern::new_cel("test".to_owned())),
             ..Default::default()
         };
 

@@ -1,4 +1,6 @@
-use crate::process::file::{RawFileContent, Renamer};
+use crate::expression::CompiledExpression;
+use crate::expression::source_item_variables;
+use crate::process::file::{PathPattern, RawFileContent, Renamer};
 use crate::process::variable::VariableAggregation;
 use async_trait::async_trait;
 use backon::Retryable;
@@ -22,6 +24,7 @@ use std::time::{Duration, Instant};
 use tracing::log::warn;
 use tracing::{debug, info};
 // 这些导入是为了让 async_trait 宏在文档测试中能够正确工作
+use crate::process::rule::{ItemRule, ItemStrategy};
 #[doc(hidden)]
 pub use std::future;
 use std::io::Cursor;
@@ -52,8 +55,8 @@ pub struct SourceProcessor {
 }
 
 pub struct ProcessorOptions {
-    pub save_path_pattern: String,
-    pub filename_pattern: String,
+    pub save_path_pattern: Arc<PathPattern>,
+    pub filename_pattern: Arc<PathPattern>,
     // ok
     pub variable_providers: Vec<Arc<dyn VariableProvider>>,
     // ok
@@ -74,6 +77,8 @@ pub struct ProcessorOptions {
     pub item_error_continue: bool,
     // ok
     pub pointer_batch_mode: bool,
+    // ok
+    pub item_rules: Vec<ItemRule>,
 }
 
 #[async_trait]
@@ -397,7 +402,17 @@ trait Process {
         p: &SourceProcessor,
     ) -> Result<bool, ProcessingError> {
         info!("[item-start] {}", source_item);
-        for x in &p.options.item_filters {
+        let item_rule = p
+            .options
+            .item_rules
+            .iter()
+            .find(|x| x.matcher.matches(source_item));
+        let item_strategy = item_rule.map(|x| &x.strategy);
+        let item_filters = item_strategy
+            .map(|x| x.item_filters.as_ref())
+            .flatten()
+            .unwrap_or(&p.options.item_filters);
+        for x in item_filters {
             let filtered = !x.filter(source_item).await;
             if filtered {
                 debug!("[item-filtered] {}", source_item);
@@ -406,14 +421,25 @@ trait Process {
             }
         }
         let mut item_raw_vars = vec![];
-        for x in &p.options.variable_providers {
+
+        let variable_providers = item_strategy
+            .map(|x| x.variable_providers.as_ref())
+            .flatten()
+            .unwrap_or(&p.options.variable_providers);
+        for x in variable_providers {
             item_raw_vars.push((x.accuracy(), x.item_variables(source_item).await))
         }
         let item_variables = p.options.variable_aggregation.merge(&item_raw_vars);
 
         let resolved_files = self.resolve_files(source_item, p).await?;
         let file_contents = self
-            .process_source_files(p, source_item, &item_variables, resolved_files)
+            .process_source_files(
+                p,
+                source_item,
+                &item_variables,
+                resolved_files,
+                item_strategy,
+            )
             .await?;
         let content = ProcessingContent {
             id: None,
@@ -485,6 +511,7 @@ trait Process {
         source_item: &SourceItem,
         item_variables: &PatternVariables,
         source_files: Vec<SourceFile>,
+        item_group_options: Option<&ItemStrategy>,
     ) -> Result<Vec<FileContent>, ProcessingError> {
         let mut relative_files: Vec<SourceFile> = vec![];
         let download_path = p.downloader.default_download_path();
@@ -516,6 +543,15 @@ trait Process {
         let item_var = p
             .renamer
             .item_rename_variables(source_item, item_variables.clone());
+
+        let save_path_pattern = item_group_options
+            .map(|x| x.save_path_pattern.clone())
+            .flatten()
+            .unwrap_or(p.options.save_path_pattern.clone());
+        let filename_pattern = item_group_options
+            .map(|x| x.filename_pattern.clone())
+            .flatten()
+            .unwrap_or(p.options.filename_pattern.clone());
         for (idx, x) in relative_files.into_iter().enumerate() {
             let var = file_vars.get(idx).unwrap();
             // 后面转引用
@@ -523,8 +559,8 @@ trait Process {
                 save_path: p.save_path.to_owned(),
                 download_path: PathBuf::from(download_path),
                 variables: var.to_owned(),
-                save_path_pattern: p.options.save_path_pattern.to_owned(),
-                filename_pattern: p.options.filename_pattern.to_owned(),
+                save_path_pattern: save_path_pattern.clone(),
+                filename_pattern: filename_pattern.clone(),
                 source_file: x,
             };
             let content = p.renamer.create_file_content(source_item, raw, &item_var);

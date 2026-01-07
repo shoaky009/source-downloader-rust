@@ -88,6 +88,38 @@ pub struct ProcessorOptionConfig {
     pub pointer_batch_mode: bool,
     #[serde(skip_serializing_if = "is_default")]
     pub item_error_continue: bool,
+    // 后面改名字 -> item_rule
+    #[serde(skip_serializing_if = "is_default")]
+    pub item_grouping: Vec<ItemRuleConfig>,
+    // 后面改名字 -> file_rule
+    #[serde(skip_serializing_if = "is_default")]
+    pub file_grouping: Vec<FileRuleConfig>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct ItemRuleConfig {
+    pub tags: Option<HashSet<String>>,
+    pub expression_matching: Option<String>,
+    pub filename_pattern: Option<String>,
+    pub save_path_pattern: Option<String>,
+    pub variable_providers: Option<Vec<String>>,
+    pub source_item_filters: Option<Vec<String>>,
+    pub item_expression_exclusions: Option<Vec<String>>,
+    pub item_expression_inclusions: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct FileRuleConfig {
+    pub tags: Option<HashSet<String>>,
+    pub expression_matching: Option<String>,
+    pub filename_pattern: Option<String>,
+    pub save_path_pattern: Option<String>,
+    pub file_content_filters: Option<Vec<String>>,
+    pub file_content_expression_exclusions: Option<Vec<String>>,
+    pub file_content_expression_inclusions: Option<Vec<String>>,
+    // pub file_replacement_decider: Option<String>
 }
 
 fn is_rename_times_threshold_default(value: &u32) -> bool {
@@ -133,6 +165,8 @@ impl Default for ProcessorOptionConfig {
             fetch_limit: 50,
             pointer_batch_mode: true,
             item_error_continue: false,
+            item_grouping: Vec::new(),
+            file_grouping: Vec::new(),
         }
     }
 }

@@ -1,5 +1,5 @@
-use crate::expression::cel::CelCompiledExpressionFactory;
-use crate::expression::{CompiledExpression, CompiledExpressionFactory};
+use crate::expression::cel::FACTORY;
+use crate::expression::{CompiledExpression, CompiledExpressionFactory, source_item_variables};
 use sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, SdComponent, SdComponentMetadata,
     SourceItemFilter,
@@ -20,19 +20,18 @@ impl ComponentSupplier for ExpressionItemFilterSupplier {
     }
 
     fn apply(&self, props: &Map<String, Value>) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let fac = CelCompiledExpressionFactory {};
         let val = serde_json::to_value(props)
             .map_err(|e| ComponentError::new(format!("Failed to parse config: {}", e)))?;
         let cfg = serde_json::from_value::<Cfg>(val)
             .map_err(|e| ComponentError::new(format!("Failed to convert config: {}", e)))?;
         let mut exclusions = Vec::new();
         for x in cfg.exclusions {
-            exclusions.push(fac.create(&x)?);
+            exclusions.push(FACTORY.create(&x)?);
         }
 
         let mut inclusions = Vec::new();
         for x in cfg.inclusions {
-            inclusions.push(fac.create(&x)?);
+            inclusions.push(FACTORY.create(&x)?);
         }
 
         Ok(Arc::new(ExpressionItemFilter {
@@ -48,9 +47,21 @@ impl ComponentSupplier for ExpressionItemFilterSupplier {
 
 #[derive(SdComponent)]
 #[component(SourceItemFilter)]
-struct ExpressionItemFilter {
+pub struct ExpressionItemFilter {
     exclusions: Vec<Box<dyn CompiledExpression<bool>>>,
     inclusions: Vec<Box<dyn CompiledExpression<bool>>>,
+}
+
+impl ExpressionItemFilter {
+    pub fn new(
+        exclusions: Vec<Box<dyn CompiledExpression<bool>>>,
+        inclusions: Vec<Box<dyn CompiledExpression<bool>>>,
+    ) -> Self {
+        Self {
+            exclusions,
+            inclusions,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -74,39 +85,7 @@ impl SourceItemFilter for ExpressionItemFilter {
             return true;
         }
 
-        let mut vars = Map::new();
-        vars.insert("title".to_owned(), Value::from(item.title.to_owned()));
-        vars.insert(
-            "datetime".to_owned(),
-            Value::from(item.datetime.to_string()),
-        );
-        vars.insert("year".to_owned(), Value::from(item.datetime.year()));
-        vars.insert("date".to_owned(), Value::from(item.datetime.date().to_string()));
-        vars.insert("month".to_owned(), Value::from(item.datetime.month() as u8));
-        vars.insert("day".to_owned(), Value::from(item.datetime.day()));
-        vars.insert("link".to_owned(), Value::from(item.link.to_string()));
-        vars.insert(
-            "downloadUri".to_owned(),
-            Value::from(item.download_uri.to_string()),
-        );
-        vars.insert(
-            "contentType".to_owned(),
-            Value::from(item.content_type.to_string()),
-        );
-        vars.insert(
-            "tags".to_owned(),
-            Value::from(
-                item.tags
-                    .iter()
-                    .map(|x| Value::from(x.to_string()))
-                    .collect::<Vec<Value>>(),
-            ),
-        );
-
-        vars.insert("attrs".to_owned(), Value::from(item.attrs.to_owned()));
-
-        let mut item_var = Map::new();
-        item_var.insert("item".to_string(), Value::Object(vars));
+        let item_var = source_item_variables(item);
         for excl in &self.exclusions {
             let result = excl.execute(&item_var);
             if result.is_err() {

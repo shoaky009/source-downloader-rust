@@ -7,6 +7,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 pub struct CelCompiledExpressionFactory {}
+pub const FACTORY: CelCompiledExpressionFactory = CelCompiledExpressionFactory {};
 
 impl CompiledExpressionFactory for CelCompiledExpressionFactory {
     fn create<T>(&self, expression: &str) -> Result<Box<dyn CompiledExpression<T>>, String>
@@ -31,7 +32,9 @@ where
         let mut context = Context::default();
         for (k, v) in vars.iter() {
             // 预期不应该错误
-            let _ = context.add_variable(k.as_str(), Self::json_to_cel(v)).unwrap();
+            let _ = context
+                .add_variable(k.as_str(), Self::json_to_cel(v))
+                .unwrap();
         }
         let value = self.program.execute(&context).map_err(|e| e.to_string())?;
         T::from_value(&value)
@@ -142,13 +145,12 @@ impl ExprValue for String {
 #[cfg(test)]
 mod tests {
     use crate::expression::CompiledExpressionFactory;
-    use crate::expression::cel::CelCompiledExpressionFactory;
+    use crate::expression::cel::FACTORY;
     use sdk::serde_json::Map;
 
     #[test]
     fn test_cel_expression() {
-        let fac = CelCompiledExpressionFactory {};
-        let expression = fac.create::<i64>("a+c.c1");
+        let expression = FACTORY.create::<i64>("a+c.c1");
         assert!(expression.is_ok());
         let data = r#"{"a": 1, "b": 1, "c": {"c1": 3}}"#;
         let vars: Map<String, serde_json::Value> = serde_json::from_str(data).unwrap();
