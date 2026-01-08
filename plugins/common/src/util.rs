@@ -1,8 +1,8 @@
-use sdk::async_trait::async_trait;
-use sdk::component::ProcessingError;
-use sdk::http::Uri;
-use sdk::time::OffsetDateTime;
-use sdk::time::format_description::well_known;
+use source_downloader_sdk::async_trait::async_trait;
+use source_downloader_sdk::component::ProcessingError;
+use source_downloader_sdk::http::Uri;
+use source_downloader_sdk::time::format_description::well_known;
+use source_downloader_sdk::time::OffsetDateTime;
 use std::collections::HashMap;
 
 /// 异步展开处理器 trait，用于定义如何异步展开一个 Item

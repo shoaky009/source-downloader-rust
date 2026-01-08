@@ -1,0 +1,151 @@
+# ---------------------------------------------------------
+# 1. InstanceConfig 示例 (通用的实例配置)
+# ---------------------------------------------------------
+#instances:
+#  - name: "global-storage-manager"
+#    props:
+#      base_dir: "/mnt/media"
+#      temp_dir: "/tmp/processing"
+#      max_retries: 5
+
+# ---------------------------------------------------------
+# 2. ComponentConfig 示例 (组件/插件配置)
+# ---------------------------------------------------------
+#components:
+#  - name: "aria2-downloader-01"
+#    type: "aria2" # 对应代码中的 component_type
+#    props:
+#      host: "127.0.0.1"
+#      port: 6800
+#      secret: "token_123456"
+#  - name: "local-mover"
+#    type: "file-system-mover"
+#    props:
+#      copy_instead_of_move: false
+
+# ---------------------------------------------------------
+# 3. ProcessorConfig 示例 (核心处理器配置)
+# ---------------------------------------------------------
+#processors:
+#  - name: "anime-auto-processor"
+#    enabled: true                   # 默认值 true
+#    save-path: "/data/media/anime"  # kebab-case
+#    source: "rss-feed-01"
+#    item-file-resolver: "regex-resolver"
+#    downloader: "aria2-downloader-01"
+#    file-mover: "local-mover"
+#    category: "animation"
+#    tags:
+#      - "auto-download"
+#      - "high-res"
+#    triggers:
+#      - "interval:10m"
+#      - "manual"
+
+# ProcessorOptionConfig 详情
+#    options:
+#      save-path-pattern: "{category}/{year}/{title}"
+#      filename-pattern: "{title} - {ep}"
+#      variable-providers:
+#        - "bangumi-data"
+#        - "tmdb"
+#      variable-name-replace:
+#        "old_key": "new_key"
+
+# 以下数值若与代码 Default 一致则在序列化时会被跳过，这里展示非默认值
+#      rename-task-interval: "15m"   # 默认 "5m"
+#      rename-times-threshold: 5     # 默认 3
+#      parallelism: 2                # 默认 1
+#      fetch-limit: 100              # 默认 50
+#      pointer-batch-mode: false     # 默认 true
+#      save-processing-content: false # 默认 true
+#      item-error-continue: true     # 默认 false
+
+# item-grouping (Vec<ItemRuleConfig>)
+#      item-grouping:
+#        - tags: ["special-handling"]
+#          expression-matching: "S01E\\d+"
+#          save-path-pattern: "{category}/Season 01"
+#          variable-providers: ["local-meta"]
+#          item-expression-inclusions:
+#            - ".*BD-Rip.*"
+
+# file-grouping (Vec<FileRuleConfig>)
+#      file-grouping:
+#        - tags: ["subtitle"]
+#          expression-matching: "\\.(ass|srt)$"
+#          filename-pattern: "{title}.{lang}.{ext}"
+#          file-content-filters: ["text-cleaner"]
+instances:
+  - name: test
+    type: test
+    props:
+      test: test_value
+
+components:
+  trigger:
+    - name: 20min
+      type: fixed
+      props:
+        interval: 10s
+  source:
+    - type: system-file
+      name: test
+      props:
+        path: test_value
+    - type: vfs
+      name: sync_downloader_case
+      props:
+        path: /sync_downloader_case
+  item-file-resolver:
+    - type: system-file
+      name: test
+  downloader:
+    - type: http
+      name: http
+      props:
+        download-path: /tmp
+  file-mover:
+    - type: system-file
+      name: system-file
+
+processors:
+  - name: normal-case
+    enabled: true
+    save-path: test1
+    source: system-file:test
+    item-file-resolver: system-file:test
+    downloader: http
+    file-mover: system-file
+  - name: sync_downloader_case
+    enabled: true
+    save-path: test1
+    source: vfs:sync_downloader_case
+    item-file-resolver: vfs
+    downloader: vfs:sync_downloader_case
+    file-mover: vfs
+    category: test
+    tags: [ "auto", "test" ]
+    options:
+      save-path-pattern: ""
+      filename-pattern: ""
+      variable-providers: [ ]
+      #variable-name-replace:
+      rename-task-interval: "15m"
+      rename-times-threshold: 5
+      parallelism: 1
+      fetch-limit: 50
+      pointer-batch-mode: true
+      save-processing-content: true
+      item-error-continue: true
+      item-expression-exclusions: [ "item.title == 'filter.txt'" ]
+      item-grouping:
+        - expression-matching: "item.title == '1.txt'"
+          save-path-pattern: "test001"
+          variable-providers: [ ]
+          item-expression-inclusions: [ ]
+          item-expression-exclusions: [ ]
+      file-grouping:
+        - expression-matching: "file.path.contains('.ass')"
+          filename-pattern: ""
+          file-content-filters: [ ]

@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
-use syn::{DeriveInput, Path, parse_macro_input};
+use syn::{parse_macro_input, DeriveInput, Path};
 
 #[proc_macro_derive(SdComponent, attributes(component))]
 pub fn derive_component(input: TokenStream) -> TokenStream {
@@ -29,7 +29,7 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
             }
         } else {
             quote! {
-                fn #method_name(self: std::sync::Arc<Self>) -> Result<std::sync::Arc<dyn #path>, sdk::component::ComponentError> {
+                fn #method_name(self: std::sync::Arc<Self>) -> Result<std::sync::Arc<dyn #path>, source_downloader_sdk::component::ComponentError> {
                     Ok(self)
                 }
             }
@@ -37,7 +37,7 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
     });
 
     quote! {
-        impl sdk::component::SdComponent for #ident {
+        impl source_downloader_sdk::component::SdComponent for #ident {
             #(#methods)*
         }
     }

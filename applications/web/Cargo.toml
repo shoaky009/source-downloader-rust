@@ -12,8 +12,8 @@ name = "web"
 path = "src/main.rs"
 
 [dependencies]
-core = { path = "../../core" }
-sdk = { path = "../../sdk" }
+source-downloader-core = { path = "../../source-downloader-core" }
+source-downloader-sdk = { path = "../../source-downloader-sdk" }
 storage-sqlite = { path = "../../storage-sqlite" }
 common = { path = "../../plugins/common" }
 tracing = { workspace = true }

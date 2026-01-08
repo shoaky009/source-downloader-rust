@@ -1,23 +1,17 @@
 use moka::future::Cache;
 use reqwest::{Client, Url};
 use scraper::{Html, Selector};
-use sdk::http::header;
-use std::sync::{Arc, OnceLock};
+use source_downloader_sdk::http::header;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 // 常量定义
 const TOKEN_COOKIE: &str = ".AspNetCore.Identity.Application";
 
-static BANGUMI_CACHE: OnceLock<Cache<UrlKey, BangumiPageInfo>> = OnceLock::new();
-static EPISODE_CACHE: OnceLock<Cache<UrlKey, EpisodePageInfo>> = OnceLock::new();
-
-fn get_bangumi_cache() -> &'static Cache<UrlKey, BangumiPageInfo> {
-    BANGUMI_CACHE.get_or_init(|| Cache::builder().max_capacity(500).build())
-}
-
-fn get_episode_cache() -> &'static Cache<UrlKey, EpisodePageInfo> {
-    EPISODE_CACHE.get_or_init(|| Cache::builder().max_capacity(500).build())
-}
+static BANGUMI_CACHE: LazyLock<Cache<UrlKey, BangumiPageInfo>> =
+    LazyLock::new(|| Cache::builder().max_capacity(500).build());
+static EPISODE_CACHE: LazyLock<Cache<UrlKey, EpisodePageInfo>> =
+    LazyLock::new(|| Cache::builder().max_capacity(500).build());
 
 #[derive(Clone)]
 pub struct MikanClient {
@@ -66,14 +60,14 @@ impl MikanClient {
             token: self.token.clone(),
         };
         let future = self.fetch_bangumi_page_info(key.url.clone());
-        Ok(get_bangumi_cache().try_get_with(key, future).await?)
+        Ok(BANGUMI_CACHE.try_get_with(key, future).await?)
     }
 
     /// 获取 Episode 页面信息
     pub async fn get_episode_page_info(&self, url: &str) -> Result<EpisodePageInfo, String> {
         let future = self.fetch_episode_page_info(url);
         // 访问全局缓存
-        get_episode_cache()
+        EPISODE_CACHE
             .try_get_with(
                 UrlKey {
                     url: url.to_owned(),

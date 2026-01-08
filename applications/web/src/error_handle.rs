@@ -1,7 +1,7 @@
 use axum::http::StatusCode;
 use axum::{body::Body, http::Request, middleware::Next, response::IntoResponse};
 use problem_details::ProblemDetails;
-use sdk::component::ComponentError;
+use source_downloader_sdk::component::ComponentError;
 use std::{
     fmt,
     panic::{self, AssertUnwindSafe},

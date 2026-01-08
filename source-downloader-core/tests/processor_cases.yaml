@@ -1,0 +1,25 @@
+sync_downloader_case:
+  files:
+    - path: "1.txt"
+      content: "hello"
+    - path: "2.txt"
+    - path: "source/3.txt"
+    - path: "filter.txt"
+  assertions:
+    - select: "$"
+      asserts:
+        - length: 3
+    - select: "$[*]"
+      asserts:
+        - path: ".status"
+          equals: "Renamed"
+    - select: "$[?(@.item_content.source_item.title == '1.txt')]"
+      asserts:
+        - path: ".files"
+          length: 1
+        - pointer: "/files/0/target_save_path"
+          equals: test1/test001
+    - select: "$[?(@.item_content.source_item.title == '2.txt')]"
+      asserts:
+        - pointer: "/files/0/target_save_path"
+          equals: test1/

@@ -4,17 +4,17 @@ use crate::util::{AsyncExpandIterator, ExpandHandler, IterationResult};
 use parking_lot::RwLock;
 use reqwest::StatusCode;
 use rss_for_mikan::{Channel, Item};
-use sdk::async_trait::async_trait;
-use sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, ItemPointer, PointedItem, ProcessingError,
-    SdComponent, SdComponentMetadata, Source, SourcePointer, empty_item_pointer,
-};
-use sdk::http::Uri;
-use sdk::serde_json::{Map, Value};
-use sdk::time::format_description::BorrowedFormatItem;
-use sdk::time::{OffsetDateTime, PrimitiveDateTime, UtcOffset};
-use sdk::{SdComponent, SourceItem, serde_json, time};
 use serde::{Deserialize, Serialize};
+use source_downloader_sdk::async_trait::async_trait;
+use source_downloader_sdk::component::{
+    empty_item_pointer, ComponentError, ComponentSupplier, ComponentType, ItemPointer, PointedItem,
+    ProcessingError, SdComponent, SdComponentMetadata, Source, SourcePointer,
+};
+use source_downloader_sdk::http::Uri;
+use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::time::format_description::BorrowedFormatItem;
+use source_downloader_sdk::time::{OffsetDateTime, PrimitiveDateTime, UtcOffset};
+use source_downloader_sdk::{serde_json, time, SdComponent, SourceItem};
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};

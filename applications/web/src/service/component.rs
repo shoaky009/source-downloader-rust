@@ -1,22 +1,22 @@
-use crate::ApplicationContext;
 use crate::error_handle::AppError;
+use crate::ApplicationContext;
 use axum::extract::{FromRequestParts, Path, Query, State};
-use axum::http::StatusCode;
 use axum::http::request::Parts;
-use axum::response::Sse;
+use axum::http::StatusCode;
 use axum::response::sse::Event;
+use axum::response::Sse;
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use core::application::CoreApplication;
-use core::component_manager::ComponentManager;
-use core::config::ComponentConfig;
 use futures_util::Stream;
-use sdk::component::ComponentRootType::Trigger;
-use sdk::component::{ComponentError, ComponentId, ComponentRootType, ComponentType};
-use sdk::serde_json::{Map, Value};
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde::Serialize;
-use serde::de::DeserializeOwned;
+use source_downloader_core::application::CoreApplication;
+use source_downloader_core::component_manager::ComponentManager;
+use source_downloader_core::config::ComponentConfig;
+use source_downloader_sdk::component::ComponentRootType::Trigger;
+use source_downloader_sdk::component::{ComponentError, ComponentId, ComponentRootType, ComponentType};
+use source_downloader_sdk::serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::convert::Infallible;
 use std::pin::Pin;
@@ -349,7 +349,7 @@ impl Stream for ComponentStateStream {
                         let event = Event::default()
                             .id(wrapper.id.display())
                             .event("component-state")
-                            .data(sdk::serde_json::to_string(&state).unwrap_or("{}".to_string()));
+                            .data(source_downloader_sdk::serde_json::to_string(&state).unwrap_or("{}".to_string()));
                         return Poll::Ready(Some(Ok(event)));
                     }
                 }

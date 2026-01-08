@@ -3,9 +3,9 @@ mod instance;
 pub mod util;
 
 use crate::component::mikan_source;
-use sdk::component::ComponentSupplier;
-use sdk::instance::InstanceFactory;
-use sdk::plugin::{Plugin, PluginContext, PluginDescription};
+use source_downloader_sdk::component::ComponentSupplier;
+use source_downloader_sdk::instance::InstanceFactory;
+use source_downloader_sdk::plugin::{Plugin, PluginContext, PluginDescription};
 use std::sync::Arc;
 
 pub struct CommonPlugin;

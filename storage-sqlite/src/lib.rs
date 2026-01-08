@@ -1,15 +1,15 @@
 use crate::processing_record::Model;
 use async_trait::async_trait;
-use sdk::storage::{
-    Error, ProcessingContent, ProcessingContentQuery, ProcessingStatus, ProcessingStorage,
-    ProcessingTargetPath, ProcessorSourceState,
-};
-use sea_orm::SqlxSqliteConnector;
 use sea_orm::entity::prelude::*;
 use sea_orm::sea_query::OnConflict;
 use sea_orm::sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sea_orm::SqlxSqliteConnector;
 use sea_orm::*;
 use serde_json::json;
+use source_downloader_sdk::storage::{
+    Error, ProcessingContent, ProcessingContentQuery, ProcessingStatus, ProcessingStorage,
+    ProcessingTargetPath, ProcessorSourceState,
+};
 use std::str::FromStr;
 
 pub struct SeaProcessingStorage {
@@ -155,7 +155,69 @@ impl ProcessingStorage for SeaProcessingStorage {
         &self,
         query: &ProcessingContentQuery,
     ) -> Result<Vec<ProcessingContent>, Error> {
-        todo!()
+        let mut db_query = processing_record::Entity::find();
+
+        // 动态条件：processor_name
+        if let Some(processor_names) = &query.processor_name {
+            db_query = db_query.filter(
+                processing_record::Column::ProcessorName.is_in(processor_names.iter().cloned()),
+            );
+        }
+
+        // 动态条件：item_hash
+        if let Some(item_hashes) = &query.item_hash {
+            db_query = db_query
+                .filter(processing_record::Column::ItemHash.is_in(item_hashes.iter().cloned()));
+        }
+
+        // 动态条件：item_identity
+        if let Some(item_identities) = &query.item_identity {
+            db_query = db_query.filter(
+                processing_record::Column::ItemIdentity.is_in(item_identities.iter().cloned()),
+            );
+        }
+
+        // 动态条件：status
+        if let Some(statuses) = &query.status {
+            let status_codes: Vec<i32> = statuses.iter().map(|s| *s as i32).collect();
+            db_query = db_query.filter(processing_record::Column::Status.is_in(status_codes));
+        }
+
+        // 动态条件：rename_times_threshold
+        if let Some(threshold) = query.rename_times_threshold {
+            db_query = db_query.filter(processing_record::Column::RenameTimes.gte(threshold));
+        }
+
+        // 动态条件：created_at_start
+        if let Some(start_time) = query.created_at_start {
+            db_query = db_query.filter(processing_record::Column::CreatedAt.gte(start_time));
+        }
+
+        // 动态条件：created_at_end
+        if let Some(end_time) = query.created_at_end {
+            db_query = db_query.filter(processing_record::Column::CreatedAt.lte(end_time));
+        }
+
+        // 动态条件：max_id (用于分页)
+        if let Some(max_id) = query.max_id {
+            db_query = db_query.filter(processing_record::Column::Id.lt(max_id));
+        }
+
+        // 排序和分页
+        db_query = db_query.order_by_desc(processing_record::Column::Id);
+
+        if let Some(limit) = query.limit {
+            db_query = db_query.limit(limit);
+        }
+
+        let models = db_query.all(&self.db).await.map_err(|e| Error {
+            message: e.to_string(),
+        })?;
+
+        models
+            .into_iter()
+            .map(|model| Self::model_to_content(model))
+            .collect()
     }
 
     async fn save_file_contents(&self, content_id: i64, files: Vec<u8>) -> Result<(), Error> {
@@ -179,6 +241,20 @@ impl ProcessingStorage for SeaProcessingStorage {
             .map_err(|e| Error {
                 message: e.to_string(),
             })
+    }
+
+    async fn find_file_contents(&self, content_id: i64) -> Result<Option<Vec<u8>>, Error> {
+        let model = item_file_content::Entity::find_by_id(content_id)
+            .one(&self.db)
+            .await
+            .map_err(|e| Error {
+                message: e.to_string(),
+            })?;
+        if let Some(model) = model {
+            Ok(Some(model.file_content))
+        } else {
+            Ok(None)
+        }
     }
 
     async fn find_processor_source_state(
@@ -241,8 +317,8 @@ impl ProcessingStorage for SeaProcessingStorage {
 #[cfg(test)]
 mod test {
     use crate::SeaProcessingStorage;
-    use sdk::SourceItem;
-    use sdk::storage::{ItemContentLite, ProcessingContent, ProcessingStatus, ProcessingStorage};
+    use source_downloader_sdk::storage::{ItemContentLite, ProcessingContent, ProcessingStatus, ProcessingStorage};
+    use source_downloader_sdk::SourceItem;
     use std::collections::HashMap;
     use time::OffsetDateTime;
     use uuid::Uuid;

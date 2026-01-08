@@ -2,7 +2,7 @@ use crate::ApplicationContext;
 use axum::extract::State;
 use axum::routing::delete;
 use axum::{Json, Router};
-use core::application::CoreApplication;
+use source_downloader_core::application::CoreApplication;
 use std::sync::Arc;
 use tracing::info;
 

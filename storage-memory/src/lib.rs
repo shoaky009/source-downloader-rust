@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use sdk::storage::{
+use source_downloader_sdk::storage::{
     Error, ProcessingContent, ProcessingContentQuery, ProcessingStorage, ProcessingTargetPath,
     ProcessorSourceState,
 };
@@ -54,6 +54,10 @@ impl ProcessingStorage for MemoryProcessingStorage {
     }
 
     async fn save_file_contents(&self, _: i64, _: Vec<u8>) -> Result<(), Error> {
+        todo!()
+    }
+
+    async fn find_file_contents(&self, _: i64) -> Result<Option<Vec<u8>>, Error> {
         todo!()
     }
 

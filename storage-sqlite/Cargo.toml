@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-sdk = { path = "../sdk" }
+source-downloader-sdk = { path = "../source-downloader-sdk" }
 tokio = { workspace = true }
 serde_json = { workspace = true }
 time = { workspace = true, features = ["local-offset"] }

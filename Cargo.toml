@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["core", "sdk", "applications/web", "plugins/common", "component-macro", "storage-memory", "storage-sqlite"]
+members = ["source-downloader-core", "source-downloader-sdk", "applications/web", "plugins/common", "component-macro", "storage-memory", "storage-sqlite"]
 
 [workspace.dependencies]
 log = "0.4"
@@ -33,7 +33,7 @@ tower-http = { version = "0.6" }
 futures-util = { version = "0.3", default-features = false }
 serde_qs = "1.0.0-rc.3"
 retry = "2"
-tokio-retry2 = "0.7.0"
+tokio-retry2 = "0.9"
 fastmurmur3 = "0.2.0"
 
 rss-for-mikan = "2.0.4-mikan"
@@ -48,6 +48,9 @@ postcard = { version = "1.1", features = ["use-std"] }
 zstd = "0.13"
 regex = "1.12.2"
 criterion = "0.8"
+vfs = "0.12"
+jsonpath-rust = { version = "1.0.4" }
+maplit = "1.0.2"
 
 # 使用cargo tree -p sea-orm -i sqlx查看sea-orm依赖的版本, 因为不喜欢用sea-orm的migration改用sqlx的方式
 sea-orm = { version = "2.0.0-rc.20" }
