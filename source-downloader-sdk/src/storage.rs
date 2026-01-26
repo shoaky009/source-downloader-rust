@@ -87,6 +87,9 @@ pub enum ProcessingStatus {
 
     /// 取消
     Cancelled = 9,
+
+    /// 初始
+    Init = 10,
 }
 
 impl From<i32> for ProcessingStatus {

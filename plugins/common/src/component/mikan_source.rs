@@ -6,18 +6,15 @@ use reqwest::StatusCode;
 use rss_for_mikan::{Channel, Item};
 use serde::{Deserialize, Serialize};
 use source_downloader_sdk::async_trait::async_trait;
-use source_downloader_sdk::component::{
-    empty_item_pointer, ComponentError, ComponentSupplier, ComponentType, ItemPointer, PointedItem,
-    ProcessingError, SdComponent, SdComponentMetadata, Source, SourcePointer,
-};
+use source_downloader_sdk::component::{ComponentError, ComponentSupplier, ComponentType, ItemPointer, PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourcePointer, EMPTY_POINTER};
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{Map, Value};
 use source_downloader_sdk::time::format_description::BorrowedFormatItem;
 use source_downloader_sdk::time::{OffsetDateTime, PrimitiveDateTime, UtcOffset};
-use source_downloader_sdk::{serde_json, time, SdComponent, SourceItem};
+use source_downloader_sdk::{SdComponent, SourceItem, serde_json, time};
 use std::any::Any;
 use std::collections::HashMap;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -82,6 +79,12 @@ impl Debug for MikanSource {
     }
 }
 
+impl Display for MikanSource {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "mikan")
+    }
+}
+
 #[async_trait]
 impl Source for MikanSource {
     async fn fetch(
@@ -113,7 +116,7 @@ impl Source for MikanSource {
                 .into_iter()
                 .map(|source_item| PointedItem {
                     source_item,
-                    item_pointer: empty_item_pointer(),
+                    item_pointer: EMPTY_POINTER.clone(),
                 })
                 .collect();
             return Ok(result);
@@ -255,7 +258,7 @@ impl ExpandHandler<SourceItem, PointedItem> for MikanItemExpandHandler {
                 };
                 PointedItem {
                     source_item: it,
-                    item_pointer: Box::new(ptr),
+                    item_pointer: Arc::new(ptr),
                 }
             })
             .collect();
@@ -328,7 +331,7 @@ impl SourcePointer for MikanSourcePointer {
         serde_json::to_value(self).unwrap()
     }
 
-    fn update(&self, _: &SourceItem, item_pointer: &Box<dyn ItemPointer>) {
+    fn update(&self, _: &SourceItem, item_pointer: &Arc<dyn ItemPointer>) {
         if let Some(p) = item_pointer.as_any().downcast_ref::<FansubPointer>() {
             self.shows.write().insert(p.key(), p.date);
             let mut g = self.latest.write();

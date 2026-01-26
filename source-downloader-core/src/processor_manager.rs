@@ -4,8 +4,8 @@ use crate::components::expression_item_content_filter::ExpressionItemContentFilt
 use crate::components::expression_item_filter::ExpressionItemFilter;
 use crate::components::source_item_identity_filter::SourceItemIdentityFilter;
 use crate::config::{ProcessorConfig, ProcessorOptionConfig};
-use crate::expression::cel::FACTORY;
 use crate::expression::CompiledExpressionFactory;
+use crate::expression::cel::FACTORY;
 use crate::process::file::PathPattern;
 use crate::process::rule::{
     ExpressionAndTagMatcher, FileRule, FileStrategy, ItemRule, ItemStrategy,
@@ -43,7 +43,6 @@ impl ProcessorManager {
     }
 
     pub fn create_processor(&self, config: &ProcessorConfig) {
-        // TODO 补全所有
         if config.enabled.not() {
             info!("Processor[disabled] {}", config.name);
             return;
@@ -285,6 +284,18 @@ impl ProcessorManager {
                     .clone(),
             );
         }
+        // ===
+        let mut process_listeners = vec![];
+        for x in &config.options.process_listeners {
+            let component_id = ComponentRootType::ProcessListener.parse_component_id(&x.id);
+            let listener = self
+                .component_manager
+                .get_component(&component_id)?
+                .require_component()?
+                .as_process_listener()?
+                .clone();
+            process_listeners.push(listener);
+        }
 
         Ok(ProcessorOptions {
             save_path_pattern: Arc::new(PathPattern::new_cel(
@@ -299,6 +310,7 @@ impl ProcessorManager {
             file_content_filters,
             source_file_filters,
             file_taggers,
+            process_listeners,
             variable_aggregation: VariableAggregation::new(
                 match &opt.variable_conflict_strategy {
                     None => Box::new(SmartStrategy),

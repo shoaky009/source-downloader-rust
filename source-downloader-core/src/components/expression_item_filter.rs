@@ -1,5 +1,5 @@
 use crate::expression::cel::FACTORY;
-use crate::expression::{source_item_variables, CompiledExpression, CompiledExpressionFactory};
+use crate::expression::{CompiledExpression, CompiledExpressionFactory, source_item_variables};
 use serde::Deserialize;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, SdComponent, SdComponentMetadata,
@@ -7,7 +7,7 @@ use source_downloader_sdk::component::{
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use source_downloader_sdk::{SdComponent, SourceItem};
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use tracing::warn;
 
@@ -78,6 +78,12 @@ impl Debug for ExpressionItemFilter {
     }
 }
 
+impl Display for ExpressionItemFilter {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "expression")
+    }
+}
+
 #[async_trait::async_trait]
 impl SourceItemFilter for ExpressionItemFilter {
     async fn filter(&self, item: &SourceItem) -> bool {
@@ -114,8 +120,8 @@ mod test {
     use serde::Deserialize;
     use serde_json::{Map, Value};
     use serde_yaml::from_str;
-    use source_downloader_sdk::component::ComponentSupplier;
     use source_downloader_sdk::SourceItem;
+    use source_downloader_sdk::component::ComponentSupplier;
     use std::fs::File;
     use std::path::Path;
 

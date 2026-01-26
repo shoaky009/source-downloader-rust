@@ -1,11 +1,11 @@
 use crate::expression::cel::{CelCompiledExpressionFactory, FACTORY};
 use crate::expression::{CompiledExpression, CompiledExpressionFactory};
 use regex::Regex;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
+use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
     FileContent, FileContentStatus, PatternVariables, SourceFile, Trimmer, VariableReplacer,
 };
-use source_downloader_sdk::SourceItem;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -70,6 +70,7 @@ pub struct Renamer {
 pub enum VariableErrorStrategy {
     Original,
     ToUnresolved,
+    #[allow(unused)]
     Pattern,
 }
 

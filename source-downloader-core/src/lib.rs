@@ -5,6 +5,7 @@ pub mod config;
 pub mod expression;
 pub mod instance_manager;
 pub mod plugin;
+mod process;
 pub mod processor_manager;
 pub mod source_processor;
-mod process;
+mod processor_test_support;

@@ -9,7 +9,7 @@ pub mod instance;
 pub mod plugin;
 pub mod storage;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceItem {
     pub title: String,
@@ -23,7 +23,7 @@ pub struct SourceItem {
     #[serde(default)]
     pub attrs: serde_json::Map<String, serde_json::Value>,
     #[serde(default)]
-    pub tags: std::collections::HashSet<String>,
+    pub tags: Vec<String>,
     pub identity: Option<String>,
 }
 
@@ -67,7 +67,7 @@ mod test {
             content_type: "text/html".to_string(),
             download_uri: http::Uri::from_static("https://example.com/test.html"),
             attrs: serde_json::Map::new(),
-            tags: std::collections::HashSet::new(),
+            tags: vec![],
             identity: None,
         };
         assert_eq!("89a9f52da0578bd8495906c356c68d69", item.hashing());
@@ -76,9 +76,9 @@ mod test {
 
 #[cfg(feature = "test")]
 pub mod test_utils {
+    use crate::SourceItem;
     use crate::component::FileContentStatus::UNDETECTED;
     use crate::component::{FileContent, SourceFile};
-    use crate::SourceItem;
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -91,7 +91,7 @@ pub mod test_utils {
                 content_type: "text/html".to_string(),
                 download_uri: http::Uri::from_static("localhost"),
                 attrs: serde_json::Map::new(),
-                tags: std::collections::HashSet::new(),
+                tags: vec![],
                 identity: None,
             }
         }

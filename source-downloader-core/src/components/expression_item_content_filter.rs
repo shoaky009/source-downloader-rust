@@ -7,7 +7,7 @@ use source_downloader_sdk::component::{
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use source_downloader_sdk::SdComponent;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use tracing::warn;
 
@@ -75,6 +75,12 @@ struct Cfg {
 impl Debug for ExpressionItemContentFilter {
     fn fmt(&self, _: &mut Formatter<'_>) -> std::fmt::Result {
         todo!()
+    }
+}
+
+impl Display for ExpressionItemContentFilter {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "expression")
     }
 }
 

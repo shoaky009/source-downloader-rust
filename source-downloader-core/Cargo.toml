@@ -35,6 +35,9 @@ maplit = { workspace = true }
 criterion = { workspace = true }
 vfs = { workspace = true }
 jsonpath-rust = { workspace = true }
+mockall = { workspace = true }
+http-serde = { workspace = true }
+tracing-test = { workspace = true }
 
 [[bench]]
 name = "filter"

@@ -1,7 +1,7 @@
 use source_downloader_sdk::component::SourceItemFilter;
 use source_downloader_sdk::storage::ProcessingStorage;
 use source_downloader_sdk::{SdComponent, SourceItem};
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 
 #[derive(SdComponent)]
@@ -17,6 +17,12 @@ impl Debug for SourceItemIdentityFilter {
             .field("processor_name", &self.processor_name)
             .field("storage", &"<skipped>")
             .finish()
+    }
+}
+
+impl Display for SourceItemIdentityFilter {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "item_hashing_or_identity")
     }
 }
 

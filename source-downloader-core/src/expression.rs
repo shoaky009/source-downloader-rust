@@ -171,7 +171,7 @@ pub fn item_content_variables(item: &ItemContent) -> Map<String, Value> {
         let vars: Map<String, Value> = item
             .item_variables
             .iter()
-            .map(|(k, v)| (k.into(), v.clone()))
+            .map(|(k, v)| (k.into(), Value::String(v.to_string())))
             .collect();
         item_obj.insert("vars".to_string(), Value::Object(vars));
         let b = item

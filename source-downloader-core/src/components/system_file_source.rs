@@ -1,12 +1,9 @@
-use source_downloader_sdk::component::{
-    empty_item_pointer, ComponentError, ComponentSupplier, ComponentType, NullSourcePointer,
-    PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourcePointer,
-};
+use source_downloader_sdk::component::{ComponentError, EmptyPointer, ComponentSupplier, ComponentType, PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourcePointer, EMPTY_POINTER};
 
 use source_downloader_sdk::serde_json::{Map, Value};
 use source_downloader_sdk::time::OffsetDateTime;
 use source_downloader_sdk::{SdComponent, SourceItem};
-use std::collections::HashSet;
+use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -41,6 +38,12 @@ struct SystemFileSource {
     mode: i8,
 }
 
+impl Display for SystemFileSource {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "system-file")
+    }
+}
+
 #[async_trait::async_trait]
 impl Source for SystemFileSource {
     async fn fetch(
@@ -59,11 +62,11 @@ impl Source for SystemFileSource {
     }
 
     fn default_pointer(&self) -> Arc<dyn SourcePointer> {
-        Arc::new(NullSourcePointer {})
+        Arc::new(EmptyPointer {})
     }
 
     fn parse_raw_pointer(&self, _: Value) -> Arc<dyn SourcePointer> {
-        Arc::new(NullSourcePointer {})
+        Arc::new(EmptyPointer {})
     }
 }
 
@@ -107,13 +110,13 @@ impl SystemFileSource {
                 .parse()
                 .unwrap_or_else(|_| "vfs://unknown".parse().unwrap()),
             attrs,
-            tags: HashSet::new(),
+            tags: vec![],
             identity: None,
         };
 
         Ok(PointedItem {
             source_item,
-            item_pointer: empty_item_pointer(),
+            item_pointer: EMPTY_POINTER.clone(),
         })
     }
 }

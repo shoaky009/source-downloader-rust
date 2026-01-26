@@ -105,7 +105,10 @@ impl ComponentManager {
             self.get_component_props(&types, name, supplier.is_support_no_props())?;
 
         let (component, creation_error) = match supplier.apply(&props.inner) {
-            Ok(c) => (Some(c), None),
+            Ok(c) => {
+                info!("Component[created] {}", instance_name);
+                (Some(c), None)
+            },
             Err(e) => {
                 eprintln!("Failed to create component {}: {}", instance_name, e);
                 (None, Some(e))
@@ -136,7 +139,7 @@ impl ComponentManager {
                     key
                 )));
             }
-            info!("Component[created] {}", instance_name);
+            info!("Component[share] {}", key);
             guard.insert(key, wrapper.clone());
 
             if x == component_type {

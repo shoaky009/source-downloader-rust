@@ -1,10 +1,10 @@
 use indexmap::IndexMap;
 #[allow(dead_code, unused)]
 use moka::sync::Cache;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use source_downloader_sdk::component::{ComponentError, ComponentRootType, ComponentType};
 use source_downloader_sdk::serde_json::{Map, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
@@ -109,6 +109,8 @@ pub struct ProcessorOptionConfig {
     #[serde(skip_serializing_if = "is_default")]
     pub file_grouping: Vec<FileRuleConfig>,
     pub download_options: DownloadOptions,
+    #[serde(skip_serializing_if = "is_default")]
+    pub process_listeners: Vec<ListenerConfig>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
@@ -135,6 +137,66 @@ pub struct FileRuleConfig {
     pub file_content_expression_exclusions: Option<Vec<String>>,
     pub file_content_expression_inclusions: Option<Vec<String>>,
     // pub file_replacement_decider: Option<String>
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ListenerMode {
+    Each,
+    Batch,
+}
+
+impl Default for ListenerMode {
+    fn default() -> Self {
+        Self::Each
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ListenerConfig {
+    pub id: String,
+    pub mode: ListenerMode,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ListenerConfigWire {
+    // 对应 - "test"
+    Simple(String),
+    // 对应 - id: "test1", mode: BATCH
+    Full {
+        id: String,
+        #[serde(default)]
+        mode: ListenerMode,
+    },
+    // 对应 - "http:test3": BATCH
+    Map(BTreeMap<String, ListenerMode>),
+}
+
+impl<'de> Deserialize<'de> for ListenerConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // 步骤 A: 先让 Serde 解析到 Wire 枚举
+        let wire = ListenerConfigWire::deserialize(deserializer)?;
+        // 步骤 B: 根据匹配到的变体，手动构造 ListenerConfig
+        let config = match wire {
+            ListenerConfigWire::Simple(id) => ListenerConfig {
+                id,
+                mode: ListenerMode::Each,
+            },
+            ListenerConfigWire::Full { id, mode } => ListenerConfig { id, mode },
+            ListenerConfigWire::Map(map) => {
+                let (id, mode) = map
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| serde::de::Error::custom("Config map cannot be empty"))?;
+                ListenerConfig { id, mode }
+            }
+        };
+        Ok(config)
+    }
 }
 
 fn is_rename_times_threshold_default(value: &u32) -> bool {
@@ -187,9 +249,10 @@ impl Default for ProcessorOptionConfig {
             fetch_limit: 50,
             pointer_batch_mode: true,
             item_error_continue: false,
-            item_grouping: Vec::new(),
-            file_grouping: Vec::new(),
+            item_grouping: vec![],
+            file_grouping: vec![],
             download_options: DownloadOptions::default(),
+            process_listeners: vec![],
         }
     }
 }

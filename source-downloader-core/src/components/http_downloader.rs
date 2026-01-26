@@ -1,3 +1,4 @@
+use std::fmt::{Display, Formatter};
 use serde_json::{Map, Value};
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, DownloadTask, Downloader, SdComponent,
@@ -30,6 +31,12 @@ impl ComponentSupplier for HttpDownloaderSupplier {
 #[allow(dead_code, unused)]
 struct HttpDownloader {
     path: String,
+}
+
+impl Display for HttpDownloader {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "http")
+    }
 }
 
 #[allow(dead_code, unused)]

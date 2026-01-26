@@ -1,13 +1,13 @@
 use crate::expression::cel::FACTORY;
-use crate::expression::{file_content_variables, CompiledExpression, CompiledExpressionFactory};
+use crate::expression::{CompiledExpression, CompiledExpressionFactory, file_content_variables};
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use source_downloader_sdk::SdComponent;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, FileContent, FileContentFilter, SdComponent,
     SdComponentMetadata,
 };
-use source_downloader_sdk::SdComponent;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use tracing::warn;
 
@@ -78,6 +78,12 @@ impl Debug for ExpressionFileContentFilter {
     }
 }
 
+impl Display for ExpressionFileContentFilter {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "expression")
+    }
+}
+
 impl FileContentFilter for ExpressionFileContentFilter {
     fn filter(&self, file: &FileContent) -> bool {
         if self.exclusions.is_empty() && self.inclusions.is_empty() {
@@ -110,8 +116,8 @@ impl FileContentFilter for ExpressionFileContentFilter {
 #[cfg(test)]
 mod test {
     use crate::components::expression_file_content_filter::ExpressionFileContentFilter;
-    use crate::expression::cel::FACTORY;
     use crate::expression::CompiledExpressionFactory;
+    use crate::expression::cel::FACTORY;
     use maplit::hashmap;
     use source_downloader_sdk::component::{FileContent, FileContentFilter};
     use std::path::PathBuf;

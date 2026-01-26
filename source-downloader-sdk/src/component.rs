@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 
-use crate::serde_json::{Map, Value};
 use crate::SourceItem;
+use crate::serde_json::{Map, Value};
+use crate::storage::ProcessingStatus;
 use async_trait::async_trait;
 use http::Uri;
 use parking_lot::RwLock;
@@ -14,7 +15,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::io::Read;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 pub const COMPONENT_REF_PAT: &str = ":";
 pub type PatternVariables = HashMap<String, String>;
@@ -279,11 +280,13 @@ pub trait ComponentSupplier: Send + Sync {
 
 pub struct SdComponentMetadata {
     description: String,
-    json_schema: Option<HashMap<String, Box<dyn Any>>>,
-    ui_schema: Option<HashMap<String, Box<dyn Any>>>,
+    props_json_schema: Option<Value>,
+    props_ui_schema: Option<Value>,
+    state_json_schema: Option<Value>,
+    state_ui_schema: Option<Value>,
 }
 
-pub trait SdComponent: Any + Send + Sync + Debug {
+pub trait SdComponent: Any + Send + Sync + Debug + Display {
     fn as_trigger(self: Arc<Self>) -> Result<Arc<dyn Trigger>, ComponentError> {
         Err(ComponentError::from("Not a trigger component"))
     }
@@ -422,8 +425,11 @@ pub trait FileMover: SdComponent {
 }
 
 pub trait ProcessListener: SdComponent {
+    /// When item rename is successful
     fn on_item_success(&self, ctx: &dyn ProcessContext, item_content: &ItemContent);
+    /// When item processing is failed
     fn on_item_error(&self, ctx: &dyn ProcessContext, item: &SourceItem, error: &ProcessingError);
+    /// When processing is completed
     fn on_process_completed(&self, ctx: &dyn ProcessContext);
 }
 
@@ -493,8 +499,8 @@ pub trait ItemPointer: Debug + Send + Sync + Any {
     fn as_any(&self) -> &dyn Any;
 }
 
-#[derive(Debug, Clone)]
-struct EmptyPointer;
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct EmptyPointer;
 
 impl ItemPointer for EmptyPointer {
     fn as_any(&self) -> &dyn Any {
@@ -502,37 +508,30 @@ impl ItemPointer for EmptyPointer {
     }
 }
 
-const EMPTY_POINTER: EmptyPointer = EmptyPointer {};
-
-pub fn empty_item_pointer() -> Box<dyn ItemPointer> {
-    Box::new(EMPTY_POINTER)
-}
+pub static EMPTY_POINTER: LazyLock<Arc<EmptyPointer>> = LazyLock::new(|| Arc::new(EmptyPointer {}));
 
 pub trait SourcePointer: Send + Sync {
     fn dump(&self) -> Value;
-    fn update(&self, item: &SourceItem, item_pointer: &Box<dyn ItemPointer>);
+    fn update(&self, item: &SourceItem, item_pointer: &Arc<dyn ItemPointer>);
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
 }
 
-#[derive(Deserialize, Serialize)]
-pub struct NullSourcePointer;
-
-impl SourcePointer for NullSourcePointer {
+impl SourcePointer for EmptyPointer {
     fn dump(&self) -> Value {
         Value::Object(Map::new())
     }
 
-    fn update(&self, _: &SourceItem, _: &Box<dyn ItemPointer>) {}
+    fn update(&self, _: &SourceItem, _: &Arc<dyn ItemPointer>) {}
 
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PointedItem {
     pub source_item: SourceItem,
-    pub item_pointer: Box<dyn ItemPointer>,
+    pub item_pointer: Arc<dyn ItemPointer>,
 }
 
 #[derive(Clone)]
@@ -574,7 +573,7 @@ impl From<String> for ComponentError {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ProcessingError {
     Retryable { message: String },
     NonRetryable { message: String, skip: bool },
@@ -665,7 +664,7 @@ pub struct FileContent {
     /// /mnt/downloads/1.txt
     pub file_download_path: PathBuf,
     pub source_save_path: PathBuf,
-    pub pattern_variables: HashMap<String, String>,
+    pub pattern_variables: PatternVariables,
     pub tags: Vec<String>,
     pub attrs: Map<String, Value>,
     #[serde(with = "http_serde::option::uri")]
@@ -749,16 +748,17 @@ pub enum FileContentStatus {
     REPLACE,
 }
 
-pub struct ItemContent {
-    pub source_item: SourceItem,
-    pub file_contents: Vec<FileContent>,
-    pub item_variables: Map<String, Value>,
+pub struct ItemContent<'a> {
+    pub source_item: &'a SourceItem,
+    pub file_contents: &'a Vec<FileContent>,
+    pub item_variables: &'a PatternVariables,
+    pub status: ProcessingStatus,
 }
 
 pub trait ProcessContext {
-    fn processor(&self) -> ProcessorInfo;
-    fn processed_items(&self) -> Vec<SourceItem>;
-    fn get_item_content(&self, item: &SourceItem) -> Option<ItemContent>;
+    fn processor(&self) -> &ProcessorInfo;
+    fn processed_items(&self) -> &Vec<SourceItem>;
+    fn get_item_content(&self, item: &SourceItem) -> Option<ItemContent<'_>>;
     fn has_error(&self) -> bool;
 }
 

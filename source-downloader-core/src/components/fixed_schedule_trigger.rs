@@ -4,7 +4,7 @@ use source_downloader_sdk::component::{
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use source_downloader_sdk::SdComponent;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, Mutex};
 
 use std::time::Duration;
@@ -145,7 +145,7 @@ impl Trigger for FixedScheduleTrigger {
 }
 
 impl Debug for FixedScheduleTrigger {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FixedScheduleTrigger")
             .field("interval", &self.interval)
             .field("on_start_run_tasks", &self.on_start_run_tasks)
@@ -155,6 +155,12 @@ impl Debug for FixedScheduleTrigger {
                 &self.worker_handle.lock().unwrap().is_some(),
             )
             .finish()
+    }
+}
+
+impl Display for FixedScheduleTrigger {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "fixed")
     }
 }
 

@@ -5,8 +5,10 @@ use async_trait::async_trait;
 use backon::Retryable;
 use backon::{BackoffBuilder, ExponentialBuilder};
 use humantime::format_duration;
+use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
-    Downloader, FileContentFilter, ItemContentFilter, SourceFileFilter, SourceItemFilter,
+    Downloader, FileContentFilter, ItemContent, ItemContentFilter, ProcessListener,
+    SourceFileFilter, SourceItemFilter,
 };
 use source_downloader_sdk::component::{FileContent, Source};
 use source_downloader_sdk::component::{FileMover, ProcessingError};
@@ -17,17 +19,26 @@ use source_downloader_sdk::storage::{
     ItemContentLite, ProcessingContent, ProcessingStatus, ProcessingStorage, ProcessorSourceState,
 };
 use source_downloader_sdk::time::OffsetDateTime;
-use source_downloader_sdk::SourceItem;
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 static INSTANCE_ID_GENERATOR: AtomicI64 = AtomicI64::new(0);
 static PROCESS_ID_GENERATOR: AtomicI64 = AtomicI64::new(i64::MIN);
+
+#[derive(Debug)]
+pub struct ItemProcessResult {
+    /// true 表示结束该 item 的流程处理（如被过滤）
+    pub item_filtered: bool,
+    pub file_contents: Vec<FileContent>,
+    pub item_variables: PatternVariables,
+    pub status: ProcessingStatus,
+    pub message: Option<String>,
+}
 #[allow(dead_code, unused)]
 pub struct SourceProcessor {
     pub name: String,
@@ -82,6 +93,7 @@ pub struct ProcessorOptions {
     pub item_rules: Vec<ItemRule>,
     // ok
     pub file_rules: Vec<FileRule>,
+    pub process_listeners: Vec<Arc<dyn ProcessListener>>,
 }
 
 #[async_trait]
@@ -104,7 +116,8 @@ impl ProcessTask for SourceProcessor {
 struct ProcessContext {
     pub trace_id: String,
     source_state: ProcessorSourceState,
-    item_flag: HashSet<String>,
+    source_pointer: Arc<dyn SourcePointer>,
+    process_submitted_items: HashSet<String>,
     processed_count: AtomicU32,
     filter_count: AtomicU32,
     process_start_at: Option<Instant>,
@@ -265,7 +278,7 @@ trait Process {
         &self,
         p: &SourceProcessor,
         processing_content: &ProcessingContent,
-        x1: &Vec<FileContent>,
+        files: &Vec<FileContent>,
     ) -> Result<(), ProcessingError>;
 
     async fn on_item_error(
@@ -282,9 +295,9 @@ trait Process {
         &self,
         p: &SourceProcessor,
         ctx: &ProcessContext,
-        item_pointer: &Box<dyn ItemPointer>,
         source_item: &SourceItem,
-        source_pointer: Arc<dyn SourcePointer>,
+        item_pointer: &Arc<dyn ItemPointer>,
+        source_pointer: &Arc<dyn SourcePointer>,
     ) {
     }
 
@@ -301,36 +314,8 @@ trait Process {
             return Err(ProcessingError::non_retryable("Already processing"));
         }
         let _processing_guard = ProcessingGuard::new(&p.processing);
-
-        let source_state = p
-            .processing_storage
-            .find_processor_source_state(&p.name, &p.source_id)
-            .await
-            .map_err(|x| ProcessingError::non_retryable(x.message))?
-            .unwrap_or(ProcessorSourceState {
-                id: None,
-                processor_name: p.name.to_owned(),
-                source_id: p.source_id.to_owned(),
-                last_pointer: p.source.default_pointer().dump(),
-            });
-        debug!("Fetch with pointer: {}", source_state.last_pointer);
-        let mut p_ctx = ProcessContext {
-            trace_id: PROCESS_ID_GENERATOR
-                .fetch_add(i64::MIN, Ordering::Relaxed)
-                .to_string(),
-            source_state: source_state.to_owned(),
-            item_flag: HashSet::new(),
-            processed_count: AtomicU32::new(0),
-            filter_count: AtomicU32::new(0),
-            process_start_at: Some(start_time),
-            process_end_at: None,
-            fetch_start_at: None,
-            fetch_end_at: None,
-        };
-
-        let source_pointer = p
-            .source
-            .parse_raw_pointer(source_state.last_pointer.to_owned());
+        let mut p_ctx = self.init_process_context(p, start_time).await?;
+        let source_pointer = p_ctx.source_pointer.clone();
 
         p_ctx.fetch_start_at = Some(Instant::now());
         let items = SourceProcessor::apply_retry(
@@ -348,12 +333,12 @@ trait Process {
             let item_pointer = item.item_pointer;
             let source_item = item.source_item;
             let item_hash = source_item.hashing();
-            if p_ctx.item_flag.contains(&item_hash) {
+            if p_ctx.process_submitted_items.contains(&item_hash) {
                 p_ctx.filter_inc();
                 info!("Source item duplicated: {:?} skipped", source_item);
                 continue;
             }
-            p_ctx.item_flag.insert(item_hash);
+            p_ctx.process_submitted_items.insert(item_hash);
 
             let item_result = self.process_item(&source_item, &p_ctx, p).await;
             if item_result.is_err() {
@@ -361,7 +346,7 @@ trait Process {
                 self.on_item_error(p, &p_ctx, &err).await;
                 if matches!(err, ProcessingError::NonRetryable { skip: true, .. }) {
                     info!(
-                        "[item-fail] 异常为可跳过类型 {} {:?}",
+                        "[item-skip-on-error] 异常为可跳过类型 {} {}",
                         err.message(),
                         source_item
                     );
@@ -369,7 +354,7 @@ trait Process {
                 }
                 if !p.options.item_error_continue {
                     warn!(
-                        "[item-fail] 退出本次触发处理, 如果未能解决该处理器将无法继续处理后续Item {:?} {}",
+                        "[item-fail] 退出本次触发处理, 如果未能解决该处理器将无法继续处理后续Item {} {}",
                         source_item,
                         err.message()
                     );
@@ -377,19 +362,15 @@ trait Process {
                 }
                 continue;
             }
-            if item_result? {
+            let process_result = item_result?;
+            if process_result.item_filtered {
                 continue;
             }
 
             p_ctx.processed_inc();
-            self.on_item_success(
-                p,
-                &p_ctx,
-                &item_pointer,
-                &source_item,
-                source_pointer.clone(),
-            )
-            .await;
+            self.on_item_success(p, &p_ctx, &source_item, &item_pointer, &source_pointer)
+                .await;
+            // on_item_complete
         }
         self.on_process_complete(p, &p_ctx, source_pointer.clone())
             .await;
@@ -399,13 +380,64 @@ trait Process {
         Ok(())
     }
 
-    // 如果是true结束该item的流程处理
+    async fn get_source_state(
+        &self,
+        p: &SourceProcessor,
+    ) -> Result<ProcessorSourceState, ProcessingError> {
+        Ok(p.processing_storage
+            .find_processor_source_state(&p.name, &p.source_id)
+            .await
+            .map_err(|x| ProcessingError::non_retryable(x.message))?
+            .unwrap_or(ProcessorSourceState {
+                id: None,
+                processor_name: p.name.to_owned(),
+                source_id: p.source_id.to_owned(),
+                last_pointer: p.source.default_pointer().dump(),
+            }))
+    }
+
+    async fn get_source_pointer(
+        &self,
+        p: &SourceProcessor,
+        source_state: &ProcessorSourceState,
+    ) -> Result<Arc<dyn SourcePointer>, ProcessingError> {
+        let source_pointer = p
+            .source
+            .parse_raw_pointer(source_state.last_pointer.to_owned());
+        Ok(source_pointer)
+    }
+
+    async fn init_process_context(
+        &self,
+        p: &SourceProcessor,
+        start_time: Instant,
+    ) -> Result<ProcessContext, ProcessingError> {
+        let source_state = self.get_source_state(p).await?;
+        let source_pointer = self.get_source_pointer(p, &source_state).await?;
+        debug!("Fetch with pointer: {}", source_state.last_pointer);
+        let p_ctx = ProcessContext {
+            trace_id: PROCESS_ID_GENERATOR
+                .fetch_add(i64::MIN, Ordering::Relaxed)
+                .to_string(),
+            source_state,
+            source_pointer,
+            process_submitted_items: HashSet::new(),
+            processed_count: AtomicU32::new(0),
+            filter_count: AtomicU32::new(0),
+            process_start_at: Some(start_time),
+            process_end_at: None,
+            fetch_start_at: None,
+            fetch_end_at: None,
+        };
+        Ok(p_ctx)
+    }
+
     async fn process_item(
         &self,
         source_item: &SourceItem,
         ctx: &ProcessContext,
         p: &SourceProcessor,
-    ) -> Result<bool, ProcessingError> {
+    ) -> Result<ItemProcessResult, ProcessingError> {
         info!("[item-start] {}", source_item);
         let opt = &p.options;
         let item_rule = opt
@@ -417,16 +449,22 @@ trait Process {
             .map(|x| x.item_filters.as_ref())
             .flatten()
             .unwrap_or(&opt.item_filters);
-        for x in item_filters {
-            let filtered = !x.filter(source_item).await;
+        for filter in item_filters {
+            let filtered = !filter.filter(source_item).await;
             if filtered {
                 debug!("[item-filtered] {}", source_item);
                 ctx.filter_inc();
-                return Ok(true);
+                return Ok(ItemProcessResult {
+                    item_filtered: true,
+                    file_contents: vec![],
+                    item_variables: PatternVariables::new(),
+                    status: ProcessingStatus::Filtered,
+                    message: Some(format!("Filtered by: {}", filter)),
+                });
             }
         }
-        let mut item_raw_vars = vec![];
 
+        let mut item_raw_vars = vec![];
         let variable_providers = item_strategy
             .map(|x| x.variable_providers.as_ref())
             .flatten()
@@ -446,7 +484,30 @@ trait Process {
                 item_strategy,
             )
             .await?;
-        // opt.item_filters
+
+        let mut status = ProcessingStatus::Renamed;
+        let item_content = ItemContent {
+            source_item,
+            file_contents: &file_contents,
+            item_variables: &item_variables,
+            status,
+        };
+        //  ==== 数据准备阶段结束, 开始决定是否下载
+        for x in &opt.item_content_filters {
+            let filtered = !x.filter(&item_content).await;
+            if filtered {
+                debug!("[item-content-filtered] {}", source_item);
+                ctx.filter_inc();
+                status = ProcessingStatus::Filtered;
+                return Ok(ItemProcessResult {
+                    item_filtered: true,
+                    file_contents,
+                    item_variables: item_variables.clone(),
+                    status,
+                    message: None,
+                });
+            }
+        }
 
         let content = ProcessingContent {
             id: None,
@@ -455,10 +516,10 @@ trait Process {
             item_identity: source_item.identity.clone(),
             item_content: ItemContentLite {
                 source_item: source_item.clone(),
-                item_variables,
+                item_variables: item_variables.clone(),
             },
             rename_times: 0,
-            status: ProcessingStatus::Renamed,
+            status,
             failure_reason: None,
             created_at: OffsetDateTime::now_utc(),
             updated_at: None,
@@ -466,7 +527,13 @@ trait Process {
 
         self.on_item_process_complete(p, &content, &file_contents)
             .await?;
-        Ok(false)
+        Ok(ItemProcessResult {
+            item_filtered: false,
+            file_contents,
+            item_variables: item_variables.clone(),
+            status,
+            message: None,
+        })
     }
 
     async fn resolve_files(
@@ -531,6 +598,7 @@ trait Process {
             relative_files.push(file);
         }
 
+        // <editor-fold desc="Stage using VariableProviders for file">
         let mut file_raw_vars = vec![];
         for idx in 0..opt.variable_providers.len() {
             let v = opt.variable_providers.get(idx).unwrap();
@@ -548,6 +616,7 @@ trait Process {
             file_raw_vars.push((v.accuracy(), vars));
         }
         let file_vars = opt.variable_aggregation.merge_files(&file_raw_vars);
+        // </editor-fold>
         let mut result: Vec<FileContent> = vec![];
 
         let item_var = p
@@ -594,7 +663,7 @@ trait Process {
             };
             let content = p.renamer.create_file_content(source_item, raw, &item_var);
 
-            // Apply file_content_filters, use file_strategy's if present, otherwise use opt's
+            // <editor-fold desc="Stage using FileContentFilter">
             let file_content_filters = file_strategy
                 .map(|s| s.file_content_filters.as_ref())
                 .flatten()
@@ -611,7 +680,7 @@ trait Process {
             if !should_include {
                 continue;
             }
-
+            // </editor-fold>
             result.push(content)
         }
         Ok(result)
@@ -666,7 +735,7 @@ impl Process for NormalProcess {
                 ProcessingError::non_retryable(format!("Failed to save item content {}", x.message))
             })?;
 
-        let bytes = Self::encode_files_and_compress(&files)?;
+        let bytes = encode_files_and_compress(&files)?;
         p.processing_storage
             .save_file_contents(content_id, bytes)
             .await
@@ -683,9 +752,9 @@ impl Process for NormalProcess {
         &self,
         p: &SourceProcessor,
         ctx: &ProcessContext,
-        item_pointer: &Box<dyn ItemPointer>,
         source_item: &SourceItem,
-        source_pointer: Arc<dyn SourcePointer>,
+        item_pointer: &Arc<dyn ItemPointer>,
+        source_pointer: &Arc<dyn SourcePointer>,
     ) {
         // TODO invoke hooks
         source_pointer.update(source_item, item_pointer);
@@ -701,48 +770,45 @@ impl Process for NormalProcess {
     }
 }
 
-impl NormalProcess {
-    fn encode_files_and_compress(files: &Vec<FileContent>) -> Result<Vec<u8>, ProcessingError> {
-        let bytes = if files.is_empty() {
-            vec![]
-        } else {
-            let bytes = postcard::to_stdvec(&files).map_err(|x| {
-                ProcessingError::non_retryable(format!(
-                    "Failed to desc file content {}",
-                    x.to_string()
-                ))
-            })?;
-            // 压缩比待定
-            let level = 6;
-            zstd::encode_all(Cursor::new(bytes), level).map_err(|x| {
-                ProcessingError::non_retryable(format!(
-                    "Failed to compress file content {}",
-                    x.to_string()
-                ))
-            })?
-        };
-        Ok(bytes)
-    }
+impl NormalProcess {}
 
-    #[allow(dead_code)]
-    fn decode_files_from_compressed(bytes: &[u8]) -> Result<Vec<FileContent>, ProcessingError> {
-        if bytes.is_empty() {
-            return Ok(vec![]);
-        }
-        let decompressed = zstd::decode_all(bytes).map_err(|x| {
+pub fn encode_files_and_compress(files: &Vec<FileContent>) -> Result<Vec<u8>, ProcessingError> {
+    let bytes = if files.is_empty() {
+        vec![]
+    } else {
+        let bytes = postcard::to_stdvec(&files).map_err(|x| {
+            ProcessingError::non_retryable(format!("Failed to desc file content {}", x.to_string()))
+        })?;
+        // 压缩比待定
+        let level = 6;
+        zstd::encode_all(Cursor::new(bytes), level).map_err(|x| {
             ProcessingError::non_retryable(format!(
-                "Failed to decompress file content {}",
+                "Failed to compress file content {}",
                 x.to_string()
             ))
-        })?;
-        let files: Vec<FileContent> = postcard::from_bytes(&decompressed).map_err(|x| {
-            ProcessingError::non_retryable(format!(
-                "Failed to deserialize file content {}",
-                x.to_string()
-            ))
-        })?;
-        Ok(files)
+        })?
+    };
+    Ok(bytes)
+}
+
+#[allow(dead_code)]
+pub fn decode_files_from_compressed(bytes: &[u8]) -> Result<Vec<FileContent>, ProcessingError> {
+    if bytes.is_empty() {
+        return Ok(vec![]);
     }
+    let decompressed = zstd::decode_all(bytes).map_err(|x| {
+        ProcessingError::non_retryable(format!(
+            "Failed to decompress file content {}",
+            x.to_string()
+        ))
+    })?;
+    let files: Vec<FileContent> = postcard::from_bytes(&decompressed).map_err(|x| {
+        ProcessingError::non_retryable(format!(
+            "Failed to deserialize file content {}",
+            x.to_string()
+        ))
+    })?;
+    Ok(files)
 }
 
 #[allow(dead_code)]
@@ -753,408 +819,13 @@ struct Reprocess {}
 struct FixedItemProcess {}
 
 #[cfg(test)]
-mod test_support {
-    use async_trait::async_trait;
-    use source_downloader_sdk::component::{
-        empty_item_pointer, ComponentError, ComponentSupplier, ComponentType, DownloadTask, Downloader,
-        FileMover, ItemContent, ItemFileResolver, NullSourcePointer, PointedItem,
-        ProcessingError, SdComponent, SdComponentMetadata, Source, SourceFile, SourcePointer,
-    };
-    use source_downloader_sdk::serde_json::{Map, Value};
-    use source_downloader_sdk::time::OffsetDateTime;
-    use source_downloader_sdk::{SdComponent, SourceItem};
-    use std::collections::HashSet;
-    use std::path::PathBuf;
-    use std::sync::Arc;
-    use vfs::VfsPath;
-
-    pub struct VfsFileSourceSupplier {
-        pub root: Arc<VfsPath>,
-    }
-
-    impl ComponentSupplier for VfsFileSourceSupplier {
-        fn supply_types(&self) -> Vec<ComponentType> {
-            vec![
-                ComponentType::source("vfs".to_string()),
-                ComponentType::downloader("vfs".to_string()),
-            ]
-        }
-
-        fn apply(
-            &self,
-            props: &Map<String, Value>,
-        ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-            let path = props
-                .get("path")
-                .ok_or_else(|| ComponentError::from("Missing 'path' property"))?
-                .as_str()
-                .unwrap();
-            let mode = props.get("mode").and_then(|v| v.as_i64()).unwrap_or(0) as i8;
-            let path = self.root.join(path).unwrap();
-            Ok(Arc::new(VfsFileSource { path, mode }))
-        }
-
-        fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-            None
-        }
-    }
-
-    #[derive(Debug, SdComponent)]
-    #[component(Source, Downloader)]
-    struct VfsFileSource {
-        path: VfsPath,
-        mode: i8,
-    }
-
-    impl Downloader for VfsFileSource {
-        fn submit(&self, _: &DownloadTask) -> Result<(), ComponentError> {
-            Ok(())
-        }
-
-        fn default_download_path(&self) -> &str {
-            self.path.as_str()
-        }
-
-        fn cancel(&self, _: &DownloadTask, _: &[SourceFile]) -> Result<(), ComponentError> {
-            Ok(())
-        }
-    }
-
-    #[async_trait]
-    impl Source for VfsFileSource {
-        async fn fetch(
-            &self,
-            _: Arc<dyn SourcePointer>,
-            _: u32,
-        ) -> Result<Vec<PointedItem>, ProcessingError> {
-            match self.mode {
-                0 => self.create_root_file_source_items(),
-                1 => self.create_each_file_source_items(),
-                _ => Err(ProcessingError::non_retryable(format!(
-                    "Unknown mode: {}",
-                    self.mode
-                ))),
-            }
-        }
-
-        fn default_pointer(&self) -> Arc<dyn SourcePointer> {
-            Arc::new(NullSourcePointer {})
-        }
-
-        fn parse_raw_pointer(&self, _: Value) -> Arc<dyn SourcePointer> {
-            Arc::new(NullSourcePointer {})
-        }
-    }
-
-    impl VfsFileSource {
-        // Mode 0: 对应 createRootFileSourceItems (Files.list)
-        fn create_root_file_source_items(&self) -> Result<Vec<PointedItem>, ProcessingError> {
-            self.path
-                .read_dir()
-                .map_err(|e| ProcessingError::non_retryable(e.to_string()))?
-                .map(|p| Self::from_vfs_path(p))
-                .collect()
-        }
-
-        // Mode 1: 对应 createEachFileSourceItems (path.walk)
-        fn create_each_file_source_items(&self) -> Result<Vec<PointedItem>, ProcessingError> {
-            self.path
-                .walk_dir()
-                .map_err(|e| ProcessingError::non_retryable(e.to_string()))?
-                .map(|p| p.unwrap())
-                .filter(|p| p.is_file().unwrap_or(false))
-                .map(|p| Self::from_vfs_path(p))
-                .collect()
-        }
-
-        fn from_vfs_path(path: VfsPath) -> Result<PointedItem, ProcessingError> {
-            let file_name = path.filename();
-            let is_dir = path.is_dir().unwrap();
-            let file_type = if is_dir { "directory" } else { "file" };
-            let file_size = path.metadata().unwrap().len;
-
-            let mut attrs = Map::new();
-            attrs.insert("size".to_string(), Value::from(file_size));
-
-            let url = format!("file:/{}", path.as_str());
-            let source_item = SourceItem {
-                title: file_name,
-                link: url.parse().unwrap(),
-                datetime: OffsetDateTime::now_utc(),
-                content_type: file_type.to_string(),
-                download_uri: url.parse().unwrap(),
-                attrs,
-                tags: HashSet::new(),
-                identity: None,
-            };
-
-            Ok(PointedItem {
-                source_item,
-                item_pointer: empty_item_pointer(),
-            })
-        }
-    }
-
-    pub struct VfsFileResolverSupplier;
-    pub const VFS_RESOLVER_SUPPLIER: VfsFileResolverSupplier = VfsFileResolverSupplier {};
-
-    impl ComponentSupplier for VfsFileResolverSupplier {
-        fn supply_types(&self) -> Vec<ComponentType> {
-            vec![ComponentType::file_resolver("vfs".to_owned())]
-        }
-
-        fn apply(&self, _: &Map<String, Value>) -> Result<Arc<dyn SdComponent>, ComponentError> {
-            Ok(Arc::new(VfsFileResolver {}))
-        }
-
-        fn is_support_no_props(&self) -> bool {
-            true
-        }
-
-        fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-            None
-        }
-    }
-
-    #[derive(Debug)]
-    struct VfsFileResolver;
-
-    impl SdComponent for VfsFileResolver {
-        fn as_item_file_resolver(
-            self: Arc<Self>,
-        ) -> Result<Arc<dyn ItemFileResolver>, ComponentError> {
-            Ok(self)
-        }
-    }
-
-    #[async_trait]
-    impl ItemFileResolver for VfsFileResolver {
-        async fn resolve_files(&self, source_item: &SourceItem) -> Vec<SourceFile> {
-            let path = PathBuf::from(
-                source_item
-                    .download_uri
-                    .to_string()
-                    .strip_prefix("file:/")
-                    .unwrap(),
-            );
-            vec![SourceFile::new(path)]
-        }
-    }
-
-    pub struct VfsMoverSupplier {
-        pub root: Arc<VfsPath>,
-    }
-
-    impl ComponentSupplier for VfsMoverSupplier {
-        fn supply_types(&self) -> Vec<ComponentType> {
-            vec![ComponentType::file_mover("vfs".to_owned())]
-        }
-
-        fn apply(&self, _: &Map<String, Value>) -> Result<Arc<dyn SdComponent>, ComponentError> {
-            Ok(Arc::new(VfsMover {
-                root: self.root.clone(),
-            }))
-        }
-
-        fn is_support_no_props(&self) -> bool {
-            true
-        }
-
-        fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-            todo!()
-        }
-    }
-
-    #[derive(SdComponent, Debug)]
-    #[component(FileMover)]
-    struct VfsMover {
-        root: Arc<VfsPath>,
-    }
-
-    #[allow(dead_code, unused)]
-    impl FileMover for VfsMover {
-        fn move_file(
-            &self,
-            source_file: &SourceFile,
-            download_path: &str,
-        ) -> Result<(), ProcessingError> {
-            todo!()
-        }
-
-        fn exists(&self, path: Vec<&str>) -> Vec<bool> {
-            path.iter()
-                .map(|x| self.root.join(x).unwrap().exists().unwrap_or(false))
-                .collect()
-        }
-
-        fn create_directories(&self, path: &str) -> Result<(), ProcessingError> {
-            self.root.join(path).unwrap().create_dir().unwrap();
-            Ok(())
-        }
-
-        fn replace(&self, item_content: &ItemContent) -> Result<(), ProcessingError> {
-            todo!()
-        }
-
-        fn list_files(&self, path: &str) -> Vec<String> {
-            self.root
-                .join(path)
-                .and_then(|p| p.read_dir())
-                .unwrap()
-                .map(|x| x.as_str().to_string())
-                .collect()
-        }
-
-        fn path_metadata(&self, path: &str) -> SourceFile {
-            todo!()
-        }
-    }
-}
-
-#[cfg(test)]
 mod test {
-    use crate::component_manager::ComponentManager;
-    use crate::components::get_build_in_component_supplier;
-    use crate::config::{ConfigOperator, YamlConfigOperator};
-    use crate::processor_manager::ProcessorManager;
-    use crate::source_processor::test_support::{
-        VfsFileSourceSupplier, VfsMoverSupplier, VFS_RESOLVER_SUPPLIER,
-    };
-    use crate::source_processor::{NormalProcess, SourceProcessor};
-    use indexmap::IndexMap;
+    use crate::config::ConfigOperator;
+    use crate::processor_test_support::test_support::*;
     use jsonpath_rust::JsonPath;
-    use serde::Deserialize;
-    use serde_json::json;
     use source_downloader_sdk::component::ProcessTask;
-    use source_downloader_sdk::storage::{ProcessingContentQuery, ProcessingStorage};
-    use std::sync::{Arc, LazyLock, OnceLock};
-    use storage_sqlite::SeaProcessingStorage;
-    use vfs::MemoryFS;
-    use vfs::VfsPath;
 
-    static _CM: OnceLock<Arc<ComponentManager>> = OnceLock::new();
-    static _PM: tokio::sync::OnceCell<ProcessorManager> = tokio::sync::OnceCell::const_new();
-    static _S: tokio::sync::OnceCell<Arc<SeaProcessingStorage>> =
-        tokio::sync::OnceCell::const_new();
-    static _C: OnceLock<Arc<YamlConfigOperator>> = OnceLock::new();
-    static V_PATH: LazyLock<Arc<VfsPath>> =
-        LazyLock::new(|| Arc::new(VfsPath::new(MemoryFS::new())));
-    static CASES: LazyLock<IndexMap<String, Case>> = LazyLock::new(|| {
-        let file = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .join("processor_cases.yaml");
-        let content = std::fs::read(file).unwrap();
-        serde_yaml::from_slice(&content).unwrap()
-    });
-    fn cfg() -> &'static Arc<YamlConfigOperator> {
-        _C.get_or_init(|| Arc::new(YamlConfigOperator::new("./tests/resources/config.yaml")))
-    }
-    async fn storage() -> &'static Arc<SeaProcessingStorage> {
-        _S.get_or_init(|| async {
-            Arc::new(SeaProcessingStorage::new("sqlite::memory:").await.unwrap())
-        })
-        .await
-    }
-    fn component_manager() -> &'static Arc<ComponentManager> {
-        _CM.get_or_init(|| {
-            let m = Arc::new(ComponentManager::new(cfg().clone()));
-            m.register_suppliers(get_build_in_component_supplier())
-                .unwrap();
-            m.register_supplier(Arc::new(VfsFileSourceSupplier {
-                root: V_PATH.clone(),
-            }))
-            .unwrap();
-            m.register_supplier(Arc::new(VFS_RESOLVER_SUPPLIER))
-                .unwrap();
-
-            m.register_supplier(Arc::new(VfsMoverSupplier {
-                root: V_PATH.clone(),
-            }))
-            .unwrap();
-            m
-        })
-    }
-
-    async fn processor_manager() -> &'static ProcessorManager {
-        _PM.get_or_init(|| async {
-            ProcessorManager::new(component_manager().clone(), storage().await.clone())
-        })
-        .await
-    }
-
-    #[derive(Deserialize)]
-    struct Case {
-        pub files: Vec<CaseFile>,
-        pub assertions: Vec<Assertion>,
-    }
-    #[derive(Deserialize)]
-    struct CaseFile {
-        pub path: String,
-        pub content: Option<String>,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "kebab-case")]
-    struct Assertion {
-        // JSON path
-        pub select: String,
-        #[serde(default)]
-        pub allow_empty: bool,
-        pub asserts: Vec<AssertExpr>,
-    }
-    #[derive(Deserialize)]
-    struct AssertExpr {
-        // JSON path
-        pub path: Option<String>,
-        pub pointer: Option<String>,
-        pub equals: Option<serde_json::Value>,
-        pub length: Option<usize>,
-        pub exists: Option<bool>,
-    }
-
-    #[derive(Debug)]
-    pub struct AssertionError {
-        pub message: String,
-        pub context: Vec<String>,
-    }
-
-    impl AssertionError {
-        pub fn new(msg: impl Into<String>) -> Self {
-            Self {
-                message: msg.into(),
-                context: Vec::new(),
-            }
-        }
-
-        pub fn with_context(mut self, ctx: impl Into<String>) -> Self {
-            self.context.push(ctx.into());
-            self
-        }
-    }
-
-    impl std::fmt::Display for AssertionError {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            for ctx in self.context.iter().rev() {
-                writeln!(f, "  at {}", ctx)?;
-            }
-            write!(f, "Assertion failed: {}", self.message)
-        }
-    }
-
-    fn apply_case_files(root_path: &VfsPath, files: &[CaseFile]) {
-        root_path.create_dir_all().unwrap();
-        for file in files.into_iter() {
-            let path = root_path.join(&file.path).unwrap();
-            let parent = path.parent();
-            if !parent.exists().unwrap() {
-                parent.create_dir_all().unwrap();
-            }
-            let mut f = path.create_file().unwrap();
-            if let Some(content) = &file.content {
-                f.write_all(content.as_bytes()).unwrap();
-            }
-        }
-    }
-
+    // <editor-fold desc="Sync item content tests">
     #[tokio::test]
     async fn sync_downloader_case() {
         let cfg = cfg();
@@ -1193,101 +864,20 @@ mod test {
             }
         }
     }
+    // </editor-fold>
 
-    fn apply_assertion(
-        node: &serde_json::Value,
-        asserts: &Vec<AssertExpr>,
-    ) -> Result<(), AssertionError> {
-        for assert in asserts {
-            let target = if let Some(pointer) = &assert.pointer {
-                node.pointer(pointer).ok_or_else(|| {
-                    AssertionError::new(format!("JSONPointer not found: {}", pointer))
-                })?
-            } else if let Some(path) = &assert.path {
-                let mut cur = node;
-                for seg in path.trim_start_matches('.').split('.') {
-                    cur = cur.get(seg).ok_or_else(|| {
-                        AssertionError::new(format!(
-                            "Path segment '{}' not found in '{}'",
-                            seg, path
-                        ))
-                    })?;
-                }
-                cur
-            } else {
-                node
-            };
-
-            if let Some(expected) = &assert.equals {
-                if target != expected {
-                    return Err(AssertionError::new(format!(
-                        "equals failed, expected {}, got {}",
-                        expected, target
-                    )));
-                }
-            }
-
-            if let Some(len) = assert.length {
-                let arr = target
-                    .as_array()
-                    .ok_or_else(|| AssertionError::new("target is not an array"))?;
-
-                if arr.len() != len {
-                    return Err(AssertionError::new(format!(
-                        "length failed, expected {}, got {}",
-                        len,
-                        arr.len()
-                    )));
-                }
-            }
-
-            if let Some(true) = assert.exists {
-                if target.is_null() {
-                    return Err(AssertionError::new("expected value to exist"));
-                }
-            }
-        }
-        Ok(())
+    // <editor-fold desc="Flow control tests">
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn flow_ctr_retry_then_ok() {
+        let name = "flow_ctr_retry_then_ok";
+        let cfg = cfg().get_processor_config(name).unwrap();
+        let pm = processor_manager().await;
+        pm.create_processor(&cfg);
+        let p = assert_processor(name, pm);
+        let r = p.run().await;
+        assert!(r.is_ok());
+        assert!(logs_contain("Retrying fetch-source-items delay"));
     }
-
-    async fn build_result_json(
-        storage: &Arc<SeaProcessingStorage>,
-        name: &str,
-    ) -> serde_json::Value {
-        let contents = storage
-            .query_processing_content(&ProcessingContentQuery {
-                processor_name: Some(vec![name.to_string()]),
-                ..Default::default()
-            })
-            .await
-            .unwrap();
-        let mut res = Vec::new();
-        for content in contents {
-            let files = storage
-                .find_file_contents(content.id.unwrap())
-                .await
-                .unwrap()
-                .map(|bytes| NormalProcess::decode_files_from_compressed(&bytes).unwrap())
-                .unwrap_or_default();
-
-            let mut value = serde_json::to_value(content).unwrap();
-            value["files"] = serde_json::to_value(files).unwrap();
-            res.push(value);
-        }
-        json!(res)
-    }
-
-    fn assert_processor(name: &str, pm: &ProcessorManager) -> Arc<SourceProcessor> {
-        let w = pm.get_processor(name).expect("Processor wrapper not found");
-        let p = w.processor.clone();
-        match p {
-            None => {
-                panic!(
-                    "Processor instance not found cause {}",
-                    w.error_message.as_ref().unwrap().to_string()
-                )
-            }
-            Some(p) => p,
-        }
-    }
+    // </editor-fold>
 }

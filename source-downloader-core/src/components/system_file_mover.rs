@@ -1,9 +1,10 @@
 use serde_json::{Map, Value};
+use source_downloader_sdk::SdComponent;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, FileMover, ItemContent, ProcessingError,
     SdComponent, SdComponentMetadata, SourceFile,
 };
-use source_downloader_sdk::SdComponent;
+use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
 pub struct SystemFileMoverSupplier {}
@@ -31,6 +32,12 @@ impl ComponentSupplier for SystemFileMoverSupplier {
 #[derive(SdComponent, Debug)]
 #[component(FileMover)]
 struct SystemFileMover {}
+
+impl Display for SystemFileMover {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "system-file")
+    }
+}
 
 #[allow(dead_code, unused)]
 impl FileMover for SystemFileMover {

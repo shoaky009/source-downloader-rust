@@ -97,6 +97,38 @@ components:
       name: sync_downloader_case
       props:
         path: /sync_downloader_case
+    - type: mock
+      name: sync_downloader_case
+      props:
+        fetch:
+          - returning: Ok
+            value:
+              - source-item:
+                  title: 1.txt
+                  link: file://sync_downloader_case/1.txt
+                  download-uri: file://sync_downloader_case/1.txt
+              - source-item:
+                  title: 2.txt
+                  link: file://sync_downloader_case/2.txt
+                  download-uri: file://sync_downloader_case/2.txt
+              - source-item:
+                  title: 3.txt
+                  link: file://sync_downloader_case/source/3.txt
+                  download-uri: file://sync_downloader_case/source/3.txt
+              - source-item:
+                  title: filter.txt
+    - type: mock
+      name: flow_ctr_retry_then_ok
+      props:
+        fetch:
+          - returning: Err
+            opt:
+              once: true
+              retryable: true
+              return-once: true
+          - returning: Ok
+            value: []
+
   item-file-resolver:
     - type: system-file
       name: test
@@ -120,10 +152,10 @@ processors:
   - name: sync_downloader_case
     enabled: true
     save-path: test1
-    source: vfs:sync_downloader_case
+    source: mock:sync_downloader_case
     item-file-resolver: vfs
-    downloader: vfs:sync_downloader_case
-    file-mover: vfs
+    downloader: mock:sync_downloader_case
+    file-mover: mock:sync_downloader_case
     category: test
     tags: [ "auto", "test" ]
     options:
@@ -149,3 +181,11 @@ processors:
         - expression-matching: "file.path.contains('.ass')"
           filename-pattern: ""
           file-content-filters: [ ]
+
+  - name: flow_ctr_retry_then_ok
+    enabled: true
+    save-path: test
+    source: mock:flow_ctr_retry_then_ok
+    item-file-resolver: vfs
+    downloader: mock:sync_downloader_case
+    file-mover: mock:sync_downloader_case

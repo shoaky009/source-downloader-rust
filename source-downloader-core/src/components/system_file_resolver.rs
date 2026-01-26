@@ -1,3 +1,4 @@
+use std::fmt::{Display, Formatter};
 use async_trait::async_trait;
 use serde_json::{Map, Value};
 use source_downloader_sdk::component::{
@@ -34,6 +35,12 @@ impl ComponentSupplier for SystemFileResolverSupplier {
 #[derive(SdComponent, Debug)]
 #[component(ItemFileResolver)]
 struct SystemFileResolver {}
+
+impl Display for SystemFileResolver {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "system-file")
+    }
+}
 
 #[async_trait]
 impl ItemFileResolver for SystemFileResolver {

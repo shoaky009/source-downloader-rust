@@ -27,6 +27,7 @@ axum = { version = "0.8", features = ["macros"] }
 tokio = { version = "1.4", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-test = "0.2.5"
 problem_details = "0.9"
 async-trait = "0.1"
 tower-http = { version = "0.6" }
@@ -51,6 +52,7 @@ criterion = "0.8"
 vfs = "0.12"
 jsonpath-rust = { version = "1.0.4" }
 maplit = "1.0.2"
+mockall = "0.14"
 
 # 使用cargo tree -p sea-orm -i sqlx查看sea-orm依赖的版本, 因为不喜欢用sea-orm的migration改用sqlx的方式
 sea-orm = { version = "2.0.0-rc.20" }
