@@ -117,6 +117,10 @@ components:
                   download-uri: file://sync_downloader_case/source/3.txt
               - source-item:
                   title: filter.txt
+              - source-item:
+                  title: conflict
+                  link: file://sync_downloader_case/source/conflict
+                  download-uri: file://sync_downloader_case/source/conflict
     - type: mock
       name: flow_ctr_retry_then_ok
       props:
@@ -177,6 +181,8 @@ processors:
           variable-providers: [ ]
           item-expression-inclusions: [ ]
           item-expression-exclusions: [ ]
+        - expression-matching: "item.title.contains('conflict')"
+          filename-pattern: "conflict"
       file-grouping:
         - expression-matching: "file.path.contains('.ass')"
           filename-pattern: ""

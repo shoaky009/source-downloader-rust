@@ -6,9 +6,12 @@ use backon::Retryable;
 use backon::{BackoffBuilder, ExponentialBuilder};
 use humantime::format_duration;
 use source_downloader_sdk::SourceItem;
+use source_downloader_sdk::component::FileContentStatus::{
+    FileConflict, Normal, TargetExists, Undetected, VariableError,
+};
 use source_downloader_sdk::component::{
-    Downloader, FileContentFilter, ItemContent, ItemContentFilter, ProcessListener,
-    SourceFileFilter, SourceItemFilter,
+    Downloader, FileContentFilter, FileExistsDetector, InProcessingItem, ItemContent,
+    ItemContentFilter, ProcessListener, SourceFileFilter, SourceItemFilter,
 };
 use source_downloader_sdk::component::{FileContent, Source};
 use source_downloader_sdk::component::{FileMover, ProcessingError};
@@ -21,14 +24,16 @@ use source_downloader_sdk::storage::{
 use source_downloader_sdk::time::OffsetDateTime;
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 static INSTANCE_ID_GENERATOR: AtomicI64 = AtomicI64::new(0);
 static PROCESS_ID_GENERATOR: AtomicI64 = AtomicI64::new(i64::MIN);
+static EMPTY_FILES: Vec<FileContent> = vec![];
+static EMPTY_PATTERN_VARIABLES: LazyLock<PatternVariables> = LazyLock::new(|| HashMap::new());
 
 #[derive(Debug)]
 pub struct ItemProcessResult {
@@ -38,6 +43,7 @@ pub struct ItemProcessResult {
     pub item_variables: PatternVariables,
     pub status: ProcessingStatus,
     pub message: Option<String>,
+    pub finished_at: OffsetDateTime,
 }
 #[allow(dead_code, unused)]
 pub struct SourceProcessor {
@@ -94,6 +100,7 @@ pub struct ProcessorOptions {
     // ok
     pub file_rules: Vec<FileRule>,
     pub process_listeners: Vec<Arc<dyn ProcessListener>>,
+    pub file_exists_detector: Arc<dyn FileExistsDetector>,
 }
 
 #[async_trait]
@@ -281,10 +288,11 @@ trait Process {
         files: &Vec<FileContent>,
     ) -> Result<(), ProcessingError>;
 
-    async fn on_item_error(
+    async fn on_item_error<'a>(
         &self,
         _p: &SourceProcessor,
         _ctx: &ProcessContext,
+        _in_processing: &InProcessingItem<'a>,
         _err: &ProcessingError,
     ) {
         // TODO invoke hooks
@@ -341,9 +349,37 @@ trait Process {
             p_ctx.process_submitted_items.insert(item_hash);
 
             let item_result = self.process_item(&source_item, &p_ctx, p).await;
+            let files = item_result
+                .as_ref()
+                .map(|x| &x.file_contents)
+                .unwrap_or(&EMPTY_FILES);
+            let item_variables = item_result
+                .as_ref()
+                .map(|x| &x.item_variables)
+                .unwrap_or(&EMPTY_PATTERN_VARIABLES);
+            let status = item_result
+                .as_ref()
+                .map(|x| &x.status)
+                .unwrap_or(&ProcessingStatus::Failure);
+            let failure_reason = &item_result.as_ref().err().map(|x| x.message());
+            let in_processing_item: InProcessingItem = InProcessingItem {
+                id: &None,
+                processor_name: &p.name,
+                item_hash: &source_item.hashing(),
+                item_identity: &source_item.identity,
+                file_contents: files,
+                source_item: &source_item,
+                item_variables,
+                rename_times: &0,
+                status,
+                failure_reason,
+            };
+
             if item_result.is_err() {
-                let err = item_result.unwrap_err();
-                self.on_item_error(p, &p_ctx, &err).await;
+                let err = item_result.as_ref().unwrap_err();
+                info!("[item-error] {} {:?}", source_item.title, err);
+                self.on_item_error(p, &p_ctx, &in_processing_item, &err)
+                    .await;
                 if matches!(err, ProcessingError::NonRetryable { skip: true, .. }) {
                     info!(
                         "[item-skip-on-error] 异常为可跳过类型 {} {}",
@@ -460,6 +496,7 @@ trait Process {
                     item_variables: PatternVariables::new(),
                     status: ProcessingStatus::Filtered,
                     message: Some(format!("Filtered by: {}", filter)),
+                    finished_at: OffsetDateTime::now_utc(),
                 });
             }
         }
@@ -475,7 +512,7 @@ trait Process {
         let item_variables = opt.variable_aggregation.merge(&item_raw_vars);
 
         let resolved_files = self.resolve_files(source_item, p).await?;
-        let file_contents = self
+        let mut file_contents = self
             .process_source_files(
                 p,
                 source_item,
@@ -492,7 +529,6 @@ trait Process {
             item_variables: &item_variables,
             status,
         };
-        //  ==== 数据准备阶段结束, 开始决定是否下载
         for x in &opt.item_content_filters {
             let filtered = !x.filter(&item_content).await;
             if filtered {
@@ -502,12 +538,16 @@ trait Process {
                 return Ok(ItemProcessResult {
                     item_filtered: true,
                     file_contents,
-                    item_variables: item_variables.clone(),
+                    item_variables,
                     status,
                     message: None,
+                    finished_at: OffsetDateTime::now_utc(),
                 });
             }
         }
+        //  ==== 数据准备阶段结束, 开始决定是否下载
+        // 1. 根据目标文件路径更新file_content状态
+        self.update_file_content_status(p, source_item, &mut file_contents);
 
         let content = ProcessingContent {
             id: None,
@@ -533,7 +573,80 @@ trait Process {
             item_variables: item_variables.clone(),
             status,
             message: None,
+            finished_at: OffsetDateTime::now_utc(),
         })
+    }
+
+    fn update_file_content_status(
+        &self,
+        p: &SourceProcessor,
+        source_item: &SourceItem,
+        file_contents: &mut Vec<FileContent>,
+    ) {
+        let conflict_indices: HashSet<usize> = {
+            let mut path_to_indices: HashMap<&Path, Vec<usize>> = HashMap::new();
+
+            for (idx, f) in file_contents
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.status == Undetected)
+            {
+                path_to_indices
+                    .entry(f.target_path())
+                    .or_default()
+                    .push(idx);
+            }
+
+            path_to_indices
+                .into_values()
+                .filter(|indices| indices.len() > 1)
+                .flatten()
+                .collect()
+        };
+
+        let exists_mapping: HashMap<&PathBuf, Option<&PathBuf>> = {
+            let mut mapping: HashMap<&PathBuf, Option<&PathBuf>> = HashMap::new();
+            // 暂时不实现
+            // let exists_results = p.file_mover.exists(&target_paths);
+            // for ((_, path, _), exists) in undetected_info.iter().zip(exists_results) {
+            //     mapping.insert(path.clone(), if exists { Some(path.clone()) } else { None });
+            // }
+
+            // file_exists_detector.exists (如果不是 SimpleFileExistsDetector)
+            // let detector_results = p.options.file_exists_detector.exists(
+            //     p.file_mover.as_ref(),
+            //     source_item,
+            //     file_contents,
+            // );
+            // for (path, exists_path) in detector_results {
+            //     // 如果 file_mover 认为已存在，detector 不能覆盖
+            //     mapping.entry(path).or_insert(exists_path);
+            // }
+            mapping
+        };
+
+        for (idx, x) in file_contents.iter_mut().enumerate() {
+            if x.status != Undetected {
+                continue;
+            }
+            if !x.errors.is_empty() {
+                x.status = VariableError;
+                continue;
+            }
+
+            if conflict_indices.contains(&idx) {
+                x.status = FileConflict;
+                continue;
+            }
+
+            // 3. 目标已存在
+            if let Some(Some(exists_path)) = exists_mapping.get(x.target_path()) {
+                x.status = TargetExists;
+                x.exist_target_path = Some(exists_path.to_path_buf());
+                continue;
+            }
+            x.status = Normal
+        }
     }
 
     async fn resolve_files(
@@ -827,6 +940,7 @@ mod test {
 
     // <editor-fold desc="Sync item content tests">
     #[tokio::test]
+    #[tracing_test::traced_test]
     async fn sync_downloader_case() {
         let cfg = cfg();
         let pm = processor_manager().await;

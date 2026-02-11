@@ -14,8 +14,8 @@ use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::io::Read;
-use std::path::PathBuf;
-use std::sync::{Arc, LazyLock};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, OnceLock};
 
 pub const COMPONENT_REF_PAT: &str = ":";
 pub type PatternVariables = HashMap<String, String>;
@@ -236,7 +236,7 @@ impl ComponentType {
             name,
         }
     }
-    pub fn item_exists_detector(name: String) -> ComponentType {
+    pub fn file_exists_detector(name: String) -> ComponentType {
         ComponentType {
             root_type: ComponentRootType::FileExistsDetector,
             name,
@@ -331,10 +331,10 @@ pub trait SdComponent: Any + Send + Sync + Debug + Display {
             "Not a file replacement decider component",
         ))
     }
-    fn as_item_exists_detector(
+    fn as_file_exists_detector(
         self: Arc<Self>,
-    ) -> Result<Arc<dyn ItemExistsDetector>, ComponentError> {
-        Err(ComponentError::from("Not a item exists detector component"))
+    ) -> Result<Arc<dyn FileExistsDetector>, ComponentError> {
+        Err(ComponentError::from("Not a file exists detector component"))
     }
     fn as_variable_provider(self: Arc<Self>) -> Result<Arc<dyn VariableProvider>, ComponentError> {
         Err(ComponentError::from("Not a variable provider component"))
@@ -409,7 +409,7 @@ pub trait FileMover: SdComponent {
         source_file: &SourceFile,
         download_path: &str,
     ) -> Result<(), ProcessingError>;
-    fn exists(&self, path: Vec<&str>) -> Vec<bool>;
+    fn exists(&self, path: &Vec<&PathBuf>) -> Vec<bool>;
     fn create_directories(&self, path: &str) -> Result<(), ProcessingError>;
     fn replace(&self, item_content: &ItemContent) -> Result<(), ProcessingError>;
     fn list_files(&self, path: &str) -> Vec<String>;
@@ -460,13 +460,18 @@ pub trait FileReplacementDecider: SdComponent {
     fn should_replace(
         &self,
         current: &ItemContent,
-        before: Option<&ItemContent>,
+        before: Option<&InProcessingItem>,
         existing_file: &SourceFile,
     ) -> bool;
 }
 
-pub trait ItemExistsDetector: SdComponent {
-    fn exists(&self, file_mover: &dyn FileMover, item_content: &ItemContent) -> bool;
+pub trait FileExistsDetector: SdComponent {
+    fn exists<'a>(
+        &self,
+        file_mover: &'a dyn FileMover,
+        source_item: &'a SourceItem,
+        file_contents: &'a Vec<FileContent>,
+    ) -> HashMap<&'a PathBuf, Option<&'a PathBuf>>;
 }
 
 #[async_trait]
@@ -657,7 +662,7 @@ pub trait ProcessTask: Send + Sync {
     fn group(&self) -> Option<String>;
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct FileContent {
     /// /mnt/downloads
     pub download_path: PathBuf,
@@ -677,11 +682,14 @@ pub struct FileContent {
     pub exist_target_path: Option<PathBuf>,
     pub errors: Vec<String>,
     pub status: FileContentStatus,
+    #[serde(skip, default)]
+    pub target_path: OnceLock<PathBuf>,
 }
 
 impl FileContent {
-    pub fn target_path(&self) -> PathBuf {
-        self.target_save_path.join(&self.target_filename)
+    pub fn target_path(&self) -> &PathBuf {
+        self.target_path
+            .get_or_init(|| self.target_save_path.join(&self.target_filename))
     }
     pub fn file_save_root_dir(&self) -> Option<PathBuf> {
         if self.source_save_path == self.target_save_path {
@@ -703,19 +711,39 @@ impl FileContent {
     }
 }
 
+pub struct ItemContent<'a> {
+    pub source_item: &'a SourceItem,
+    pub file_contents: &'a Vec<FileContent>,
+    pub item_variables: &'a PatternVariables,
+    pub status: ProcessingStatus,
+}
+
+pub struct InProcessingItem<'a> {
+    pub id: &'a Option<i64>,
+    pub processor_name: &'a str,
+    pub item_hash: &'a str,
+    pub item_identity: &'a Option<String>,
+    pub source_item: &'a SourceItem,
+    pub item_variables: &'a PatternVariables,
+    pub file_contents: &'a Vec<FileContent>,
+    pub rename_times: &'a u32,
+    pub status: &'a ProcessingStatus,
+    pub failure_reason: &'a Option<&'a str>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub enum FileContentStatus {
-    UNDETECTED,
+    Undetected,
 
     /**
      * 正常没有任何文件冲突
      */
-    NORMAL,
+    Normal,
 
     /**
      * 已下载
      */
-    DOWNLOADED,
+    Downloaded,
 
     /**
      * 路径模板变量不存在
@@ -740,25 +768,18 @@ pub enum FileContentStatus {
     /**
      * 该文件是被替换了的
      */
-    REPLACED,
+    Replaced,
 
     /**
      * 该文件是替换的
      */
-    REPLACE,
-}
-
-pub struct ItemContent<'a> {
-    pub source_item: &'a SourceItem,
-    pub file_contents: &'a Vec<FileContent>,
-    pub item_variables: &'a PatternVariables,
-    pub status: ProcessingStatus,
+    Replace,
 }
 
 pub trait ProcessContext {
     fn processor(&self) -> &ProcessorInfo;
     fn processed_items(&self) -> &Vec<SourceItem>;
-    fn get_item_content(&self, item: &SourceItem) -> Option<ItemContent<'_>>;
+    fn get_item_content(&self, item: &SourceItem) -> Option<InProcessingItem<'_>>;
     fn has_error(&self) -> bool;
 }
 
@@ -796,6 +817,7 @@ impl TaskRegistry {
 mod test {
     use crate::component::{ComponentId, ComponentRootType, FileContent, FileContentStatus};
     use std::path::PathBuf;
+    use std::sync::OnceLock;
 
     #[test]
     fn parse_component_id_given_raw_string() {
@@ -837,7 +859,8 @@ mod test {
             target_filename: "1.txt".to_string(),
             exist_target_path: None,
             errors: vec![],
-            status: FileContentStatus::UNDETECTED,
+            status: FileContentStatus::Undetected,
+            target_path: OnceLock::new(),
         };
         assert_eq!(
             PathBuf::from("src/test/resources/target/test"),

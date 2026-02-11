@@ -233,7 +233,8 @@ impl Renamer {
                 attrs: file.source_file.attrs.to_owned(),
                 file_uri: file.source_file.download_uri.to_owned(),
                 errors,
-                status: FileContentStatus::UNDETECTED,
+                status: FileContentStatus::Undetected,
+                ..Default::default()
             };
         }
         if !self.trimming.is_empty() {
@@ -294,7 +295,8 @@ impl Renamer {
             attrs: file.source_file.attrs.to_owned(),
             file_uri: file.source_file.download_uri.to_owned(),
             errors,
-            status: FileContentStatus::UNDETECTED,
+            status: FileContentStatus::Undetected,
+            ..Default::default()
         }
     }
 
@@ -621,7 +623,7 @@ mod tests {
 
         assert_eq!(
             SOURCE_SAVE_PATH.join(&content.target_filename),
-            content.target_path()
+            *content.target_path()
         );
     }
 
@@ -638,7 +640,7 @@ mod tests {
             &RenameVariables::default(),
         );
         assert_eq!("3.txt", content.target_filename);
-        assert_eq!(SOURCE_SAVE_PATH.join("2/3.txt"), content.target_path());
+        assert_eq!(SOURCE_SAVE_PATH.join("2/3.txt"), *content.target_path());
     }
 
     #[test]
@@ -661,7 +663,7 @@ mod tests {
         );
         assert_eq!(
             SOURCE_SAVE_PATH.join("2022/test/2022-01-01 - 123.txt"),
-            content.target_path()
+            *content.target_path()
         )
     }
 
@@ -725,7 +727,7 @@ mod tests {
             raw.clone(),
             &RenameVariables::default(),
         );
-        assert_eq!(content.file_download_path, content.target_path());
+        assert_eq!(content.file_download_path, *content.target_path());
         assert_eq!(2, content.errors.len());
 
         // 1 depth
@@ -736,7 +738,7 @@ mod tests {
             raw,
             &RenameVariables::default(),
         );
-        assert_eq!(content.file_download_path, content.target_path());
+        assert_eq!(content.file_download_path, *content.target_path());
     }
 
     #[test]
@@ -760,7 +762,7 @@ mod tests {
                 .join("{name}")
                 .join("S01")
                 .join("{name} - 01.txt"),
-            content.target_path()
+            *content.target_path()
         );
     }
 
@@ -790,7 +792,7 @@ mod tests {
 
         // 预期路径: test 01/S01/unresolved/1.txt
         let path = PathBuf::from_iter(["test 01", "S01", "unresolved", "1.txt"]);
-        assert_eq!(SOURCE_SAVE_PATH.join(path), content.target_path());
+        assert_eq!(SOURCE_SAVE_PATH.join(path), *content.target_path());
     }
 
     #[test]
@@ -819,7 +821,7 @@ mod tests {
 
         // {title} 缺失，进入 unresolved 分支
         let path = PathBuf::from_iter(["unresolved", "FATE", "S01E02.mp4"]);
-        assert_eq!(SOURCE_SAVE_PATH.join(path), content.target_path());
+        assert_eq!(SOURCE_SAVE_PATH.join(path), *content.target_path());
     }
 
     #[test]
@@ -848,7 +850,7 @@ mod tests {
 
         // 全部缺失，回退到原始路径
         let path = PathBuf::from_iter(["unresolved", "FATE", "AAAAA.mp4"]);
-        assert_eq!(SOURCE_SAVE_PATH.join(path), content.target_path());
+        assert_eq!(SOURCE_SAVE_PATH.join(path), *content.target_path());
     }
 
     #[test]
@@ -957,7 +959,7 @@ mod tests {
             .join("Idk111")
             .join("2022-01-01")
             .join("2.txt");
-        assert_eq!(expected, content.target_path());
+        assert_eq!(expected, *content.target_path());
     }
 
     #[test]
@@ -984,7 +986,7 @@ mod tests {
             .join("mp3")
             .join("origin")
             .join("1.mp3");
-        assert_eq!(expected, content.target_path());
+        assert_eq!(expected, *content.target_path());
     }
 
     #[test]

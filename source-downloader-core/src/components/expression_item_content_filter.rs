@@ -1,12 +1,9 @@
 use crate::expression::cel::FACTORY;
-use crate::expression::{item_content_variables, CompiledExpression, CompiledExpressionFactory};
+use crate::expression::{CompiledExpression, CompiledExpressionFactory, item_content_variables};
 use serde::Deserialize;
-use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, ItemContent, ItemContentFilter, SdComponent,
-    SdComponentMetadata,
-};
-use source_downloader_sdk::serde_json::{Map, Value};
 use source_downloader_sdk::SdComponent;
+use source_downloader_sdk::component::{ComponentError, ComponentSupplier, ComponentType, ItemContent, ItemContentFilter, SdComponent, SdComponentMetadata};
+use source_downloader_sdk::serde_json::{Map, Value};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use tracing::warn;
@@ -120,8 +117,8 @@ mod test {
     use serde::Deserialize;
     use serde_json::{Map, Value};
     use serde_yaml::from_str;
-    use source_downloader_sdk::component::ComponentSupplier;
     use source_downloader_sdk::SourceItem;
+    use source_downloader_sdk::component::ComponentSupplier;
     use std::fs::File;
     use std::path::Path;
 

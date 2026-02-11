@@ -77,10 +77,11 @@ mod test {
 #[cfg(feature = "test")]
 pub mod test_utils {
     use crate::SourceItem;
-    use crate::component::FileContentStatus::UNDETECTED;
+    use crate::component::FileContentStatus::Undetected;
     use crate::component::{FileContent, SourceFile};
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::sync::OnceLock;
 
     impl Default for SourceItem {
         fn default() -> Self {
@@ -123,7 +124,8 @@ pub mod test_utils {
                 target_filename: "".to_string(),
                 exist_target_path: None,
                 errors: vec![],
-                status: UNDETECTED,
+                status: Undetected,
+                target_path: OnceLock::default(),
             }
         }
     }

@@ -75,16 +75,16 @@ pub mod test_support {
         pub root: Arc<VfsPath>,
     }
 
-    pub struct VfsFileResolverSupplier;
-    const VFS_RESOLVER_SUPPLIER: VfsFileResolverSupplier = VfsFileResolverSupplier {};
+    pub struct CustomVfsFileResolverSupplier;
+    const VFS_RESOLVER_SUPPLIER: CustomVfsFileResolverSupplier = CustomVfsFileResolverSupplier {};
 
-    impl ComponentSupplier for VfsFileResolverSupplier {
+    impl ComponentSupplier for CustomVfsFileResolverSupplier {
         fn supply_types(&self) -> Vec<ComponentType> {
             vec![ComponentType::file_resolver("vfs".to_owned())]
         }
 
         fn apply(&self, _: &Map<String, Value>) -> Result<Arc<dyn SdComponent>, ComponentError> {
-            Ok(Arc::new(VfsFileResolver {}))
+            Ok(Arc::new(HardCodeVfsFileResolver {}))
         }
 
         fn is_support_no_props(&self) -> bool {
@@ -96,23 +96,24 @@ pub mod test_support {
         }
     }
 
+    /// 硬编码Mock VFS文件解析器
     #[derive(Debug)]
-    pub struct VfsFileResolver;
-    impl SdComponent for VfsFileResolver {
+    pub struct HardCodeVfsFileResolver;
+    impl SdComponent for HardCodeVfsFileResolver {
         fn as_item_file_resolver(
             self: Arc<Self>,
         ) -> Result<Arc<dyn ItemFileResolver>, ComponentError> {
             Ok(self)
         }
     }
-    impl Display for VfsFileResolver {
+    impl Display for HardCodeVfsFileResolver {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             write!(f, "vfs")
         }
     }
 
     #[async_trait]
-    impl ItemFileResolver for VfsFileResolver {
+    impl ItemFileResolver for HardCodeVfsFileResolver {
         async fn resolve_files(&self, source_item: &SourceItem) -> Vec<SourceFile> {
             let path = PathBuf::from(
                 source_item
@@ -121,6 +122,13 @@ pub mod test_support {
                     .strip_prefix("file:/")
                     .unwrap(),
             );
+            // case for conflict
+            if source_item.title == "conflict" {
+                return vec![
+                    SourceFile::new(path.clone()),
+                    SourceFile::new(path.with_file_name("conflict1")),
+                ];
+            }
             vec![SourceFile::new(path)]
         }
     }
@@ -255,12 +263,13 @@ pub mod test_support {
     struct MockComponentSupplier {}
     impl ComponentSupplier for MockComponentSupplier {
         fn supply_types(&self) -> Vec<ComponentType> {
+            let name = "mock";
             vec![
-                ComponentType::source("mock".to_owned()),
-                ComponentType::file_resolver("mock".to_owned()),
-                ComponentType::variable_provider("mock".to_owned()),
-                ComponentType::downloader("mock".to_owned()),
-                ComponentType::file_mover("mock".to_owned()),
+                ComponentType::source(name.to_owned()),
+                ComponentType::file_resolver(name.to_owned()),
+                ComponentType::variable_provider(name.to_owned()),
+                ComponentType::downloader(name.to_owned()),
+                ComponentType::file_mover(name.to_owned()),
             ]
         }
 
@@ -412,7 +421,7 @@ pub mod test_support {
         }
         impl FileMover for Component {
             fn move_file(&self, source_file: &SourceFile,download_path: &str) -> Result<(), ProcessingError>;
-            fn exists<'a>(&self, path: Vec<&'a str>) -> Vec<bool>;
+            fn exists<'a>(&self, path: &Vec<&'a PathBuf>) -> Vec<bool>;
             fn create_directories(&self, path: &str) -> Result<(), ProcessingError>;
             fn replace<'a>(&self, item_content: &ItemContent<'a>) -> Result<(), ProcessingError>;
             fn list_files(&self, path: &str) -> Vec<String>;
@@ -435,12 +444,16 @@ pub mod test_support {
 
     #[derive(Deserialize)]
     pub struct Case {
+        // test case files to be created
         pub files: Vec<CaseFile>,
+        // assertions to be applied on result json
         pub assertions: Vec<Assertion>,
     }
     #[derive(Deserialize)]
     pub struct CaseFile {
+        // relative path of the file
         pub path: String,
+        // file content
         pub content: Option<String>,
     }
     #[derive(Deserialize)]
@@ -449,7 +462,9 @@ pub mod test_support {
         // JSON path
         pub select: String,
         #[serde(default)]
+        // whether to allow empty result set
         pub allow_empty: bool,
+        // assertions to be applied on each selected node
         pub asserts: Vec<AssertExpr>,
     }
     #[derive(Deserialize)]
@@ -457,6 +472,7 @@ pub mod test_support {
         // JSON path
         pub path: Option<String>,
         pub pointer: Option<String>,
+        // expected value
         pub equals: Option<serde_json::Value>,
         pub length: Option<usize>,
         pub exists: Option<bool>,
@@ -482,8 +498,8 @@ pub mod test_support {
         }
     }
 
-    impl std::fmt::Display for AssertionError {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    impl Display for AssertionError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             for ctx in self.context.iter().rev() {
                 writeln!(f, "  at {}", ctx)?;
             }

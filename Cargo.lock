@@ -3646,6 +3646,7 @@ dependencies = [
  "http-serde",
  "humantime",
  "indexmap",
+ "itertools 0.14.0",
  "jsonpath-rust",
  "libloading",
  "maplit",

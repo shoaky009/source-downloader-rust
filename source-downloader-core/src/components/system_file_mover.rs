@@ -5,6 +5,7 @@ use source_downloader_sdk::component::{
     SdComponent, SdComponentMetadata, SourceFile,
 };
 use std::fmt::{Display, Formatter};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub struct SystemFileMoverSupplier {}
@@ -49,7 +50,7 @@ impl FileMover for SystemFileMover {
         todo!()
     }
 
-    fn exists(&self, path: Vec<&str>) -> Vec<bool> {
+    fn exists(&self, path: &Vec<&PathBuf>) -> Vec<bool> {
         todo!()
     }
 

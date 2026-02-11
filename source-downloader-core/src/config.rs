@@ -111,6 +111,8 @@ pub struct ProcessorOptionConfig {
     pub download_options: DownloadOptions,
     #[serde(skip_serializing_if = "is_default")]
     pub process_listeners: Vec<ListenerConfig>,
+    #[serde(skip_serializing_if = "is_default")]
+    pub file_exists_detector: Option<String>
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
@@ -253,6 +255,7 @@ impl Default for ProcessorOptionConfig {
             file_grouping: vec![],
             download_options: DownloadOptions::default(),
             process_listeners: vec![],
+            file_exists_detector: None
         }
     }
 }

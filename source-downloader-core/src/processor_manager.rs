@@ -21,6 +21,7 @@ use source_downloader_sdk::storage::ProcessingStorage;
 use std::collections::{HashMap, HashSet};
 use std::ops::Not;
 use std::path::Path;
+use std::string::ToString;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
@@ -297,6 +298,16 @@ impl ProcessorManager {
             process_listeners.push(listener);
         }
 
+        // ==
+        let file_exists_detector = self
+            .component_manager
+            .get_component(
+                &ComponentRootType::FileExistsDetector
+                    .parse_component_id(opt.file_exists_detector.as_deref().unwrap_or("simple")),
+            )?
+            .require_component()?
+            .as_file_exists_detector()?;
+
         Ok(ProcessorOptions {
             save_path_pattern: Arc::new(PathPattern::new_cel(
                 config.options.save_path_pattern.to_owned(),
@@ -311,6 +322,7 @@ impl ProcessorManager {
             source_file_filters,
             file_taggers,
             process_listeners,
+            file_exists_detector,
             variable_aggregation: VariableAggregation::new(
                 match &opt.variable_conflict_strategy {
                     None => Box::new(SmartStrategy),

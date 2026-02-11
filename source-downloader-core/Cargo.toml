@@ -25,6 +25,7 @@ url = { workspace = true, features = ["std"] }
 postcard = { workspace = true, features = ["use-std"] }
 zstd = { workspace = true }
 regex = { workspace = true }
+itertools = "0.14.0"
 
 [dev-dependencies]
 tempfile = { workspace = true }

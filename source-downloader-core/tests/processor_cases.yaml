@@ -5,10 +5,11 @@ sync_downloader_case:
     - path: "2.txt"
     - path: "source/3.txt"
     - path: "filter.txt"
+    - path: conflict
   assertions:
     - select: "$"
       asserts:
-        - length: 3
+        - length: 4
     - select: "$[*]"
       asserts:
         - path: ".status"
@@ -23,3 +24,9 @@ sync_downloader_case:
       asserts:
         - pointer: "/files/0/target_save_path"
           equals: test1/
+    - select: "$[?(@.item_content.source_item.title == 'conflict')]"
+      asserts:
+        - pointer: "/files/0/status"
+          equals: FileConflict
+        - pointer: "/files/1/status"
+          equals: FileConflict
