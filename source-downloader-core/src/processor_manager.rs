@@ -631,7 +631,6 @@ mod test {
 
     #[test]
     fn normal_cases() {
-        let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
         let component_manager = ComponentManager::new(Arc::new(YamlConfigOperator::new(
             "./tests/resources/config.yaml",
         )));

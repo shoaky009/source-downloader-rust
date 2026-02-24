@@ -127,7 +127,6 @@ mod test {
 
     #[tokio::test]
     async fn test_all() {
-        let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
         let path = Path::new("./tests/component/expression_item_filter_test_data.json");
         let file = File::open(path).unwrap();
         let test_data: Vec<TestData> = serde_json::from_reader(file).unwrap();

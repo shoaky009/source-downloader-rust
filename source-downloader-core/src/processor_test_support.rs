@@ -39,15 +39,15 @@ pub mod test_support {
         let file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
             .join("processor_cases.yaml");
-        let content = std::fs::read(file).unwrap();
-        serde_yaml::from_slice(&content).unwrap()
+        let content = std::fs::read(file).expect("Failed to read processor_cases.yaml");
+        serde_yaml::from_slice(&content).expect("Failed to de processor cases")
     });
     pub fn cfg() -> &'static Arc<YamlConfigOperator> {
         _C.get_or_init(|| Arc::new(YamlConfigOperator::new("./tests/resources/config.yaml")))
     }
     pub async fn storage() -> &'static Arc<SeaProcessingStorage> {
         _S.get_or_init(|| async {
-            Arc::new(SeaProcessingStorage::new("sqlite::memory:").await.unwrap())
+            Arc::new(SeaProcessingStorage::new("sqlite::memory:").await.expect("Failed to conn database"))
         })
         .await
     }
@@ -120,7 +120,7 @@ pub mod test_support {
                     .download_uri
                     .to_string()
                     .strip_prefix("file:/")
-                    .unwrap(),
+                    .expect("Failed to parse file URI"),
             );
             // case for conflict
             if source_item.title == "conflict" {
@@ -279,7 +279,7 @@ pub mod test_support {
         ) -> Result<Arc<dyn SdComponent>, ComponentError> {
             let mut mock = MockComponent::new();
             let cfg = serde_json::from_value::<ComponentMockConfig>(Value::Object(props.clone()))
-                .unwrap();
+                .expect("Failed to deserialize ComponentMockConfig");
             Self::apply_source_fetch(&mut mock, cfg.fetch)?;
 
             // 配置 default_pointer 方法
@@ -328,7 +328,7 @@ pub mod test_support {
             if fetches.is_empty() {
                 mock.expect_fetch()
                     .with(always(), always())
-                    .returning_st(|_, _| Ok(Vec::new()));
+                    .returning(|_, _| Ok(Vec::new()));
             }
             for fetch in fetches {
                 let mut mock = mock.expect_fetch().with(always(), always());
@@ -356,7 +356,7 @@ pub mod test_support {
                 if option.return_once {
                     mock.return_once(move |_, _| return_value);
                 } else {
-                    mock.returning_st(move |_, _| return_value.clone());
+                    mock.returning(move |_, _| return_value.clone());
                 }
             }
             Ok(())
@@ -389,6 +389,9 @@ pub mod test_support {
             write!(f, "mock")
         }
     }
+
+    unsafe impl Send for MockComponent {}
+
     mock! {
         #[derive(Debug)]
         pub Component {}

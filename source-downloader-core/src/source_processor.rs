@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use backon::Retryable;
 use backon::{BackoffBuilder, ExponentialBuilder};
 use humantime::format_duration;
+use parking_lot::RwLock;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::FileContentStatus::{
     FileConflict, Normal, TargetExists, Undetected, VariableError,
@@ -18,6 +19,7 @@ use source_downloader_sdk::component::{FileMover, ProcessingError};
 use source_downloader_sdk::component::{FileTagger, ProcessTask, SourceFile};
 use source_downloader_sdk::component::{ItemFileResolver, ItemPointer, SourcePointer};
 use source_downloader_sdk::component::{PatternVariables, VariableProvider};
+use source_downloader_sdk::storage::ProcessingStatus::Filtered;
 use source_downloader_sdk::storage::{
     ItemContentLite, ProcessingContent, ProcessingStatus, ProcessingStorage, ProcessorSourceState,
 };
@@ -28,12 +30,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 static INSTANCE_ID_GENERATOR: AtomicI64 = AtomicI64::new(0);
 static PROCESS_ID_GENERATOR: AtomicI64 = AtomicI64::new(i64::MIN);
-static EMPTY_FILES: Vec<FileContent> = vec![];
-static EMPTY_PATTERN_VARIABLES: LazyLock<PatternVariables> = LazyLock::new(|| HashMap::new());
+// static EMPTY_FILES: Vec<FileContent> = vec![];
+// static EMPTY_PATTERN_VARIABLES: LazyLock<PatternVariables> = LazyLock::new(|| HashMap::new());
 
 #[derive(Debug)]
 pub struct ItemProcessResult {
@@ -120,11 +122,11 @@ impl ProcessTask for SourceProcessor {
 }
 
 #[allow(dead_code, unused)]
-struct ProcessContext {
+struct ProcessRuntime {
     pub trace_id: String,
     source_state: ProcessorSourceState,
     source_pointer: Arc<dyn SourcePointer>,
-    process_submitted_items: HashSet<String>,
+    process_submitted_items: RwLock<HashSet<String>>,
     processed_count: AtomicU32,
     filter_count: AtomicU32,
     process_start_at: Option<Instant>,
@@ -133,7 +135,19 @@ struct ProcessContext {
     fetch_end_at: Option<Instant>,
 }
 
-impl ProcessContext {
+enum ItemAction {
+    // Item被过滤(不存储Item信息), message为过滤原因
+    Skip(String),
+    // 处理成功
+    Success {
+        content: ProcessingContent,
+        files: Vec<FileContent>,
+    },
+    // 处理失败
+    Error(ProcessingError),
+}
+
+impl ProcessRuntime {
     fn filter_inc(&self) {
         self.filter_count.fetch_add(1, Ordering::Relaxed);
     }
@@ -277,7 +291,7 @@ trait Process {
     async fn on_process_complete(
         &self,
         p: &SourceProcessor,
-        ctx: &ProcessContext,
+        ctx: &ProcessRuntime,
         pointer: Arc<dyn SourcePointer>,
     );
 
@@ -291,7 +305,7 @@ trait Process {
     async fn on_item_error<'a>(
         &self,
         _p: &SourceProcessor,
-        _ctx: &ProcessContext,
+        _ctx: &ProcessRuntime,
         _in_processing: &InProcessingItem<'a>,
         _err: &ProcessingError,
     ) {
@@ -302,7 +316,7 @@ trait Process {
     async fn on_item_success(
         &self,
         p: &SourceProcessor,
-        ctx: &ProcessContext,
+        ctx: &ProcessRuntime,
         source_item: &SourceItem,
         item_pointer: &Arc<dyn ItemPointer>,
         source_pointer: &Arc<dyn SourcePointer>,
@@ -324,7 +338,7 @@ trait Process {
         let _processing_guard = ProcessingGuard::new(&p.processing);
         let mut p_ctx = self.init_process_context(p, start_time).await?;
         let source_pointer = p_ctx.source_pointer.clone();
-
+        debug!("Fetch with pointer: {}", p_ctx.source_pointer.dump());
         p_ctx.fetch_start_at = Some(Instant::now());
         let items = SourceProcessor::apply_retry(
             || async {
@@ -340,77 +354,36 @@ trait Process {
         for item in items {
             let item_pointer = item.item_pointer;
             let source_item = item.source_item;
-            let item_hash = source_item.hashing();
-            if p_ctx.process_submitted_items.contains(&item_hash) {
-                p_ctx.filter_inc();
-                info!("Source item duplicated: {:?} skipped", source_item);
-                continue;
-            }
-            p_ctx.process_submitted_items.insert(item_hash);
-
-            let item_result = self.process_item(&source_item, &p_ctx, p).await;
-            let files = item_result
-                .as_ref()
-                .map(|x| &x.file_contents)
-                .unwrap_or(&EMPTY_FILES);
-            let item_variables = item_result
-                .as_ref()
-                .map(|x| &x.item_variables)
-                .unwrap_or(&EMPTY_PATTERN_VARIABLES);
-            let status = item_result
-                .as_ref()
-                .map(|x| &x.status)
-                .unwrap_or(&ProcessingStatus::Failure);
-            let failure_reason = &item_result.as_ref().err().map(|x| x.message());
-            let in_processing_item: InProcessingItem = InProcessingItem {
-                id: &None,
-                processor_name: &p.name,
-                item_hash: &source_item.hashing(),
-                item_identity: &source_item.identity,
-                file_contents: files,
-                source_item: &source_item,
-                item_variables,
-                rename_times: &0,
-                status,
-                failure_reason,
-            };
-
-            if item_result.is_err() {
-                let err = item_result.as_ref().unwrap_err();
-                info!("[item-error] {} {:?}", source_item.title, err);
-                self.on_item_error(p, &p_ctx, &in_processing_item, &err)
-                    .await;
-                if matches!(err, ProcessingError::NonRetryable { skip: true, .. }) {
-                    info!(
-                        "[item-skip-on-error] 异常为可跳过类型 {} {}",
-                        err.message(),
-                        source_item
-                    );
+            let item_action = self.process_item(&source_item, &p_ctx, p).await?;
+            match &item_action {
+                ItemAction::Skip(reason) => {
+                    info!("[item-skip] {} {:?} ", reason, source_item);
                     continue;
                 }
-                if !p.options.item_error_continue {
+                ItemAction::Error(err) => {
+                    // todo invoke on_item_error hooks
+                    if matches!(err, ProcessingError::NonRetryable { skip: true, .. }) {
+                        info!(
+                            "[item-skip-on-error] 异常为可跳过类型 {} {}",
+                            err.message(),
+                            source_item
+                        );
+                        continue;
+                    }
                     warn!(
-                        "[item-fail] 退出本次触发处理, 如果未能解决该处理器将无法继续处理后续Item {} {}",
-                        source_item,
+                        "[item-non-retryable-error] 异常为不可跳过类型 {}, 退出本次触发处理",
                         err.message()
                     );
                     break;
                 }
-                continue;
+                ItemAction::Success { content, files } => {
+                    self.on_item_success(p, &p_ctx, &source_item, &item_pointer, &source_pointer)
+                        .await;
+                }
             }
-            let process_result = item_result?;
-            if process_result.item_filtered {
-                continue;
-            }
-
-            p_ctx.processed_inc();
-            self.on_item_success(p, &p_ctx, &source_item, &item_pointer, &source_pointer)
-                .await;
-            // on_item_complete
         }
         self.on_process_complete(p, &p_ctx, source_pointer.clone())
             .await;
-
         p_ctx.process_end_at = Some(Instant::now());
         info!("[run-done] {} {}", p.name, p_ctx.summary());
         Ok(())
@@ -447,17 +420,16 @@ trait Process {
         &self,
         p: &SourceProcessor,
         start_time: Instant,
-    ) -> Result<ProcessContext, ProcessingError> {
+    ) -> Result<ProcessRuntime, ProcessingError> {
         let source_state = self.get_source_state(p).await?;
         let source_pointer = self.get_source_pointer(p, &source_state).await?;
-        debug!("Fetch with pointer: {}", source_state.last_pointer);
-        let p_ctx = ProcessContext {
+        let p_ctx = ProcessRuntime {
             trace_id: PROCESS_ID_GENERATOR
                 .fetch_add(i64::MIN, Ordering::Relaxed)
                 .to_string(),
             source_state,
             source_pointer,
-            process_submitted_items: HashSet::new(),
+            process_submitted_items: RwLock::new(HashSet::new()),
             processed_count: AtomicU32::new(0),
             filter_count: AtomicU32::new(0),
             process_start_at: Some(start_time),
@@ -471,9 +443,17 @@ trait Process {
     async fn process_item(
         &self,
         source_item: &SourceItem,
-        ctx: &ProcessContext,
+        rt: &ProcessRuntime,
         p: &SourceProcessor,
-    ) -> Result<ItemProcessResult, ProcessingError> {
+    ) -> Result<ItemAction, ProcessingError> {
+        let item_hash = source_item.hashing();
+        if rt.process_submitted_items.read().contains(&item_hash) {
+            rt.filter_inc();
+            info!("Source item duplicated: {:?} skipped", source_item);
+            return Ok(ItemAction::Skip("Source item duplicated".to_string()));
+        }
+        rt.process_submitted_items.write().insert(item_hash);
+
         info!("[item-start] {}", source_item);
         let opt = &p.options;
         let item_rule = opt
@@ -489,15 +469,8 @@ trait Process {
             let filtered = !filter.filter(source_item).await;
             if filtered {
                 debug!("[item-filtered] {}", source_item);
-                ctx.filter_inc();
-                return Ok(ItemProcessResult {
-                    item_filtered: true,
-                    file_contents: vec![],
-                    item_variables: PatternVariables::new(),
-                    status: ProcessingStatus::Filtered,
-                    message: Some(format!("Filtered by: {}", filter)),
-                    finished_at: OffsetDateTime::now_utc(),
-                });
+                rt.filter_inc();
+                return Ok(ItemAction::Skip(format!("Filtered by: {}", filter)));
             }
         }
 
@@ -523,6 +496,7 @@ trait Process {
             .await?;
 
         let mut status = ProcessingStatus::Renamed;
+        let mut failure_reason: Option<String> = None;
         let item_content = ItemContent {
             source_item,
             file_contents: &file_contents,
@@ -533,21 +507,17 @@ trait Process {
             let filtered = !x.filter(&item_content).await;
             if filtered {
                 debug!("[item-content-filtered] {}", source_item);
-                ctx.filter_inc();
-                status = ProcessingStatus::Filtered;
-                return Ok(ItemProcessResult {
-                    item_filtered: true,
-                    file_contents,
-                    item_variables,
-                    status,
-                    message: None,
-                    finished_at: OffsetDateTime::now_utc(),
-                });
+                rt.filter_inc();
+                status = Filtered;
+                failure_reason = Some(format!("Filtered by: {}", x));
+                break;
             }
         }
         //  ==== 数据准备阶段结束, 开始决定是否下载
-        // 1. 根据目标文件路径更新file_content状态
-        self.update_file_content_status(p, source_item, &mut file_contents);
+        if status != Filtered {
+            // 1. 根据目标文件路径更新file_content状态
+            self.update_file_content_status(p, source_item, &mut file_contents);
+        }
 
         let content = ProcessingContent {
             id: None,
@@ -556,24 +526,21 @@ trait Process {
             item_identity: source_item.identity.clone(),
             item_content: ItemContentLite {
                 source_item: source_item.clone(),
-                item_variables: item_variables.clone(),
+                item_variables,
             },
             rename_times: 0,
             status,
-            failure_reason: None,
+            failure_reason,
             created_at: OffsetDateTime::now_utc(),
             updated_at: None,
         };
 
         self.on_item_process_complete(p, &content, &file_contents)
             .await?;
-        Ok(ItemProcessResult {
-            item_filtered: false,
-            file_contents,
-            item_variables: item_variables.clone(),
-            status,
-            message: None,
-            finished_at: OffsetDateTime::now_utc(),
+
+        Ok(ItemAction::Success {
+            files: file_contents,
+            content,
         })
     }
 
@@ -714,7 +681,10 @@ trait Process {
         // <editor-fold desc="Stage using VariableProviders for file">
         let mut file_raw_vars = vec![];
         for idx in 0..opt.variable_providers.len() {
-            let v = opt.variable_providers.get(idx).unwrap();
+            let v = opt
+                .variable_providers
+                .get(idx)
+                .expect("Failed to get variable provider by index, this should not happen");
             let vars = v
                 .file_variables(source_item, item_variables, &relative_files)
                 .await;
@@ -811,7 +781,7 @@ impl Process for NormalProcess {
     async fn on_process_complete(
         &self,
         p: &SourceProcessor,
-        ctx: &ProcessContext,
+        ctx: &ProcessRuntime,
         pointer: Arc<dyn SourcePointer>,
     ) {
         // TODO invoke hooks
@@ -822,6 +792,9 @@ impl Process for NormalProcess {
                 ..ctx.source_state.clone()
             })
             .await
+            .inspect_err(|e| {
+                error!("Failed to save source state: {:?}", e);
+            })
             .unwrap();
         }
     }
@@ -864,7 +837,7 @@ impl Process for NormalProcess {
     async fn on_item_success(
         &self,
         p: &SourceProcessor,
-        ctx: &ProcessContext,
+        ctx: &ProcessRuntime,
         source_item: &SourceItem,
         item_pointer: &Arc<dyn ItemPointer>,
         source_pointer: &Arc<dyn SourcePointer>,
@@ -946,9 +919,14 @@ mod test {
         let pm = processor_manager().await;
         let storage = storage().await;
         for (name, case) in CASES.iter() {
-            pm.create_processor(&cfg.get_processor_config(name).unwrap());
+            pm.create_processor(
+                &cfg.get_processor_config(name)
+                    .expect("Failed to get processor config"),
+            );
             let p = assert_processor(name, pm);
-            let root_path = V_PATH.join(format!("/{}", name)).unwrap();
+            let root_path = V_PATH
+                .join(format!("/{}", name))
+                .expect("Failed to join path");
             apply_case_files(&root_path, &case.files);
 
             let result = p.run().await;
@@ -985,7 +963,9 @@ mod test {
     #[tracing_test::traced_test]
     async fn flow_ctr_retry_then_ok() {
         let name = "flow_ctr_retry_then_ok";
-        let cfg = cfg().get_processor_config(name).unwrap();
+        let cfg = cfg()
+            .get_processor_config(name)
+            .expect("Failed to get processor config");
         let pm = processor_manager().await;
         pm.create_processor(&cfg);
         let p = assert_processor(name, pm);

@@ -5,7 +5,7 @@ use source_downloader_sdk::component::{
     SdComponent, SdComponentMetadata, SourceFile,
 };
 use std::fmt::{Display, Formatter};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub struct SystemFileMoverSupplier {}
