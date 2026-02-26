@@ -15,7 +15,7 @@ pub mod test_support {
     use source_downloader_sdk::{SdComponent, SourceItem, http};
     use std::any::Any;
     use std::fmt::{Display, Formatter};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::{Arc, LazyLock, OnceLock};
     use storage_sqlite::SeaProcessingStorage;
     use vfs::VfsPath;
@@ -24,6 +24,7 @@ pub mod test_support {
     use crate::components::get_build_in_component_supplier;
     use crate::config::{ConfigOperator, YamlConfigOperator};
     use indexmap::IndexMap;
+    use itertools::Itertools;
     use jsonpath_rust::JsonPath;
     use source_downloader_sdk::component::ProcessTask;
     use vfs::MemoryFS;
@@ -47,7 +48,11 @@ pub mod test_support {
     }
     pub async fn storage() -> &'static Arc<SeaProcessingStorage> {
         _S.get_or_init(|| async {
-            Arc::new(SeaProcessingStorage::new("sqlite::memory:").await.expect("Failed to conn database"))
+            Arc::new(
+                SeaProcessingStorage::new("sqlite::memory:")
+                    .await
+                    .expect("Failed to conn database"),
+            )
         })
         .await
     }
@@ -281,6 +286,7 @@ pub mod test_support {
             let cfg = serde_json::from_value::<ComponentMockConfig>(Value::Object(props.clone()))
                 .expect("Failed to deserialize ComponentMockConfig");
             Self::apply_source_fetch(&mut mock, cfg.fetch)?;
+            Self::apply_file_mover(&mut mock)?;
 
             // 配置 default_pointer 方法
             mock.expect_default_pointer()
@@ -294,10 +300,6 @@ pub mod test_support {
                 mock.expect_parse_raw_pointer()
                     .returning(|_| Arc::new(MockSourcePointer::default()));
             }
-
-            // downloader
-            mock.expect_default_download_path()
-                .return_const("/downloads".to_string());
             Ok(Arc::new(mock))
         }
 
@@ -319,6 +321,12 @@ pub mod test_support {
                 .filter_map(|config| Some(config.into()))
                 .collect();
             Ok(result)
+        }
+
+        fn apply_file_mover(mock: &mut MockComponent) -> Result<(), ComponentError> {
+            mock.expect_exists()
+                .returning(|f| f.iter().map(|x| false).collect_vec());
+            Ok(())
         }
 
         fn apply_source_fetch(
@@ -390,8 +398,6 @@ pub mod test_support {
         }
     }
 
-    unsafe impl Send for MockComponent {}
-
     mock! {
         #[derive(Debug)]
         pub Component {}
@@ -422,6 +428,7 @@ pub mod test_support {
             async fn extract_from(&self, item: &SourceItem, value: &str) -> Option<std::collections::HashMap<String, Value>>;
             fn primary_variable_name(&self) -> Option<String>;
         }
+        #[async_trait]
         impl FileMover for Component {
             fn move_file(&self, source_file: &SourceFile,download_path: &str) -> Result<(), ProcessingError>;
             fn exists<'a>(&self, path: &Vec<&'a PathBuf>) -> Vec<bool>;
@@ -432,10 +439,24 @@ pub mod test_support {
             fn is_supported_batch_move(&self) -> bool;
             fn batch_move<'a>(&self, item_content: &ItemContent<'a>) -> Result<(), ProcessingError>;
         }
-        impl Downloader for Component {
-            fn submit<'a>(&self, task: &DownloadTask<'a>) -> Result<(), ComponentError>;
-            fn default_download_path(&self) -> &str;
-            fn cancel<'a>(&self, item: &DownloadTask<'a>, files: &[SourceFile]) -> Result<(), ComponentError>;
+    }
+
+    #[async_trait]
+    impl Downloader for MockComponent {
+        async fn submit(&self, task: &DownloadTask) -> Result<(), ProcessingError> {
+            Ok(())
+        }
+
+        fn default_download_path(&self) -> &str {
+            "/downloads"
+        }
+
+        async fn cancel(
+            &self,
+            item: &SourceItem,
+            files: &[SourceFile],
+        ) -> Result<(), ProcessingError> {
+            Ok(())
         }
     }
 
@@ -476,7 +497,7 @@ pub mod test_support {
         pub path: Option<String>,
         pub pointer: Option<String>,
         // expected value
-        pub equals: Option<serde_json::Value>,
+        pub equals: Option<Value>,
         pub length: Option<usize>,
         pub exists: Option<bool>,
     }

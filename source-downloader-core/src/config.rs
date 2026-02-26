@@ -2,7 +2,9 @@ use indexmap::IndexMap;
 #[allow(dead_code, unused)]
 use moka::sync::Cache;
 use serde::{Deserialize, Deserializer, Serialize};
-use source_downloader_sdk::component::{ComponentError, ComponentRootType, ComponentType};
+use source_downloader_sdk::component::{
+    ComponentError, ComponentRootType, ComponentType, DownloadOptions,
+};
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{File, OpenOptions};
@@ -108,11 +110,11 @@ pub struct ProcessorOptionConfig {
     // 后面改名字 -> file_rule
     #[serde(skip_serializing_if = "is_default")]
     pub file_grouping: Vec<FileRuleConfig>,
-    pub download_options: DownloadOptions,
+    pub download_options: DownloadOptionsConfig,
     #[serde(skip_serializing_if = "is_default")]
     pub process_listeners: Vec<ListenerConfig>,
     #[serde(skip_serializing_if = "is_default")]
-    pub file_exists_detector: Option<String>
+    pub file_exists_detector: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
@@ -253,22 +255,32 @@ impl Default for ProcessorOptionConfig {
             item_error_continue: false,
             item_grouping: vec![],
             file_grouping: vec![],
-            download_options: DownloadOptions::default(),
+            download_options: DownloadOptionsConfig::default(),
             process_listeners: vec![],
-            file_exists_detector: None
+            file_exists_detector: None,
         }
     }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(default)]
-pub struct DownloadOptions {
+pub struct DownloadOptionsConfig {
     #[serde(default, skip_serializing_if = "is_default")]
     pub category: Option<String>,
     #[serde(default, skip_serializing_if = "is_default")]
-    pub tags: HashSet<String>,
+    pub tags: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "is_default")]
-    pub headers: HashMap<String, String>,
+    pub headers: Option<HashMap<String, String>>,
+}
+
+impl Into<DownloadOptions> for DownloadOptionsConfig {
+    fn into(self) -> DownloadOptions {
+        DownloadOptions {
+            category: self.category,
+            tags: self.tags,
+            headers: self.headers,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]

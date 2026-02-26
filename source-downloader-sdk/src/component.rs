@@ -13,8 +13,7 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
-use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, OnceLock};
 
 pub const COMPONENT_REF_PAT: &str = ":";
@@ -371,10 +370,11 @@ pub trait Trigger: SdComponent {
     fn remove_task(&self, task: Arc<dyn ProcessTask>);
 }
 
+#[async_trait]
 pub trait Downloader: SdComponent {
-    fn submit(&self, task: &DownloadTask) -> Result<(), ComponentError>;
+    async fn submit(&self, task: &DownloadTask) -> Result<(), ProcessingError>;
     fn default_download_path(&self) -> &str;
-    fn cancel(&self, item: &DownloadTask, files: &[SourceFile]) -> Result<(), ComponentError>;
+    async fn cancel(&self, item: &SourceItem, files: &[SourceFile]) -> Result<(), ProcessingError>;
 }
 
 pub trait AsyncDownloader: Downloader {
@@ -621,11 +621,22 @@ impl Display for ProcessingError {
     }
 }
 
+impl From<std::io::Error> for ProcessingError {
+    fn from(err: std::io::Error) -> Self {
+        ProcessingError::NonRetryable {
+            message: format!("IO error: {}", err),
+            skip: false,
+        }
+    }
+}
+
 pub struct DownloadTask<'a> {
-    pub item: &'a SourceItem,
-    pub download_files: &'a Vec<SourceFile>,
-    pub download_path: &'a String,
-    pub download_options: &'a DownloadOptions,
+    pub source_item: &'a SourceItem,
+    pub download_files: &'a [SourceFileRef<'a>],
+    pub download_path: &'a Path,
+    pub category: &'a Option<String>,
+    pub tags: Option<&'a [String]>,
+    pub headers: Option<HashMap<&'a String, &'a String>>,
 }
 
 #[derive(Clone)]
@@ -634,7 +645,39 @@ pub struct SourceFile {
     pub attrs: Map<String, Value>,
     pub download_uri: Option<Uri>,
     pub tags: Vec<String>,
-    pub data: Option<Arc<dyn Read + Send + Sync>>,
+    pub data: Option<Arc<[u8]>>,
+}
+
+pub struct SourceFileRef<'a> {
+    pub path: &'a Path,
+    pub attrs: &'a Map<String, Value>,
+    pub download_uri: Option<&'a Uri>,
+    pub tags: &'a [String],
+    pub data: Option<&'a Arc<[u8]>>,
+}
+
+impl<'a> From<&'a SourceFile> for SourceFileRef<'a> {
+    fn from(value: &'a SourceFile) -> Self {
+        SourceFileRef {
+            path: &value.path,
+            attrs: &value.attrs,
+            download_uri: value.download_uri.as_ref(),
+            tags: &value.tags,
+            data: value.data.as_ref(),
+        }
+    }
+}
+
+impl<'a> From<&'a FileContent> for SourceFileRef<'a> {
+    fn from(value: &'a FileContent) -> Self {
+        SourceFileRef {
+            path: &value.file_download_path,
+            attrs: &value.attrs,
+            download_uri: value.file_uri.as_ref(),
+            tags: &value.tags,
+            data: value.data.as_ref(),
+        }
+    }
 }
 
 impl SourceFile {
@@ -662,7 +705,7 @@ pub trait ProcessTask: Send + Sync {
     fn group(&self) -> Option<String>;
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize)]
 pub struct FileContent {
     /// /mnt/downloads
     pub download_path: PathBuf,
@@ -684,6 +727,22 @@ pub struct FileContent {
     pub status: FileContentStatus,
     #[serde(skip, default)]
     pub target_path: OnceLock<PathBuf>,
+    #[serde(skip, default)]
+    pub data: Option<Arc<[u8]>>,
+}
+
+impl Debug for FileContent {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileContent")
+            .field("file_download_path", &self.file_download_path)
+            .field("file_uri", &self.file_uri)
+            .field("target_save_path", &self.target_save_path)
+            .field("target_filename", &self.target_filename)
+            .field("exist_target_path", &self.exist_target_path)
+            .field("errors", &self.errors)
+            .field("status", &self.status)
+            .finish()
+    }
 }
 
 impl FileContent {
@@ -861,6 +920,7 @@ mod test {
             errors: vec![],
             status: FileContentStatus::Undetected,
             target_path: OnceLock::new(),
+            data: None,
         };
         assert_eq!(
             PathBuf::from("src/test/resources/target/test"),

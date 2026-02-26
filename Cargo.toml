@@ -2,6 +2,13 @@
 resolver = "3"
 members = ["source-downloader-core", "source-downloader-sdk", "applications/web", "plugins/common", "component-macro", "storage-memory", "storage-sqlite"]
 
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
 [workspace.dependencies]
 log = "0.4"
 env_logger = "0.11"
@@ -53,6 +60,7 @@ vfs = "0.12"
 jsonpath-rust = { version = "1.0.4" }
 maplit = "1.0.2"
 mockall = "0.14"
+derivative = "2.2.0"
 
 # 使用cargo tree -p sea-orm -i sqlx查看sea-orm依赖的版本, 因为不喜欢用sea-orm的migration改用sqlx的方式
 sea-orm = { version = "2.0.0-rc.20" }

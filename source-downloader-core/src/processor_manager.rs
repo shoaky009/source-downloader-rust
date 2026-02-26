@@ -345,6 +345,7 @@ impl ProcessorManager {
             pointer_batch_mode: config.options.pointer_batch_mode,
             item_rules: self.apply_item_grouping(config, opt, identity_filter)?,
             file_rules: self.apply_file_grouping(config, opt)?,
+            download_options: config.options.download_options.clone().into()
         })
     }
 

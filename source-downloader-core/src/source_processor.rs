@@ -5,21 +5,22 @@ use async_trait::async_trait;
 use backon::Retryable;
 use backon::{BackoffBuilder, ExponentialBuilder};
 use humantime::format_duration;
+use itertools::Itertools;
 use parking_lot::RwLock;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::FileContentStatus::{
     FileConflict, Normal, TargetExists, Undetected, VariableError,
 };
 use source_downloader_sdk::component::{
-    Downloader, FileContentFilter, FileExistsDetector, InProcessingItem, ItemContent,
-    ItemContentFilter, ProcessListener, SourceFileFilter, SourceItemFilter,
+    DownloadOptions, DownloadTask, Downloader, FileContentFilter, FileExistsDetector,
+    InProcessingItem, ItemContent, ItemContentFilter, ProcessListener, SourceFileFilter,
+    SourceFileRef, SourceItemFilter,
 };
 use source_downloader_sdk::component::{FileContent, Source};
 use source_downloader_sdk::component::{FileMover, ProcessingError};
 use source_downloader_sdk::component::{FileTagger, ProcessTask, SourceFile};
 use source_downloader_sdk::component::{ItemFileResolver, ItemPointer, SourcePointer};
 use source_downloader_sdk::component::{PatternVariables, VariableProvider};
-use source_downloader_sdk::storage::ProcessingStatus::Filtered;
 use source_downloader_sdk::storage::{
     ItemContentLite, ProcessingContent, ProcessingStatus, ProcessingStorage, ProcessorSourceState,
 };
@@ -27,9 +28,12 @@ use source_downloader_sdk::time::OffsetDateTime;
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
-use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
+use tokio::fs::OpenOptions;
+use tokio::io::AsyncWriteExt;
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 static INSTANCE_ID_GENERATOR: AtomicI64 = AtomicI64::new(0);
@@ -103,6 +107,8 @@ pub struct ProcessorOptions {
     pub file_rules: Vec<FileRule>,
     pub process_listeners: Vec<Arc<dyn ProcessListener>>,
     pub file_exists_detector: Arc<dyn FileExistsDetector>,
+    // ok
+    pub download_options: DownloadOptions,
 }
 
 #[async_trait]
@@ -124,6 +130,7 @@ impl ProcessTask for SourceProcessor {
 #[allow(dead_code, unused)]
 struct ProcessRuntime {
     pub trace_id: String,
+    pub mutex: Mutex<()>,
     source_state: ProcessorSourceState,
     source_pointer: Arc<dyn SourcePointer>,
     process_submitted_items: RwLock<HashSet<String>>,
@@ -133,6 +140,7 @@ struct ProcessRuntime {
     process_end_at: Option<Instant>,
     fetch_start_at: Option<Instant>,
     fetch_end_at: Option<Instant>,
+    cancel_items: Vec<SourceItem>,
 }
 
 enum ItemAction {
@@ -144,6 +152,7 @@ enum ItemAction {
         files: Vec<FileContent>,
     },
     // 处理失败
+    #[allow(dead_code)]
     Error(ProcessingError),
 }
 
@@ -336,10 +345,10 @@ trait Process {
             return Err(ProcessingError::non_retryable("Already processing"));
         }
         let _processing_guard = ProcessingGuard::new(&p.processing);
-        let mut p_ctx = self.init_process_context(p, start_time).await?;
-        let source_pointer = p_ctx.source_pointer.clone();
-        debug!("Fetch with pointer: {}", p_ctx.source_pointer.dump());
-        p_ctx.fetch_start_at = Some(Instant::now());
+        let mut p_rt = self.init_process_context(p, start_time).await?;
+        let source_pointer = p_rt.source_pointer.clone();
+        debug!("Fetch with pointer: {}", p_rt.source_pointer.dump());
+        p_rt.fetch_start_at = Some(Instant::now());
         let items = SourceProcessor::apply_retry(
             || async {
                 p.source
@@ -349,21 +358,22 @@ trait Process {
             "fetch-source-items",
         )
         .await?;
-        p_ctx.fetch_end_at = Some(Instant::now());
+        p_rt.fetch_end_at = Some(Instant::now());
 
         for item in items {
             let item_pointer = item.item_pointer;
             let source_item = item.source_item;
-            let item_action = self.process_item(&source_item, &p_ctx, p).await?;
+            let item_action = self.process_item(&source_item, &p_rt, p).await?;
             match &item_action {
                 ItemAction::Skip(reason) => {
-                    info!("[item-skip] {} {:?} ", reason, source_item);
+                    debug!("[item-skip] {} {:?} ", reason, source_item);
                     continue;
                 }
                 ItemAction::Error(err) => {
+                    p_rt.processed_inc();
                     // todo invoke on_item_error hooks
                     if matches!(err, ProcessingError::NonRetryable { skip: true, .. }) {
-                        info!(
+                        warn!(
                             "[item-skip-on-error] 异常为可跳过类型 {} {}",
                             err.message(),
                             source_item
@@ -377,15 +387,16 @@ trait Process {
                     break;
                 }
                 ItemAction::Success { content, files } => {
-                    self.on_item_success(p, &p_ctx, &source_item, &item_pointer, &source_pointer)
+                    p_rt.processed_inc();
+                    self.on_item_success(p, &p_rt, &source_item, &item_pointer, &source_pointer)
                         .await;
                 }
             }
         }
-        self.on_process_complete(p, &p_ctx, source_pointer.clone())
+        self.on_process_complete(p, &p_rt, source_pointer.clone())
             .await;
-        p_ctx.process_end_at = Some(Instant::now());
-        info!("[run-done] {} {}", p.name, p_ctx.summary());
+        p_rt.process_end_at = Some(Instant::now());
+        info!("[run-done] {} {}", p.name, p_rt.summary());
         Ok(())
     }
 
@@ -427,6 +438,7 @@ trait Process {
             trace_id: PROCESS_ID_GENERATOR
                 .fetch_add(i64::MIN, Ordering::Relaxed)
                 .to_string(),
+            mutex: Mutex::new(()),
             source_state,
             source_pointer,
             process_submitted_items: RwLock::new(HashSet::new()),
@@ -436,6 +448,7 @@ trait Process {
             process_end_at: None,
             fetch_start_at: None,
             fetch_end_at: None,
+            cancel_items: vec![],
         };
         Ok(p_ctx)
     }
@@ -449,12 +462,12 @@ trait Process {
         let item_hash = source_item.hashing();
         if rt.process_submitted_items.read().contains(&item_hash) {
             rt.filter_inc();
-            info!("Source item duplicated: {:?} skipped", source_item);
+            debug!("Source item duplicated: {:?} skipped", source_item);
             return Ok(ItemAction::Skip("Source item duplicated".to_string()));
         }
         rt.process_submitted_items.write().insert(item_hash);
 
-        info!("[item-start] {}", source_item);
+        debug!("[item-start] {}", source_item);
         let opt = &p.options;
         let item_rule = opt
             .item_rules
@@ -495,28 +508,57 @@ trait Process {
             )
             .await?;
 
-        let mut status = ProcessingStatus::Renamed;
+        let mut content_status = ProcessingStatus::WaitingToRename;
         let mut failure_reason: Option<String> = None;
         let item_content = ItemContent {
             source_item,
             file_contents: &file_contents,
             item_variables: &item_variables,
-            status,
+            status: content_status,
         };
         for x in &opt.item_content_filters {
             let filtered = !x.filter(&item_content).await;
             if filtered {
                 debug!("[item-content-filtered] {}", source_item);
                 rt.filter_inc();
-                status = Filtered;
+                content_status = ProcessingStatus::Filtered;
                 failure_reason = Some(format!("Filtered by: {}", x));
                 break;
             }
         }
         //  ==== 数据准备阶段结束, 开始决定是否下载
-        if status != Filtered {
+        if content_status != ProcessingStatus::Filtered {
             // 1. 根据目标文件路径更新file_content状态
             self.update_file_content_status(p, source_item, &mut file_contents);
+        }
+        let (should_download, mut content_status, replace_files) = {
+            let _guard = rt.mutex.lock().await;
+            // preoccupiedTargetPath
+            // identifyFilesToReplace
+            let (should_download, content_status) =
+                self.probe_content_status(p, rt, source_item, &file_contents, &vec![]);
+            (should_download, content_status, vec![])
+        };
+        let mut rename_times = 0;
+        if should_download {
+            self.do_download(p, source_item, &file_contents, &replace_files)
+                .await?;
+            let is_sync = !p.downloader.clone().as_async_downloader().is_ok();
+            if is_sync {
+                let movement_res = self
+                    .do_movement(p, source_item, &file_contents, &replace_files)
+                    .await;
+                let replacement_res = self
+                    .do_replacement(p, source_item, &file_contents, &replace_files)
+                    .await;
+                // 有点歧义后面重新定义
+                if movement_res.is_ok() || replacement_res.is_ok() {
+                    content_status = ProcessingStatus::Renamed;
+                    rename_times = 1;
+                } else {
+                    content_status = ProcessingStatus::Failure;
+                }
+            }
         }
 
         let content = ProcessingContent {
@@ -528,8 +570,8 @@ trait Process {
                 source_item: source_item.clone(),
                 item_variables,
             },
-            rename_times: 0,
-            status,
+            rename_times,
+            status: content_status,
             failure_reason,
             created_at: OffsetDateTime::now_utc(),
             updated_at: None,
@@ -544,10 +586,93 @@ trait Process {
         })
     }
 
-    fn update_file_content_status(
+    async fn do_movement(
+        &self,
+        _p: &SourceProcessor,
+        _source_item: &SourceItem,
+        _file_contents: &Vec<FileContent>,
+        _replace_files: &Vec<FileContent>,
+    ) -> Result<(), ProcessingError> {
+        Ok(())
+    }
+
+    async fn do_replacement(
+        &self,
+        _p: &SourceProcessor,
+        _source_item: &SourceItem,
+        _file_contents: &Vec<FileContent>,
+        _replace_files: &Vec<FileContent>,
+    ) -> Result<(), ProcessingError> {
+        Ok(())
+    }
+
+    async fn do_download(
         &self,
         p: &SourceProcessor,
         source_item: &SourceItem,
+        file_contents: &Vec<FileContent>,
+        replace_files: &Vec<FileContent>,
+    ) -> Result<(), ProcessingError> {
+        let all_files: Vec<SourceFileRef> = file_contents
+            .iter()
+            .chain(replace_files.iter())
+            .map(Into::into)
+            .collect_vec();
+
+        let (direct_files, download_files): (Vec<_>, Vec<_>) =
+            all_files.into_iter().partition(|f| f.data.is_some());
+        for direct_file in direct_files {
+            if let Some(data) = direct_file.data {
+                if let Some(parent) = direct_file.path.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
+                let mut f = OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(&direct_file.path)
+                    .await?;
+                f.write_all(data).await?;
+                f.flush().await?;
+            }
+        }
+
+        let source_headers = p.source.headers(source_item);
+        let options = &p.options.download_options;
+        let headers: Option<HashMap<&String, &String>> = match (&options.headers, &source_headers) {
+            (None, None) => None,
+            (h1, h2) => {
+                let mut merged = HashMap::new();
+                if let Some(map1) = h1 {
+                    for (k, v) in map1 {
+                        merged.insert(k, v);
+                    }
+                }
+                if let Some(map2) = h2 {
+                    for (k, v) in map2 {
+                        merged.insert(k, v);
+                    }
+                }
+                Some(merged)
+            }
+        };
+
+        let opt = DownloadTask {
+            source_item,
+            download_files: &download_files,
+            download_path: p.download_path.as_ref(),
+            category: &options.category,
+            tags: options.tags.as_deref(),
+            headers,
+        };
+        p.downloader.submit(&opt).await?;
+        Ok(())
+    }
+
+    fn update_file_content_status(
+        &self,
+        _p: &SourceProcessor,
+        _source_item: &SourceItem,
         file_contents: &mut Vec<FileContent>,
     ) {
         let conflict_indices: HashSet<usize> = {
@@ -614,6 +739,46 @@ trait Process {
             }
             x.status = Normal
         }
+    }
+
+    fn probe_content_status(
+        &self,
+        p: &SourceProcessor,
+        rt: &ProcessRuntime,
+        source_item: &SourceItem,
+        files: &Vec<FileContent>,
+        replace_files: &Vec<FileContent>,
+    ) -> (bool, ProcessingStatus) {
+        if files.is_empty() {
+            return (false, ProcessingStatus::NoFiles);
+        };
+        if !replace_files.is_empty() {
+            return (true, ProcessingStatus::WaitingToRename);
+        };
+        if rt.cancel_items.contains(source_item) {
+            return (false, ProcessingStatus::Cancelled);
+        }
+        // 预防这一批次的Item有相同的目标，并且是AsyncDownloader的情况下会重复下载
+        if files.iter().all(|x| x.status == TargetExists) {
+            warn!(
+                "Item files already exists:{}, files:{:?}",
+                source_item,
+                files.iter().map(|f| f.target_path.get()).collect_vec()
+            );
+            return (false, ProcessingStatus::TargetAlreadyExists);
+        }
+
+        let file_download_paths = files.iter().map(|f| &f.file_download_path).collect_vec();
+        let all_exists = p
+            .file_mover
+            .exists(&file_download_paths)
+            .into_iter()
+            .all(|x| x);
+        if all_exists {
+            let is_async = p.downloader.clone().as_async_downloader().is_ok();
+            return (is_async, ProcessingStatus::WaitingToRename);
+        }
+        (true, ProcessingStatus::WaitingToRename)
     }
 
     async fn resolve_files(
@@ -805,7 +970,7 @@ impl Process for NormalProcess {
         processing_content: &ProcessingContent,
         files: &Vec<FileContent>,
     ) -> Result<(), ProcessingError> {
-        info!(
+        debug!(
             "[item-done] {:?}",
             &processing_content.item_content.source_item
         );

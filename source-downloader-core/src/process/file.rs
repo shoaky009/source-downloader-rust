@@ -234,7 +234,8 @@ impl Renamer {
                 file_uri: file.source_file.download_uri.to_owned(),
                 errors,
                 status: FileContentStatus::Undetected,
-                ..Default::default()
+                target_path: OnceLock::new(),
+                data: file.source_file.data.to_owned(),
             };
         }
         if !self.trimming.is_empty() {
@@ -296,7 +297,8 @@ impl Renamer {
             file_uri: file.source_file.download_uri.to_owned(),
             errors,
             status: FileContentStatus::Undetected,
-            ..Default::default()
+            target_path: OnceLock::new(),
+            data: file.source_file.data.to_owned(),
         }
     }
 

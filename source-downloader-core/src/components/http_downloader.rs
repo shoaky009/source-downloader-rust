@@ -1,10 +1,11 @@
-use std::fmt::{Display, Formatter};
+use async_trait::async_trait;
 use serde_json::{Map, Value};
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, DownloadTask, Downloader, SdComponent,
-    SdComponentMetadata, SourceFile,
+    ComponentError, ComponentSupplier, ComponentType, DownloadTask, Downloader, ProcessingError,
+    SdComponent, SdComponentMetadata, SourceFile,
 };
-use source_downloader_sdk::SdComponent;
+use source_downloader_sdk::{SdComponent, SourceItem};
+use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
 pub struct HttpDownloaderSupplier;
@@ -40,8 +41,9 @@ impl Display for HttpDownloader {
 }
 
 #[allow(dead_code, unused)]
+#[async_trait]
 impl Downloader for HttpDownloader {
-    fn submit(&self, task: &DownloadTask) -> Result<(), ComponentError> {
+    async fn submit(&self, task: &DownloadTask) -> Result<(), ProcessingError> {
         todo!()
     }
 
@@ -49,7 +51,7 @@ impl Downloader for HttpDownloader {
         &self.path
     }
 
-    fn cancel(&self, item: &DownloadTask, files: &[SourceFile]) -> Result<(), ComponentError> {
+    async fn cancel(&self, item: &SourceItem, files: &[SourceFile]) -> Result<(), ProcessingError> {
         todo!()
     }
 }
