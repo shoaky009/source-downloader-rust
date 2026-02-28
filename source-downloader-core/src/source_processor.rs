@@ -529,7 +529,7 @@ trait Process {
         //  ==== 数据准备阶段结束, 开始决定是否下载
         if content_status != ProcessingStatus::Filtered {
             // 1. 根据目标文件路径更新file_content状态
-            self.update_file_content_status(p, source_item, &mut file_contents);
+            self.update_file_content_status(p, source_item, &mut file_contents).await;
         }
         let (should_download, mut content_status, replace_files) = {
             let _guard = rt.mutex.lock().await;
@@ -669,9 +669,9 @@ trait Process {
         Ok(())
     }
 
-    fn update_file_content_status(
+    async fn update_file_content_status(
         &self,
-        _p: &SourceProcessor,
+        p: &SourceProcessor,
         _source_item: &SourceItem,
         file_contents: &mut Vec<FileContent>,
     ) {
@@ -696,27 +696,7 @@ trait Process {
                 .collect()
         };
 
-        let exists_mapping: HashMap<&PathBuf, Option<&PathBuf>> = {
-            let mut mapping: HashMap<&PathBuf, Option<&PathBuf>> = HashMap::new();
-            // 暂时不实现
-            // let exists_results = p.file_mover.exists(&target_paths);
-            // for ((_, path, _), exists) in undetected_info.iter().zip(exists_results) {
-            //     mapping.insert(path.clone(), if exists { Some(path.clone()) } else { None });
-            // }
-
-            // file_exists_detector.exists (如果不是 SimpleFileExistsDetector)
-            // let detector_results = p.options.file_exists_detector.exists(
-            //     p.file_mover.as_ref(),
-            //     source_item,
-            //     file_contents,
-            // );
-            // for (path, exists_path) in detector_results {
-            //     // 如果 file_mover 认为已存在，detector 不能覆盖
-            //     mapping.entry(path).or_insert(exists_path);
-            // }
-            mapping
-        };
-
+        let mut exists_mapping: Option<HashMap<&PathBuf, Option<&PathBuf>>> = None;
         for (idx, x) in file_contents.iter_mut().enumerate() {
             if x.status != Undetected {
                 continue;
@@ -731,14 +711,42 @@ trait Process {
                 continue;
             }
 
+            if exists_mapping.is_none() {
+                exists_mapping = Some(self.build_exists_mapping(p, file_contents).await);
+            }
             // 3. 目标已存在
-            if let Some(Some(exists_path)) = exists_mapping.get(x.target_path()) {
+            if let Some(Some(exists_path)) = exists_mapping.unwrap().get(x.target_path()) {
                 x.status = TargetExists;
                 x.exist_target_path = Some(exists_path.to_path_buf());
                 continue;
             }
             x.status = Normal
         }
+    }
+
+    async fn build_exists_mapping(&self, p: &SourceProcessor, file_contents: &Vec<FileContent>) -> HashMap<&PathBuf, Option<&PathBuf>>{
+        let mut mapping: HashMap<&PathBuf, Option<&PathBuf>> = HashMap::new();
+        // 暂时不实现
+        let target_paths = file_contents.iter()
+            .filter(|f| f.status == Undetected)
+            .map(|f| f.target_path())
+            .collect_vec();
+        let exists_results = p.file_mover.exists(&target_paths);
+        for ((_, path, _), exists) in undetected_info.iter().zip(exists_results) {
+            mapping.insert(path.clone(), if exists { Some(path.clone()) } else { None });
+        }
+
+        file_exists_detector.exists (如果不是 SimpleFileExistsDetector)
+        let detector_results = p.options.file_exists_detector.exists(
+            p.file_mover.as_ref(),
+            source_item,
+            file_contents,
+        );
+        for (path, exists_path) in detector_results {
+            // 如果 file_mover 认为已存在，detector 不能覆盖
+            mapping.entry(path).or_insert(exists_path);
+        }
+        mapping
     }
 
     fn probe_content_status(
