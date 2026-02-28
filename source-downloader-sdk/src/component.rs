@@ -409,7 +409,7 @@ pub trait FileMover: SdComponent {
         source_file: &SourceFile,
         download_path: &str,
     ) -> Result<(), ProcessingError>;
-    fn exists(&self, path: &Vec<&PathBuf>) -> Vec<bool>;
+    fn exists(&self, path: &[&PathBuf]) -> Vec<bool>;
     fn create_directories(&self, path: &str) -> Result<(), ProcessingError>;
     fn replace(&self, item_content: &ItemContent) -> Result<(), ProcessingError>;
     fn list_files(&self, path: &str) -> Vec<String>;
@@ -470,7 +470,7 @@ pub trait FileExistsDetector: SdComponent {
         &self,
         file_mover: &'a dyn FileMover,
         source_item: &'a SourceItem,
-        file_contents: &'a Vec<FileContent>,
+        file_contents: &'a [FileContent],
     ) -> HashMap<&'a PathBuf, Option<&'a PathBuf>>;
 }
 

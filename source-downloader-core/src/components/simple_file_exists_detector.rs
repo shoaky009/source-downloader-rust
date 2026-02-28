@@ -34,7 +34,7 @@ impl ComponentSupplier for SimpleFileExistsDetectorSupplier {
 #[derive(SdComponent, Debug)]
 #[component(FileExistsDetector)]
 #[allow(dead_code, unused)]
-struct SimpleFileExistsDetector {}
+pub struct SimpleFileExistsDetector {}
 
 impl Display for SimpleFileExistsDetector {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -47,7 +47,7 @@ impl FileExistsDetector for SimpleFileExistsDetector {
         &self,
         file_mover: &'a dyn FileMover,
         _: &'a SourceItem,
-        file_contents: &'a Vec<FileContent>,
+        file_contents: &'a [FileContent],
     ) -> HashMap<&'a PathBuf, Option<&'a PathBuf>> {
         let paths: Vec<&'a PathBuf> = file_contents.iter().map(|fc| fc.target_path()).collect();
         let exists = file_mover.exists(&paths);

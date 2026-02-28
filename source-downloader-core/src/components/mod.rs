@@ -6,7 +6,7 @@ pub mod expression_item_content_filter;
 pub mod expression_item_filter;
 pub mod fixed_schedule_trigger;
 pub mod http_downloader;
-mod simple_file_exists_detector;
+pub mod simple_file_exists_detector;
 pub mod source_item_identity_filter;
 pub mod system_file_mover;
 pub mod system_file_resolver;

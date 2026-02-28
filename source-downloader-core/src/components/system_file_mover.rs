@@ -50,7 +50,7 @@ impl FileMover for SystemFileMover {
         todo!()
     }
 
-    fn exists(&self, path: &Vec<&PathBuf>) -> Vec<bool> {
+    fn exists(&self, path: &[&PathBuf]) -> Vec<bool> {
         todo!()
     }
 
