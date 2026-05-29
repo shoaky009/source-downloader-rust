@@ -24,7 +24,7 @@ Guidance for coding agents working in `/Users/shoaky/GitRepo/source-downloader-r
 
 - Rust edition: `2024`.
 - Build system: Cargo workspace at the repository root.
-- No custom `rustfmt.toml`, `.rustfmt.toml`, `clippy.toml`, `.clippy.toml`, `Makefile`, or `justfile` were found.
+- Custom `rustfmt.toml` is configured: `max_width = 90`, `chain_width = 90`, `use_small_heuristics = "Max"`. No `.clippy.toml`, `Makefile`, or `justfile` were found.
 - Release profile is size-optimized in the workspace root: `opt-level = "z"`, `lto = true`, `codegen-units = 1`, `panic = "abort"`, `strip = true`.
 
 ## Recommended Commands
@@ -67,6 +67,13 @@ Run commands from the repository root unless a package-specific working director
 - Start the web application: `cargo run -p web --bin web`
 - Show CLI flags: `cargo run -p web --bin web -- --help`
 
+### Database and Migrations
+
+- SQLx migrations are stored in `storage-sqlite/migrations/sqlite/` and are run automatically on startup via `sqlx::migrate!("migrations/sqlite")`.
+- Migration files follow the naming convention `YYYYMMDDHHMMSS_description.sql`.
+- When adding new migrations, create a new `.sql` file in the migrations directory.
+- Migrations run once per database connection initialization; the database tracks applied migrations automatically.
+
 ## Single-Test Workflow
 
 When asked to run or fix a single test, prefer this sequence:
@@ -93,11 +100,20 @@ Examples:
 - Put reusable plugin implementations in `plugins/common`.
 - Avoid leaking web concerns into core or SDK crates.
 
+## Storage and ORM Patterns
+
+- `storage-sqlite` implements the `ProcessingStorage` trait from the SDK using `sea-orm` for ORM and `sqlx` for migrations.
+- The `SeaProcessingStorage` struct wraps a `sea_orm::DatabaseConnection` and provides async methods for saving/loading processing records and processor state.
+- Implement conversions between ORM models and SDK types (e.g., `model_to_content()`) to maintain the boundary between storage concerns and domain logic.
+- Use `sea_orm::entity::prelude::*` for entity definitions and derive the necessary traits (`Clone`, `Debug`, etc.).
+- In storage implementations, map domain errors to the SDK's `Error` type with descriptive messages; avoid exposing ORM-specific error details.
+
 ## Code Style
 
 ### Formatting and Layout
 
-- Follow standard `rustfmt` output.
+- Follow standard `rustfmt` output (configured with `rustfmt.toml`).
+- Keep lines to a maximum of 90 characters wide (`max_width = 90`).
 - Use 4-space indentation.
 - Keep trailing commas in multiline structs, enums, match arms, and function calls.
 - Keep files module-focused; avoid adding unrelated edits while touching a file.
@@ -150,6 +166,10 @@ Examples:
 
 - Keep component supplier registration centralized in module aggregators like `source-downloader-core/src/components/mod.rs`.
 - New components should fit the existing supplier + component pattern already used in core and plugins.
+- Use `#[derive(SdComponent)]` with `#[component(...)]` attribute to implement the `SdComponent` trait automatically.
+  - Syntax: `#[derive(SdComponent)] #[component(TraitOne, TraitTwo)]` where the traits are the interfaces this component supplies.
+  - The macro generates `as_trait_name()` methods that return `Arc<dyn Trait>` or `Option<Arc<dyn Trait>>` for stateful components.
+  - Example: `#[derive(SdComponent)] #[component(HttpDownloader, Stateful)]` generates `as_http_downloader()` and `as_stateful()` methods.
 - Put public module declarations in `lib.rs`/`mod.rs` and keep visibility as narrow as practical.
 
 ### Concurrency and Async
