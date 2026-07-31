@@ -235,7 +235,7 @@ struct ItemProcessRuntime {
     process_submitted_items: RwLock<HashSet<String>>,
     processed_count: AtomicU32,
     filter_count: AtomicU32,
-    reserved_target_paths: RwLock<HashSet<PathBuf>>,
+    reserved_target_paths: RwLock<HashMap<PathBuf, String>>,
     cancel_items: Vec<SourceItem>,
 }
 
@@ -267,20 +267,31 @@ impl ItemProcessRuntime {
     fn filter_inc(&self) {
         self.filter_count.fetch_add(1, Ordering::Relaxed);
     }
-    fn reserve_target_paths(&self, files: &mut [FileContent]) -> bool {
+    fn reserve_target_paths(&self, item_hash: &str, files: &mut [FileContent]) -> bool {
         let mut has_conflict = false;
         let mut reserved = self.reserved_target_paths.write();
         for file in files
             .iter_mut()
             .filter(|file| matches!(file.status, Normal | TargetExists | ReadyReplace))
         {
-            if !reserved.insert(file.target_path().to_path_buf()) {
-                file.status = FileConflict;
-                file.exist_target_path = None;
-                has_conflict = true;
+            let target_path = file.target_path();
+            match reserved.get(target_path) {
+                None => {
+                    reserved.insert(target_path.to_path_buf(), item_hash.to_owned());
+                }
+                Some(owner) if owner == item_hash => {}
+                Some(_) => {
+                    file.status = FileConflict;
+                    file.exist_target_path = None;
+                    has_conflict = true;
+                }
             }
         }
         has_conflict
+    }
+
+    fn release_target_paths(&self, item_hash: &str) {
+        self.reserved_target_paths.write().retain(|_, owner| owner != item_hash);
     }
 
     fn processed_inc(&self) {
@@ -976,7 +987,7 @@ trait Process {
                 process_submitted_items: RwLock::new(HashSet::new()),
                 processed_count: AtomicU32::new(0),
                 filter_count: AtomicU32::new(0),
-                reserved_target_paths: RwLock::new(HashSet::new()),
+                reserved_target_paths: RwLock::new(HashMap::new()),
                 cancel_items: vec![],
             },
             coordinator: ProcessCoordinator {
@@ -1118,12 +1129,11 @@ trait Process {
         p: &SourceProcessor,
     ) -> Result<ItemAction, ProcessingError> {
         let item_hash = source_item.hashing();
-        if rt.process_submitted_items.read().contains(&item_hash) {
+        if !rt.process_submitted_items.write().insert(item_hash.clone()) {
             rt.filter_inc();
             debug!("Source item duplicated: {:?} skipped", source_item);
             return Ok(ItemAction::Skip("Source item duplicated".to_string()));
         }
-        rt.process_submitted_items.write().insert(item_hash);
 
         debug!("[item-start] {}", source_item);
         let opt = &p.options;
@@ -1140,7 +1150,29 @@ trait Process {
                 return Ok(ItemAction::Filtered(format!("Filtered by: {}", filter)));
             }
         }
+        let result = SourceProcessor::apply_retry(
+            || async {
+                self.process_item_attempt(source_item, &item_hash, rt, p, item_strategy)
+                    .await
+            },
+            "process-item",
+        )
+        .await;
+        if result.is_err() {
+            rt.release_target_paths(&item_hash);
+        }
+        result
+    }
 
+    async fn process_item_attempt(
+        &self,
+        source_item: &SourceItem,
+        item_hash: &str,
+        rt: &ItemProcessRuntime,
+        p: &SourceProcessor,
+        item_strategy: Option<&ItemStrategy>,
+    ) -> Result<ItemAction, ProcessingError> {
+        let opt = &p.options;
         let mut item_raw_vars = vec![];
         let variable_providers = item_strategy
             .map(|x| x.variable_providers.as_ref())
@@ -1194,7 +1226,7 @@ trait Process {
             let _guard = rt.mutex.lock().await;
             self.update_file_content_status(p, source_item, &mut file_contents).await;
             let has_reserved_target_conflict =
-                rt.reserve_target_paths(&mut file_contents);
+                rt.reserve_target_paths(item_hash, &mut file_contents);
             self.identify_files_to_replace(p, source_item, &mut file_contents).await?;
             self.probe_content_status(
                 p,
@@ -2144,6 +2176,7 @@ mod test {
         submit_count: Option<Arc<AtomicUsize>>,
         unique_files: bool,
         skippable_download_item: Option<usize>,
+        retryable_submit_failures: Option<Arc<AtomicUsize>>,
         submit_probe: Option<Arc<ParallelismProbe>>,
     }
 
@@ -2227,6 +2260,17 @@ mod test {
         async fn submit(&self, task: &DownloadTask) -> Result<(), ProcessingError> {
             if let Some(submit_count) = &self.submit_count {
                 submit_count.fetch_add(1, AtomicOrdering::AcqRel);
+            }
+            if let Some(failures) = &self.retryable_submit_failures
+                && failures
+                    .fetch_update(
+                        AtomicOrdering::AcqRel,
+                        AtomicOrdering::Acquire,
+                        |remaining| remaining.checked_sub(1),
+                    )
+                    .is_ok()
+            {
+                return Err(ProcessingError::retryable("retryable submit error"));
             }
             let sequence = task
                 .source_item
@@ -2475,6 +2519,7 @@ mod test {
         submit_count: Option<Arc<AtomicUsize>>,
         unique_files: bool,
         skippable_download_item: Option<usize>,
+        retryable_submit_failures: Option<Arc<AtomicUsize>>,
         fail_next_state_save: bool,
         submit_probe: Option<Arc<ParallelismProbe>>,
     }
@@ -2490,6 +2535,7 @@ mod test {
                 submit_count: None,
                 unique_files: false,
                 skippable_download_item: None,
+                retryable_submit_failures: None,
                 fail_next_state_save: false,
                 submit_probe: None,
             }
@@ -2523,6 +2569,7 @@ mod test {
             submit_count: settings.submit_count,
             unique_files: settings.unique_files,
             skippable_download_item: settings.skippable_download_item,
+            retryable_submit_failures: settings.retryable_submit_failures,
             submit_probe: settings.submit_probe,
         });
         let storage = Arc::new(PointerStorage {
@@ -2856,6 +2903,29 @@ mod test {
 
         assert_eq!(probe.max_active.load(AtomicOrdering::Acquire), 1);
         assert_eq!(storage.saved_pointers(), vec![json!(1), json!(2)]);
+    }
+
+    #[tokio::test]
+    async fn process_item_retries_retryable_download_errors() {
+        let submit_count = Arc::new(AtomicUsize::new(0));
+        let retryable_failures = Arc::new(AtomicUsize::new(1));
+        let (processor, storage) = pointer_test_processor_with_settings(
+            false,
+            1,
+            false,
+            PointerTestSettings {
+                unique_files: true,
+                submit_count: Some(submit_count.clone()),
+                retryable_submit_failures: Some(retryable_failures.clone()),
+                ..Default::default()
+            },
+        );
+
+        processor.run().await.unwrap();
+
+        assert_eq!(retryable_failures.load(AtomicOrdering::Acquire), 0);
+        assert_eq!(submit_count.load(AtomicOrdering::Acquire), 2);
+        assert_eq!(storage.saved_pointers(), vec![json!(1)]);
     }
 
     #[tokio::test]
