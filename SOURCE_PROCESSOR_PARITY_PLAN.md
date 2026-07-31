@@ -81,9 +81,10 @@ Rules:
   - Rust had no `VariableReplacer` implementation, so add Kotlin-equivalent `full-width`, `regex`, and `windows-path` built-ins.
   - Suggested commit: `feat: wire variable replacers into renamer`
 
-- [ ] **Configure Trimmer components and path-name length**
+- [x] **Configure Trimmer components and path-name length**
   - SDK and Renamer already contain Trimmer support, but `trimming` is always empty and path length is fixed at 255.
   - Add `trimming` and `path-name-length-limit` config and resolve Trimmer components through ProcessorManager.
+  - Rust had no `Trimmer` implementation, so add Kotlin-equivalent `force` and `regex` built-ins.
   - Suggested commit: `feat: configure variable trimming and path limits`
 
 - [ ] **Implement Variable Process Chain**

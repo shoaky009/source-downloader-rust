@@ -68,6 +68,10 @@ pub struct ProcessorOptionConfig {
     #[serde(skip_serializing_if = "is_default")]
     pub variable_replacers: Vec<VariableReplacerConfig>,
     #[serde(skip_serializing_if = "is_default")]
+    pub trimming: Vec<TrimmingConfig>,
+    #[serde(skip_serializing_if = "is_path_name_length_limit_default")]
+    pub path_name_length_limit: usize,
+    #[serde(skip_serializing_if = "is_default")]
     pub item_filters: Vec<String>,
     #[serde(skip_serializing_if = "is_default")]
     pub item_content_filters: Vec<String>,
@@ -165,6 +169,13 @@ impl Default for ListenerMode {
     }
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct TrimmingConfig {
+    pub variable_name: String,
+    pub trimmers: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub struct VariableReplacerConfig {
@@ -245,6 +256,10 @@ impl<'de> Deserialize<'de> for ListenerConfig {
     }
 }
 
+fn is_path_name_length_limit_default(value: &usize) -> bool {
+    *value == ProcessorOptionConfig::default().path_name_length_limit
+}
+
 fn is_rename_times_threshold_default(value: &u32) -> bool {
     *value == ProcessorOptionConfig::default().rename_times_threshold
 }
@@ -276,6 +291,8 @@ impl Default for ProcessorOptionConfig {
             filename_pattern: "".to_string(),
             variable_providers: vec![],
             variable_replacers: vec![],
+            trimming: vec![],
+            path_name_length_limit: 255,
             item_filters: vec![],
             item_content_filters: vec![],
             item_expression_exclusions: vec![],
@@ -770,6 +787,29 @@ mod test {
             HashSet::from(["item.title".to_owned(), "file.name".to_owned()]),
             config.variable_replacers[1].keys.clone().unwrap()
         );
+    }
+
+    #[test]
+    fn trimming_options_match_kotlin_config() {
+        let config = serde_json::from_str::<ProcessorOptionConfig>(
+            r#"{
+                "trimming": [{
+                    "variable-name": "title",
+                    "trimmers": ["regex:remove-tags", "force"]
+                }],
+                "path-name-length-limit": 128
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(1, config.trimming.len());
+        assert_eq!("title", config.trimming[0].variable_name);
+        assert_eq!(
+            vec!["regex:remove-tags".to_owned(), "force".to_owned()],
+            config.trimming[0].trimmers
+        );
+        assert_eq!(128, config.path_name_length_limit);
+        assert_eq!(255, ProcessorOptionConfig::default().path_name_length_limit);
     }
 
     #[test]

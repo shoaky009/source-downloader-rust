@@ -18,7 +18,7 @@ use parking_lot::RwLock;
 use source_downloader_sdk::component::{
     ComponentError, ComponentId, ComponentRootType, FileContentFilter, FileTagger,
     ItemContentFilter, ProcessListener, SdComponent, SourceFileFilter, SourceItemFilter,
-    VariableProvider, VariableReplacer,
+    Trimmer, VariableProvider, VariableReplacer,
 };
 use source_downloader_sdk::storage::ProcessingStorage;
 use std::collections::{HashMap, HashSet};
@@ -210,9 +210,26 @@ impl ProcessorManager {
             }));
         }
 
+        let mut trimming = HashMap::with_capacity(config.options.trimming.len());
+        for trimming_config in &config.options.trimming {
+            let mut trimmers: Vec<Arc<dyn Trimmer>> =
+                Vec::with_capacity(trimming_config.trimmers.len());
+            for trimmer_id in &trimming_config.trimmers {
+                let component_id =
+                    ComponentRootType::Trimmer.parse_component_id(trimmer_id);
+                trimmers.push(
+                    self.get_component_for_processor(&component_id, &config.name)?
+                        .as_trimmer()?,
+                );
+            }
+            trimming.insert(trimming_config.variable_name.clone(), trimmers);
+        }
+
         Ok(Renamer {
             variable_error_strategy: config.options.variable_error_strategy,
             variable_replacers,
+            trimming,
+            path_name_length_limit: config.options.path_name_length_limit,
             ..Renamer::default()
         })
     }
@@ -672,8 +689,8 @@ mod test {
     use crate::component_manager::ComponentManager;
     use crate::components::get_build_in_component_supplier;
     use crate::config::{
-        FileRuleConfig, ProcessorConfig, ProcessorOptionConfig, VariableReplacerConfig,
-        YamlConfigOperator,
+        FileRuleConfig, ProcessorConfig, ProcessorOptionConfig, TrimmingConfig,
+        VariableReplacerConfig, YamlConfigOperator,
     };
     use crate::processor_manager::ProcessorManager;
     use source_downloader_sdk::component::ComponentRootType;
@@ -904,6 +921,11 @@ mod test {
                     id: "windows-path".to_owned(),
                     keys: Some(HashSet::from(["item.title".to_owned()])),
                 }],
+                trimming: vec![TrimmingConfig {
+                    variable_name: "title".to_owned(),
+                    trimmers: vec!["force".to_owned()],
+                }],
+                path_name_length_limit: 42,
                 ..Default::default()
             },
             category: None,
@@ -918,8 +940,18 @@ mod test {
 
         assert_eq!("series：01", variables.variables["item"]["title"]);
         assert_eq!("video/mp4", variables.variables["item"]["contentType"]);
+        assert_eq!(42, renamer.path_name_length_limit);
+        assert_eq!(1, renamer.trimming["title"].len());
         let component_id =
             ComponentRootType::VariableReplacer.parse_component_id("windows-path");
+        let trimmer_id = ComponentRootType::Trimmer.parse_component_id("force");
+        assert!(
+            component_manager
+                .get_component(&trimmer_id)
+                .unwrap()
+                .get_refs()
+                .contains(name)
+        );
         assert!(
             component_manager
                 .get_component(&component_id)

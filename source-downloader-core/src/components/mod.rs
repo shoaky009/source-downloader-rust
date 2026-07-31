@@ -12,6 +12,7 @@ pub mod source_item_identity_filter;
 pub mod system_file_mover;
 pub mod system_file_resolver;
 pub mod system_file_source;
+pub mod trimmers;
 pub mod variable_replacers;
 
 #[allow(dead_code)]
@@ -27,6 +28,8 @@ pub fn get_build_in_component_supplier() -> Vec<Arc<dyn ComponentSupplier>> {
         Arc::new(http_downloader::SUPPLIER),
         Arc::new(system_file_mover::SUPPLIER),
         Arc::new(simple_file_exists_detector::SUPPLIER),
+        Arc::new(trimmers::FORCE_SUPPLIER),
+        Arc::new(trimmers::REGEX_SUPPLIER),
         Arc::new(variable_replacers::FULL_WIDTH_SUPPLIER),
         Arc::new(variable_replacers::REGEX_SUPPLIER),
         Arc::new(variable_replacers::WINDOWS_PATH_SUPPLIER),

@@ -104,6 +104,11 @@ impl RenameVariables {
             all
         })
     }
+
+    fn replace_trim_variables(&mut self, trim_variables: HashMap<String, String>) {
+        self.trim_variables = trim_variables;
+        self.all_variables_cache.take();
+    }
 }
 
 impl Default for RenameVariables {
@@ -251,7 +256,7 @@ impl Renamer {
                     &variables.variables,
                     &mut trim_vars,
                 );
-                variables.trim_variables = trim_vars;
+                variables.replace_trim_variables(trim_vars);
                 filename_result = self.target_filename(&file, &variables);
             }
 
@@ -279,7 +284,7 @@ impl Renamer {
                 }
             }
             if needs_recalc_dir {
-                variables.trim_variables = current_trim_vars;
+                variables.replace_trim_variables(current_trim_vars);
                 dir_result = self.save_directory_path(&file, &variables);
             }
         }
@@ -624,6 +629,22 @@ mod tests {
         }
     }
 
+    #[derive(Debug, source_downloader_sdk::SdComponent)]
+    #[component(Trimmer)]
+    struct TestForceTrimmer;
+
+    impl Trimmer for TestForceTrimmer {
+        fn trim(&self, value: String, expect_size: usize) -> String {
+            value.chars().take(expect_size).collect()
+        }
+    }
+
+    impl Display for TestForceTrimmer {
+        fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("test-force")
+        }
+    }
+
     static DEFAULT_RENAMER: LazyLock<Renamer> = LazyLock::new(|| Renamer::default());
     static SOURCE_SAVE_PATH: LazyLock<&Path> =
         LazyLock::new(|| Path::new("src/test/resources/target"));
@@ -722,6 +743,37 @@ mod tests {
             json!("file.originalLayout=season"),
             file_variables.variables["file"]["originalLayout"]
         );
+    }
+
+    #[test]
+    fn trimming_applies_to_filename_and_directory_segments() {
+        let variables = hashmap! {
+            "title".to_owned() => "abcdefghijklmnop".to_owned(),
+        };
+        let filename_pattern = PathPattern::new_cel("{title}".to_owned());
+        let save_path_pattern = PathPattern::new_cel("{title}".to_owned());
+        let raw = RawFileContent {
+            variables: &variables,
+            filename_pattern: &filename_pattern,
+            save_path_pattern: &save_path_pattern,
+            ..Default::default()
+        };
+        let renamer = Renamer {
+            trimming: hashmap! {
+                "title".to_owned() => vec![Arc::new(TestForceTrimmer) as Arc<dyn Trimmer>],
+            },
+            path_name_length_limit: 10,
+            ..DEFAULT_RENAMER.clone()
+        };
+
+        let content = renamer.create_file_content(
+            &SourceItem::default(),
+            raw,
+            &RenameVariables::default(),
+        );
+
+        assert_eq!("abcdef.txt", content.target_filename);
+        assert_eq!(SOURCE_SAVE_PATH.join("abcdefghij"), content.target_save_path);
     }
 
     #[test]
