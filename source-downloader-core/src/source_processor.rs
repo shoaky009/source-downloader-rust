@@ -1405,7 +1405,7 @@ trait Process {
         let mut result: Vec<FileContent> = vec![];
 
         let item_var =
-            p.renamer.item_rename_variables(source_item, item_variables.clone());
+            p.renamer.item_rename_variables(source_item, item_variables);
 
         let empty_vars = &PatternVariables::new();
         let file_count = relative_files.len();

@@ -545,7 +545,11 @@ impl Renamer {
     }
 
     // TODO 未完成
-    pub fn item_rename_variables(&self, item: &SourceItem, _: PatternVariables) -> RenameVariables {
+    pub fn item_rename_variables(
+        &self,
+        item: &SourceItem,
+        _: &PatternVariables,
+    ) -> RenameVariables {
         // val vars = mutableMapOf<String, Any>()
         // val replacedItemVars = itemVariables.variables().replaceVariables()
         // vars.putAll(replacedItemVars)
@@ -937,7 +941,8 @@ mod tests {
             attrs: serde_json::from_str(r#"{"creatorId": "Idk111"}"#).unwrap(),
             ..Default::default()
         };
-        let item_vars = DEFAULT_RENAMER.item_rename_variables(&item, hashmap! {});
+        let item_vars =
+            DEFAULT_RENAMER.item_rename_variables(&item, &hashmap! {});
         let raw = RawFileContent {
             variables: &hashmap! {
                 "date".to_owned() => "2022-01-01".to_owned(),
