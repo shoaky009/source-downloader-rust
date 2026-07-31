@@ -106,10 +106,11 @@ Rules:
   - Prefer an immediate first check unless an explicit initial-delay option is justified.
   - Suggested commit: `fix: run initial async rename check promptly`
 
-- [ ] **Add process-scoped component resource lifecycle if needed**
+- [x] **Add process-scoped component resource lifecycle if needed**
   - Kotlin acquires and releases Source, ItemFileResolver, Downloader, and FileMover around a process.
   - Rust `Stateful` only exposes state details and has no acquire/release contract.
   - Do not introduce this abstraction until a real component needs resource sleeping or reference counting.
+  - Reviewed current components: no Source, ItemFileResolver, Downloader, or FileMover requires process-scoped acquire/release, so no new lifecycle interface is warranted.
 
 ### Adjacent blocker outside SourceProcessor
 
