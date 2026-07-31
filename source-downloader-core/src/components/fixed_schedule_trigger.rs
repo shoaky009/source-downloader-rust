@@ -4,6 +4,7 @@ use source_downloader_sdk::component::{
     SdComponentMetadata, Stateful, TaskRegistry, Trigger,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
+use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, Mutex};
 
@@ -67,6 +68,22 @@ impl FixedScheduleTrigger {
             worker_handle: Mutex::new(None),
         }
     }
+
+    async fn run_tasks_once(tasks: Vec<Arc<dyn ProcessTask>>) {
+        let mut groups: HashMap<Option<String>, Vec<Arc<dyn ProcessTask>>> =
+            HashMap::new();
+        for task in tasks {
+            groups.entry(task.group()).or_default().push(task);
+        }
+
+        futures_util::future::join_all(groups.into_values().map(|tasks| async move {
+            for task in tasks {
+                let result = task.run().await;
+                debug!("Task {} finished with result {:?}", task.name(), result);
+            }
+        }))
+        .await;
+    }
 }
 
 impl Stateful for FixedScheduleTrigger {
@@ -101,13 +118,7 @@ impl Trigger for FixedScheduleTrigger {
 
             loop {
                 interval_timer.tick().await;
-                for task in tasks.read().clone() {
-                    //TODO grouping tasks, then run them in parallel await task.execute()
-                    tokio::spawn(async move {
-                        let result = task.run().await;
-                        debug!("Task {} finished with result {:?}", task.name(), result);
-                    });
-                }
+                tokio::spawn(Self::run_tasks_once(tasks.read().clone()));
             }
         });
 
@@ -205,6 +216,83 @@ mod tests {
         }
     }
 
+    struct GroupedTask {
+        group: &'static str,
+        group_active: Arc<AtomicUsize>,
+        group_max_active: Arc<AtomicUsize>,
+        global_active: Arc<AtomicUsize>,
+        global_max_active: Arc<AtomicUsize>,
+        barrier: Arc<tokio::sync::Barrier>,
+    }
+
+    #[async_trait]
+    impl ProcessTask for GroupedTask {
+        async fn run(&self) -> Result<(), String> {
+            let group_active = self.group_active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.group_max_active.fetch_max(group_active, Ordering::SeqCst);
+            let global_active = self.global_active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.global_max_active.fetch_max(global_active, Ordering::SeqCst);
+            self.barrier.wait().await;
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            self.global_active.fetch_sub(1, Ordering::SeqCst);
+            self.group_active.fetch_sub(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn name(&self) -> &str {
+            self.group
+        }
+
+        fn group(&self) -> Option<String> {
+            Some(self.group.to_owned())
+        }
+    }
+
+    #[tokio::test]
+    async fn tasks_run_sequentially_within_groups_and_groups_run_concurrently() {
+        let global_active = Arc::new(AtomicUsize::new(0));
+        let global_max_active = Arc::new(AtomicUsize::new(0));
+        let first_group_active = Arc::new(AtomicUsize::new(0));
+        let first_group_max_active = Arc::new(AtomicUsize::new(0));
+        let second_group_active = Arc::new(AtomicUsize::new(0));
+        let second_group_max_active = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let make_task = |group, group_active, group_max_active| {
+            Arc::new(GroupedTask {
+                group,
+                group_active,
+                group_max_active,
+                global_active: global_active.clone(),
+                global_max_active: global_max_active.clone(),
+                barrier: barrier.clone(),
+            }) as Arc<dyn ProcessTask>
+        };
+        let tasks = vec![
+            make_task(
+                "first",
+                first_group_active.clone(),
+                first_group_max_active.clone(),
+            ),
+            make_task(
+                "second",
+                second_group_active.clone(),
+                second_group_max_active.clone(),
+            ),
+            make_task("first", first_group_active, first_group_max_active.clone()),
+            make_task("second", second_group_active, second_group_max_active.clone()),
+        ];
+
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            FixedScheduleTrigger::run_tasks_once(tasks),
+        )
+        .await
+        .expect("task groups did not make progress");
+
+        assert_eq!(first_group_max_active.load(Ordering::SeqCst), 1);
+        assert_eq!(second_group_max_active.load(Ordering::SeqCst), 1);
+        assert_eq!(global_max_active.load(Ordering::SeqCst), 2);
+    }
     #[test]
     fn test_add_remove_task() {
         // 测试基本的增删逻辑，不涉及异步运行

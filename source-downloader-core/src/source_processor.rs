@@ -132,7 +132,7 @@ impl ProcessTask for SourceProcessor {
     }
 
     fn group(&self) -> Option<String> {
-        self.source.group()
+        self.options.task_group.clone()
     }
 }
 
@@ -2232,6 +2232,14 @@ mod test {
             },
         );
         (processor, storage)
+    }
+
+    #[test]
+    fn process_task_uses_configured_task_group() {
+        let (mut processor, _) = pointer_test_processor(false, 0, false);
+        processor.options.task_group = Some("configured-group".to_owned());
+
+        assert_eq!(processor.group().as_deref(), Some("configured-group"));
     }
 
     #[tokio::test]

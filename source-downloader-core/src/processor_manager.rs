@@ -135,7 +135,7 @@ impl ProcessorManager {
             .get_component_for_processor(&file_mover_id, &config.name)?
             .as_file_mover()?;
 
-        let b = config
+        let task_group = config
             .options
             .task_group
             .clone()
@@ -152,7 +152,7 @@ impl ProcessorManager {
             self.processing_storage.to_owned(),
             config.category.to_owned(),
             config.tags.to_owned(),
-            self.create_options(&config, b)?,
+            self.create_options(&config, task_group)?,
         ));
         let instance_id = processor.instance_id();
         processor.start_rename_task();
