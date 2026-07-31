@@ -158,8 +158,10 @@ impl ListenerContext {
     }
 
     fn add(&mut self, content: ProcessingContent, files: Vec<FileContent>) {
-        self.processed_items.push(content.item_content.source_item.clone());
-        self.contents.insert(content.item_hash.to_owned(), (content, files));
+        self.processed_items
+            .push(content.item_content.source_item.clone());
+        self.contents
+            .insert(content.item_hash.to_owned(), (content, files));
     }
 }
 
@@ -217,8 +219,11 @@ enum ItemAction {
     Filtered(String),
     // 处理成功
     Success {
-        content: ProcessingContent,
         files: Vec<FileContent>,
+        item_variables: PatternVariables,
+        rename_times: u32,
+        status: ProcessingStatus,
+        failure_reason: Option<String>,
     },
     // 处理失败
     #[allow(dead_code)]
@@ -656,7 +661,6 @@ trait Process {
         &self,
         _p: &SourceProcessor,
         _ctx: &mut ProcessRuntime,
-        _source_item: &SourceItem,
         _item_pointer: &dyn ItemPointer,
         _content: ProcessingContent,
         _files: Vec<FileContent>,
@@ -689,10 +693,10 @@ trait Process {
         for item in items {
             let item_pointer = item.item_pointer;
             let source_item = item.source_item;
-            let item_action = match self.process_item(&source_item, &p_rt, p).await {
-                Ok(action) => action,
-                Err(error) => ItemAction::Error(error),
-            };
+            let item_action = self
+                .process_item(&source_item, &p_rt, p)
+                .await
+                .unwrap_or_else(|error| ItemAction::Error(error));
             match item_action {
                 ItemAction::Skip(reason) => {
                     debug!("[item-skip] {} {:?} ", reason, source_item);
@@ -727,12 +731,57 @@ trait Process {
                     );
                     break;
                 }
-                ItemAction::Success { content, files } => {
+                ItemAction::Success {
+                    files,
+                    item_variables,
+                    rename_times,
+                    status,
+                    failure_reason,
+                } => {
+                    let content = ProcessingContent {
+                        id: None,
+                        processor_name: p.name.clone(),
+                        item_hash: source_item.hashing(),
+                        item_identity: source_item.identity.clone(),
+                        item_content: ItemContentLite {
+                            source_item,
+                            item_variables,
+                        },
+                        rename_times,
+                        status,
+                        failure_reason,
+                        created_at: OffsetDateTime::now_utc(),
+                        updated_at: None,
+                    };
+                    if let Err(err) =
+                        self.on_item_process_complete(p, &content, &files).await
+                    {
+                        p_rt.processed_inc();
+                        p_rt.listener_context.has_error = true;
+                        let source_item = &content.item_content.source_item;
+                        self.on_item_error(p, &mut p_rt, source_item, &err)
+                            .await;
+                        if matches!(
+                            err,
+                            ProcessingError::NonRetryable { skip: true, .. }
+                        ) {
+                            warn!(
+                                "[item-skip-on-error] 异常为可跳过类型 {} {}",
+                                err.message(),
+                                source_item
+                            );
+                            continue;
+                        }
+                        warn!(
+                            "[item-non-retryable-error] 异常为不可跳过类型 {}, 退出本次触发处理",
+                            err.message()
+                        );
+                        break;
+                    }
                     p_rt.processed_inc();
                     self.on_item_success(
                         p,
                         &mut p_rt,
-                        &source_item,
                         item_pointer.as_ref(),
                         content,
                         files,
@@ -1023,25 +1072,13 @@ trait Process {
             }
         }
 
-        let content = ProcessingContent {
-            id: None,
-            processor_name: p.name.clone(),
-            item_hash: source_item.hashing(),
-            item_identity: source_item.identity.clone(),
-            item_content: ItemContentLite {
-                source_item: source_item.clone(),
-                item_variables,
-            },
+        Ok(ItemAction::Success {
+            files: file_contents,
+            item_variables,
             rename_times,
             status: content_status,
             failure_reason,
-            created_at: OffsetDateTime::now_utc(),
-            updated_at: None,
-        };
-
-        self.on_item_process_complete(p, &content, &file_contents).await?;
-
-        Ok(ItemAction::Success { files: file_contents, content })
+        })
     }
 
     async fn do_movement(
@@ -1556,22 +1593,28 @@ impl Process for NormalProcess {
         &self,
         p: &SourceProcessor,
         ctx: &mut ProcessRuntime,
-        source_item: &SourceItem,
         item_pointer: &dyn ItemPointer,
         content: ProcessingContent,
         files: Vec<FileContent>,
     ) -> Result<(), ProcessingError> {
-        p.advance_source_pointer(ctx, source_item, item_pointer).await?;
+        p.advance_source_pointer(
+            ctx,
+            &content.item_content.source_item,
+            item_pointer,
+        )
+        .await?;
+        let item_hash = content.item_hash.to_owned();
         ctx.listener_context.add(content, files);
-        let completed = ctx
+        let (content, files) = ctx
             .listener_context
-            .get_item_content(source_item)
+            .contents
+            .get(&item_hash)
             .expect("completed item was just inserted");
         let item_content = ItemContent {
-            source_item: completed.source_item,
-            file_contents: completed.file_contents,
-            item_variables: completed.item_variables,
-            status: *completed.status,
+            source_item: &content.item_content.source_item,
+            file_contents: files,
+            item_variables: &content.item_content.item_variables,
+            status: content.status,
         };
         for listener in &p.options.process_listeners {
             listener.on_item_success(&ctx.listener_context, &item_content);
