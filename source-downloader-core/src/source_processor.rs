@@ -405,6 +405,10 @@ impl SourceProcessor {
         Reprocess::new(self, content).execute(self).await
     }
 
+    pub async fn run_items(&self, items: Vec<SourceItem>) -> Result<(), ProcessingError> {
+        FixedItemProcess { items }.execute(self).await
+    }
+
     pub fn start_rename_task(self: &Arc<Self>) {
         if self.async_downloader.is_none() {
             return;
@@ -1993,6 +1997,64 @@ impl Process for Reprocess {
     }
 }
 
+struct FixedItemProcess {
+    items: Vec<SourceItem>,
+}
+
+impl Process for FixedItemProcess {
+    fn select_item_filter<'a>(
+        &'a self,
+        processor: &'a SourceProcessor,
+    ) -> &'a Vec<Arc<dyn SourceItemFilter>> {
+        &processor.options.item_filters
+    }
+
+    async fn fetch_items(
+        &self,
+        _: &SourceProcessor,
+        _: &dyn SourcePointer,
+    ) -> Result<Vec<PointedItem>, ProcessingError> {
+        Ok(self
+            .items
+            .iter()
+            .cloned()
+            .map(|source_item| PointedItem {
+                source_item,
+                item_pointer: Arc::new(EmptyPointer),
+            })
+            .collect())
+    }
+
+    async fn on_process_complete(
+        &self,
+        _: &SourceProcessor,
+        _: &ProcessRuntime,
+    ) -> Result<(), ProcessingError> {
+        Ok(())
+    }
+
+    async fn on_item_process_complete(
+        &self,
+        processor: &SourceProcessor,
+        processing_content: &ProcessingContent,
+        files: &Vec<FileContent>,
+    ) -> Result<(), ProcessingError> {
+        if !processor.options.save_processing_content {
+            return Ok(());
+        }
+        let content_id = processor
+            .processing_storage
+            .save_processing_content(processing_content)
+            .await
+            .map_err(|error| ProcessingError::non_retryable(error.message))?;
+        processor
+            .processing_storage
+            .save_file_contents(content_id, encode_files_and_compress(files)?)
+            .await
+            .map_err(|error| ProcessingError::non_retryable(error.message))
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -2562,6 +2624,39 @@ mod test {
         assert_eq!(saved_contents[0].item_content.source_item.title, "item-7");
         assert_eq!(saved_contents[0].rename_times, 0);
         assert_eq!(submit_count.load(AtomicOrdering::Acquire), 1);
+        assert!(storage.saved_pointers().is_empty());
+    }
+
+    #[tokio::test]
+    async fn fixed_item_process_uses_only_supplied_items() {
+        let submit_count = Arc::new(AtomicUsize::new(0));
+        let (mut processor, storage) = pointer_test_processor_with_settings(
+            false,
+            0,
+            false,
+            PointerTestSettings {
+                unique_files: true,
+                submit_count: Some(submit_count.clone()),
+                ..Default::default()
+            },
+        );
+        processor.options.save_processing_content = true;
+        let items = vec![
+            SourceItem { title: "item-8".to_owned(), ..Default::default() },
+            SourceItem { title: "item-9".to_owned(), ..Default::default() },
+        ];
+
+        processor.run_items(items).await.unwrap();
+
+        let saved_contents = storage.saved_contents.lock();
+        assert_eq!(
+            saved_contents
+                .iter()
+                .map(|content| content.item_content.source_item.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["item-8", "item-9"]
+        );
+        assert_eq!(submit_count.load(AtomicOrdering::Acquire), 2);
         assert!(storage.saved_pointers().is_empty());
     }
     #[tokio::test]
