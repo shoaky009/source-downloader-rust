@@ -113,9 +113,8 @@ Rules:
   - Reviewed current components: no Source, ItemFileResolver, Downloader, or FileMover requires process-scoped acquire/release, so no new lifecycle interface is warranted.
 
 ### Adjacent blocker outside SourceProcessor
-
-- [ ] **Implement the built-in HTTP downloader**
-  - `source-downloader-core/src/components/http_downloader.rs` still has `todo!()` in metadata, submit, and cancel.
+- [x] **Implement the built-in HTTP downloader**
+  - Implements bounded parallel streaming downloads, request headers, HTTP error classification, partial-file cleanup, and cancellation.
   - Keep this separate from SourceProcessor commits.
 
 ## Known non-goals
