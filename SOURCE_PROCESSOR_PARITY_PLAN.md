@@ -47,7 +47,7 @@ Rules:
     - at least one finished download emits one Batch completion.
   - Suggested commit: `fix: defer async downloader listeners until rename`
 
-- [ ] **Do not persist ItemContentFilter-filtered records**
+- [x] **Do not persist ItemContentFilter-filtered records**
   - Problem: Rust saves `ProcessingStatus::Filtered` content and files; the identity filter can then suppress the Item forever.
   - Kotlin reference: `SourceProcessor.kt:1080-1087`.
   - Acceptance:

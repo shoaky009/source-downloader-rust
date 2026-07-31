@@ -1925,7 +1925,9 @@ impl Process for NormalProcess {
         files: &Vec<FileContent>,
     ) -> Result<(), ProcessingError> {
         debug!("[item-done] {:?}", &processing_content.item_content.source_item);
-        if !p.options.save_processing_content {
+        if processing_content.status == ProcessingStatus::Filtered
+            || !p.options.save_processing_content
+        {
             return Ok(());
         }
         let content_id = p
@@ -2553,6 +2555,24 @@ mod test {
     }
 
     #[derive(Debug)]
+    struct RejectAllContent;
+
+    impl Display for RejectAllContent {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "reject-all-content")
+        }
+    }
+
+    impl source_downloader_sdk::component::SdComponent for RejectAllContent {}
+
+    #[async_trait]
+    impl ItemContentFilter for RejectAllContent {
+        async fn filter(&self, _: &ItemContent) -> bool {
+            false
+        }
+    }
+
+    #[derive(Debug)]
     struct ReplaceInFlight;
 
     impl Display for ReplaceInFlight {
@@ -2953,6 +2973,32 @@ mod test {
         );
         assert_eq!(submit_count.load(AtomicOrdering::Acquire), 2);
         assert!(storage.saved_pointers().is_empty());
+    }
+
+    #[tokio::test]
+    async fn item_content_filtered_records_are_not_persisted() {
+        let (mut processor, storage) = pointer_test_processor(false, 1, false);
+        processor.options.save_processing_content = true;
+        processor.options.item_content_filters = vec![Arc::new(RejectAllContent)];
+        processor.async_downloader = None;
+        let each_listener = Arc::new(RecordingListener::default());
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Each, vec![each_listener.clone()]);
+        let batch_listener = Arc::new(RecordingListener::default());
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Batch, vec![batch_listener.clone()]);
+
+        processor.run().await.unwrap();
+
+        assert!(storage.saved_contents.lock().is_empty());
+        assert_eq!(storage.saved_pointers(), vec![json!(1)]);
+        assert_eq!(each_listener.successes.load(AtomicOrdering::Relaxed), 1);
+        assert!(each_listener.context_visible.load(AtomicOrdering::Relaxed));
+        assert_eq!(batch_listener.completed_items.lock().as_slice(), ["item-1"]);
     }
     #[tokio::test]
     async fn dry_run_returns_results_without_side_effects() {
