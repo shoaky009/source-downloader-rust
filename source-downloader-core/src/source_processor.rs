@@ -22,10 +22,12 @@ use source_downloader_sdk::component::{
     ItemContentFilter, ProcessContext, ProcessListener, ProcessorInfo, SourceFileFilter,
     SourceFileRef, SourceItemFilter,
 };
+use source_downloader_sdk::component::{
+    EmptyPointer, ItemFileResolver, ItemPointer, PointedItem, SourcePointer,
+};
 use source_downloader_sdk::component::{FileContent, Source};
 use source_downloader_sdk::component::{FileMover, ProcessingError};
 use source_downloader_sdk::component::{FileTagger, ProcessTask, SourceFile};
-use source_downloader_sdk::component::{ItemFileResolver, ItemPointer, SourcePointer};
 use source_downloader_sdk::component::{PatternVariables, VariableProvider};
 use source_downloader_sdk::serde_json::Value;
 use source_downloader_sdk::storage::{
@@ -390,7 +392,18 @@ impl SourceProcessor {
         Ok(process.into_results())
     }
 
-    pub async fn reprocess(&self) {}
+    pub async fn reprocess(
+        &self,
+        content: ProcessingContent,
+    ) -> Result<(), ProcessingError> {
+        if content.processor_name != self.name {
+            return Err(ProcessingError::non_retryable(format!(
+                "Content {:?} does not belong to processor {}",
+                content.id, self.name
+            )));
+        }
+        Reprocess::new(self, content).execute(self).await
+    }
 
     pub fn start_rename_task(self: &Arc<Self>) {
         if self.async_downloader.is_none() {
@@ -677,6 +690,23 @@ trait Process {
         p: &'a SourceProcessor,
     ) -> &'a Vec<Arc<dyn SourceItemFilter>>;
 
+    async fn fetch_items(
+        &self,
+        processor: &SourceProcessor,
+        source_pointer: &dyn SourcePointer,
+    ) -> Result<Vec<PointedItem>, ProcessingError> {
+        SourceProcessor::apply_retry(
+            || async {
+                processor
+                    .source
+                    .fetch(source_pointer, processor.options.fetch_limit)
+                    .await
+            },
+            "fetch-source-items",
+        )
+        .await
+    }
+
     async fn on_process_complete(
         &self,
         p: &SourceProcessor,
@@ -734,18 +764,7 @@ trait Process {
         let mut p_rt = self.init_process_context(p, start_time).await?;
         debug!("Fetch with pointer: {}", p_rt.coordinator.source_pointer.dump());
         p_rt.fetch_start_at = Some(Instant::now());
-        let items = SourceProcessor::apply_retry(
-            || async {
-                p.source
-                    .fetch(
-                        p_rt.coordinator.source_pointer.as_ref(),
-                        p.options.fetch_limit,
-                    )
-                    .await
-            },
-            "fetch-source-items",
-        )
-        .await?;
+        let items = self.fetch_items(p, p_rt.coordinator.source_pointer.as_ref()).await?;
         p_rt.fetch_end_at = Some(Instant::now());
         let parallelism = p.options.parallelism.max(1) as usize;
         if p.options.parallelism == 0 {
@@ -1901,6 +1920,79 @@ impl Process for DryRunProcess {
     }
 }
 
+struct Reprocess {
+    content: ProcessingContent,
+    item_filters: Vec<Arc<dyn SourceItemFilter>>,
+}
+
+impl Reprocess {
+    fn new(processor: &SourceProcessor, content: ProcessingContent) -> Self {
+        let item_filters = processor
+            .options
+            .item_filters
+            .iter()
+            .filter(|filter| {
+                filter.as_ref().type_id() != TypeId::of::<SourceItemIdentityFilter>()
+            })
+            .cloned()
+            .collect();
+        Self { content, item_filters }
+    }
+}
+
+impl Process for Reprocess {
+    fn select_item_filter<'a>(
+        &'a self,
+        _: &'a SourceProcessor,
+    ) -> &'a Vec<Arc<dyn SourceItemFilter>> {
+        &self.item_filters
+    }
+
+    async fn fetch_items(
+        &self,
+        _: &SourceProcessor,
+        _: &dyn SourcePointer,
+    ) -> Result<Vec<PointedItem>, ProcessingError> {
+        Ok(vec![PointedItem {
+            source_item: self.content.item_content.source_item.clone(),
+            item_pointer: Arc::new(EmptyPointer),
+        }])
+    }
+
+    async fn on_process_complete(
+        &self,
+        _: &SourceProcessor,
+        _: &ProcessRuntime,
+    ) -> Result<(), ProcessingError> {
+        Ok(())
+    }
+
+    async fn on_item_process_complete(
+        &self,
+        processor: &SourceProcessor,
+        processing_content: &ProcessingContent,
+        files: &Vec<FileContent>,
+    ) -> Result<(), ProcessingError> {
+        if !processor.options.save_processing_content {
+            return Ok(());
+        }
+        let mut content = processing_content.clone();
+        content.id = self.content.id;
+        content.processor_name = processor.name.clone();
+        content.rename_times = 0;
+        let content_id = processor
+            .processing_storage
+            .save_processing_content(&content)
+            .await
+            .map_err(|error| ProcessingError::non_retryable(error.message))?;
+        processor
+            .processing_storage
+            .save_file_contents(content_id, encode_files_and_compress(files)?)
+            .await
+            .map_err(|error| ProcessingError::non_retryable(error.message))
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -2210,6 +2302,7 @@ mod test {
     struct PointerStorage {
         states: ParkingMutex<Vec<ProcessorSourceState>>,
         initial_state: ParkingMutex<Option<ProcessorSourceState>>,
+        saved_contents: ParkingMutex<Vec<ProcessingContent>>,
         next_content_id: AtomicUsize,
         content_exists: AtomicBool,
         fail_next_state_save: AtomicBool,
@@ -2225,9 +2318,12 @@ mod test {
     impl ProcessingStorage for PointerStorage {
         async fn save_processing_content(
             &self,
-            _: &ProcessingContent,
+            content: &ProcessingContent,
         ) -> Result<i64, StorageError> {
-            Ok(self.next_content_id.fetch_add(1, AtomicOrdering::Relaxed) as i64)
+            self.saved_contents.lock().push(content.clone());
+            Ok(content.id.unwrap_or_else(|| {
+                self.next_content_id.fetch_add(1, AtomicOrdering::Relaxed) as i64
+            }))
         }
 
         async fn processing_content_exists(
@@ -2430,6 +2526,44 @@ mod test {
         assert_eq!(processor.group().as_deref(), Some("configured-group"));
     }
 
+    #[tokio::test]
+    async fn reprocess_uses_original_item_and_content_id() {
+        let submit_count = Arc::new(AtomicUsize::new(0));
+        let (mut processor, storage) = pointer_test_processor_with_settings(
+            false,
+            3,
+            false,
+            PointerTestSettings {
+                unique_files: true,
+                submit_count: Some(submit_count.clone()),
+                ..Default::default()
+            },
+        );
+        processor.options.save_processing_content = true;
+        let source_item = SourceItem { title: "item-7".to_owned(), ..Default::default() };
+        let content = ProcessingContent {
+            id: Some(42),
+            processor_name: processor.name.clone(),
+            item_hash: source_item.hashing(),
+            item_identity: None,
+            item_content: ItemContentLite { source_item, item_variables: HashMap::new() },
+            rename_times: 5,
+            status: ProcessingStatus::Failure,
+            failure_reason: Some("previous failure".to_owned()),
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            updated_at: None,
+        };
+
+        processor.reprocess(content).await.unwrap();
+
+        let saved_contents = storage.saved_contents.lock();
+        assert_eq!(saved_contents.len(), 1);
+        assert_eq!(saved_contents[0].id, Some(42));
+        assert_eq!(saved_contents[0].item_content.source_item.title, "item-7");
+        assert_eq!(saved_contents[0].rename_times, 0);
+        assert_eq!(submit_count.load(AtomicOrdering::Acquire), 1);
+        assert!(storage.saved_pointers().is_empty());
+    }
     #[tokio::test]
     async fn dry_run_returns_results_without_side_effects() {
         let submit_count = Arc::new(AtomicUsize::new(0));
