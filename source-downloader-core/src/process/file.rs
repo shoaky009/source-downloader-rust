@@ -512,6 +512,7 @@ impl Renamer {
             "name": self.apply_replacers("file.name", file.file_download_path().file_stem().unwrap().to_string_lossy().into_owned()),
             "attrs": file.source_file.attrs,
             "tags": file.source_file.tags,
+            "vars": file_pattern_vars,
             "originalLayout": file.get_path_original_layout().into_iter()
                 .map(|s| self.apply_replacers("file.originalLayout", s))
                 .collect::<Vec<_>>()
@@ -556,6 +557,7 @@ impl Renamer {
             .iter()
             .map(|(name, value)| (name.clone(), Value::String(value.clone())))
             .collect();
+        variables.insert("vars".to_owned(), json!(replaced_item_variables));
         let item_variables = json!({
             "title": self.apply_replacers("item.title", item.title.clone()),
             "datetime": item.datetime,
@@ -688,7 +690,8 @@ mod tests {
 
     #[test]
     fn item_provider_variables_are_available_to_path_patterns() {
-        let filename_pattern = PathPattern::new_cel("{providerTitle}.txt".to_owned());
+        let filename_pattern =
+            PathPattern::new_cel("{vars.providerTitle}-{providerTitle}.txt".to_owned());
         let raw =
             RawFileContent { filename_pattern: &filename_pattern, ..Default::default() };
         let provider_variables =
@@ -702,8 +705,28 @@ mod tests {
             &item_variables,
         );
 
-        assert_eq!("provider-value.txt", content.target_filename);
+        assert_eq!("provider-value-provider-value.txt", content.target_filename);
         assert_eq!(item_variables.pattern_variables, provider_variables);
+    }
+
+    #[test]
+    fn file_provider_variables_are_available_under_file_vars_namespace() {
+        let filename_pattern =
+            PathPattern::new_cel("{file.vars.episode}-{episode}.txt".to_owned());
+        let file_variables = hashmap! { "episode".to_owned() => "03".to_owned() };
+        let raw = RawFileContent {
+            filename_pattern: &filename_pattern,
+            variables: &file_variables,
+            ..Default::default()
+        };
+
+        let content = DEFAULT_RENAMER.create_file_content(
+            &SourceItem::default(),
+            raw,
+            &RenameVariables::default(),
+        );
+
+        assert_eq!("03-03.txt", content.target_filename);
     }
 
     #[test]

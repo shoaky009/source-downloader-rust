@@ -57,7 +57,7 @@ Rules:
     - non-filtered Item persistence is unchanged.
   - Suggested commit: `fix: skip persistence for content-filtered items`
 
-- [ ] **Expose provider variables through `vars` namespaces**
+- [x] **Expose provider variables through `vars` namespaces**
   - Problem: Kotlin exposes `vars.<name>` and `file.vars.<name>`; Rust only exposes flat variables.
   - Kotlin reference: `Renamer.kt:231-265`.
   - Acceptance:

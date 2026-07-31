@@ -3056,6 +3056,7 @@ mod test {
             false,
             PointerTestSettings { unique_files: true, ..Default::default() },
         );
+        processor.async_downloader = None;
         processor.options.filename_pattern =
             PathPattern::new_cel("{fileProvider}.txt".to_owned());
         processor.options.variable_providers =
