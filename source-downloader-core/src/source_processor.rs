@@ -1,4 +1,5 @@
 use crate::components::simple_file_exists_detector::SimpleFileExistsDetector;
+use crate::components::source_item_identity_filter::SourceItemIdentityFilter;
 use crate::config::ListenerMode;
 use crate::process::file::{PathPattern, RawFileContent, Renamer};
 use crate::process::rule::{FileRule, ItemRule, ItemStrategy};
@@ -9,7 +10,7 @@ use backon::{BackoffBuilder, ExponentialBuilder};
 use futures_util::stream::{FuturesOrdered, StreamExt};
 use humantime::format_duration;
 use itertools::Itertools;
-use parking_lot::RwLock;
+use parking_lot::{Mutex as SyncMutex, RwLock};
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::FileContentStatus::{
     Downloaded, FileConflict, Normal, ReadyReplace, TargetExists, Undetected,
@@ -58,6 +59,18 @@ pub struct ItemProcessResult {
     pub status: ProcessingStatus,
     pub message: Option<String>,
     pub finished_at: OffsetDateTime,
+}
+
+#[derive(Debug, Default)]
+pub struct DryRunOptions {
+    pub pointer: Option<Value>,
+    pub filter_processed: bool,
+}
+
+#[derive(Debug)]
+pub struct DryRunResult {
+    pub processing_content: ProcessingContent,
+    pub file_contents: Vec<FileContent>,
 }
 #[allow(dead_code, unused)]
 pub struct SourceProcessor {
@@ -368,8 +381,13 @@ impl SourceProcessor {
         self.options.process_listeners.get(&mode).map(Vec::as_slice).unwrap_or_default()
     }
 
-    pub async fn dry_run(&self) {
-        DryRunProcess {};
+    pub async fn dry_run(
+        &self,
+        options: DryRunOptions,
+    ) -> Result<Vec<DryRunResult>, ProcessingError> {
+        let process = DryRunProcess::new(self, options);
+        process.execute(self).await?;
+        Ok(process.into_results())
     }
 
     pub async fn reprocess(&self) {}
@@ -655,7 +673,7 @@ impl Drop for SourceProcessor {
 #[allow(dead_code)]
 trait Process {
     fn select_item_filter<'a>(
-        &self,
+        &'a self,
         p: &'a SourceProcessor,
     ) -> &'a Vec<Arc<dyn SourceItemFilter>>;
 
@@ -1089,9 +1107,8 @@ trait Process {
         let item_rule = opt.item_rules.iter().find(|x| x.matcher.matches(source_item));
         let item_strategy = item_rule.map(|x| &x.strategy);
         let item_filters = item_strategy
-            .map(|x| x.item_filters.as_ref())
-            .flatten()
-            .unwrap_or(&opt.item_filters);
+            .and_then(|strategy| strategy.item_filters.as_ref())
+            .unwrap_or_else(|| self.select_item_filter(p));
         for filter in item_filters {
             let filtered = !filter.filter(source_item).await;
             if filtered {
@@ -1165,8 +1182,7 @@ trait Process {
             )
         };
         let mut rename_times = 0;
-        if should_download {
-            self.do_download(p, source_item, &file_contents).await?;
+        if should_download && self.do_download(p, source_item, &file_contents).await? {
             let is_sync = p.async_downloader.is_none();
             if is_sync {
                 let movement_res = self.do_movement(p, source_item, &file_contents).await;
@@ -1245,7 +1261,7 @@ trait Process {
         p: &SourceProcessor,
         source_item: &SourceItem,
         file_contents: &[FileContent],
-    ) -> Result<(), ProcessingError> {
+    ) -> Result<bool, ProcessingError> {
         let downloadable_files: Vec<&FileContent> = file_contents
             .iter()
             .filter(|file| file.status != TargetExists && file.status != Downloaded)
@@ -1319,7 +1335,7 @@ trait Process {
                 ))
             })?;
         }
-        Ok(())
+        Ok(true)
     }
 
     async fn update_file_content_status(
@@ -1626,7 +1642,7 @@ struct NormalProcess {}
 
 impl Process for NormalProcess {
     fn select_item_filter<'a>(
-        &self,
+        &'a self,
         p: &'a SourceProcessor,
     ) -> &'a Vec<Arc<dyn SourceItemFilter>> {
         &p.options.item_filters
@@ -1794,8 +1810,96 @@ pub fn decode_files_from_compressed(
     Ok(files)
 }
 
-#[allow(dead_code)]
-struct DryRunProcess {}
+struct DryRunProcess {
+    source_pointer: Option<Value>,
+    item_filters: Vec<Arc<dyn SourceItemFilter>>,
+    results: SyncMutex<Vec<DryRunResult>>,
+}
+
+impl DryRunProcess {
+    fn new(processor: &SourceProcessor, options: DryRunOptions) -> Self {
+        let item_filters = if options.filter_processed {
+            processor.options.item_filters.clone()
+        } else {
+            processor
+                .options
+                .item_filters
+                .iter()
+                .filter(|filter| {
+                    filter.as_ref().type_id() != TypeId::of::<SourceItemIdentityFilter>()
+                })
+                .cloned()
+                .collect()
+        };
+        Self {
+            source_pointer: options.pointer,
+            item_filters,
+            results: SyncMutex::new(Vec::new()),
+        }
+    }
+
+    fn into_results(self) -> Vec<DryRunResult> {
+        self.results.into_inner()
+    }
+}
+
+impl Process for DryRunProcess {
+    fn select_item_filter<'a>(
+        &'a self,
+        _: &'a SourceProcessor,
+    ) -> &'a Vec<Arc<dyn SourceItemFilter>> {
+        &self.item_filters
+    }
+
+    async fn on_process_complete(
+        &self,
+        _: &SourceProcessor,
+        _: &ProcessRuntime,
+    ) -> Result<(), ProcessingError> {
+        Ok(())
+    }
+
+    async fn on_item_process_complete(
+        &self,
+        _: &SourceProcessor,
+        _: &ProcessingContent,
+        _: &Vec<FileContent>,
+    ) -> Result<(), ProcessingError> {
+        Ok(())
+    }
+
+    async fn on_item_success(
+        &self,
+        _: &SourceProcessor,
+        _: bool,
+        _: &mut ProcessCoordinator,
+        _: &dyn ItemPointer,
+        processing_content: ProcessingContent,
+        file_contents: Vec<FileContent>,
+    ) -> Result<(), ProcessingError> {
+        self.results.lock().push(DryRunResult { processing_content, file_contents });
+        Ok(())
+    }
+
+    fn get_source_pointer(
+        &self,
+        processor: &SourceProcessor,
+        raw_pointer: Value,
+    ) -> Box<dyn SourcePointer> {
+        processor
+            .source
+            .parse_raw_pointer(self.source_pointer.clone().unwrap_or(raw_pointer))
+    }
+
+    async fn do_download(
+        &self,
+        _: &SourceProcessor,
+        _: &SourceItem,
+        _: &[FileContent],
+    ) -> Result<bool, ProcessingError> {
+        Ok(false)
+    }
+}
 
 #[cfg(test)]
 mod test {
@@ -2107,6 +2211,7 @@ mod test {
         states: ParkingMutex<Vec<ProcessorSourceState>>,
         initial_state: ParkingMutex<Option<ProcessorSourceState>>,
         next_content_id: AtomicUsize,
+        content_exists: AtomicBool,
         fail_next_state_save: AtomicBool,
     }
 
@@ -2130,7 +2235,7 @@ mod test {
             _: &str,
             _: &str,
         ) -> Result<bool, StorageError> {
-            Ok(false)
+            Ok(self.content_exists.load(Ordering::Acquire))
         }
 
         async fn delete_processing_content(&self, _: i64) -> Result<(), StorageError> {
@@ -2323,6 +2428,54 @@ mod test {
         processor.options.task_group = Some("configured-group".to_owned());
 
         assert_eq!(processor.group().as_deref(), Some("configured-group"));
+    }
+
+    #[tokio::test]
+    async fn dry_run_returns_results_without_side_effects() {
+        let submit_count = Arc::new(AtomicUsize::new(0));
+        let (mut processor, storage) = pointer_test_processor_with_settings(
+            false,
+            1,
+            false,
+            PointerTestSettings {
+                unique_files: true,
+                submit_count: Some(submit_count.clone()),
+                ..Default::default()
+            },
+        );
+        processor.options.save_processing_content = true;
+
+        let results = processor.dry_run(DryRunOptions::default()).await.unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].processing_content.status,
+            ProcessingStatus::WaitingToRename
+        );
+        assert_eq!(results[0].file_contents.len(), 1);
+        assert_eq!(results[0].file_contents[0].target_filename, "1.txt");
+        assert_eq!(submit_count.load(AtomicOrdering::Acquire), 0);
+        assert_eq!(storage.next_content_id.load(AtomicOrdering::Acquire), 0);
+        assert!(storage.saved_pointers().is_empty());
+    }
+
+    #[tokio::test]
+    async fn dry_run_can_ignore_processed_item_filter() {
+        let (mut processor, storage) = pointer_test_processor(false, 1, false);
+        storage.content_exists.store(true, Ordering::Release);
+        processor.options.item_filters = vec![Arc::new(SourceItemIdentityFilter {
+            processor_name: processor.name.clone(),
+            storage: storage.clone(),
+        })];
+
+        let unfiltered = processor.dry_run(DryRunOptions::default()).await.unwrap();
+        let filtered = processor
+            .dry_run(DryRunOptions { filter_processed: true, ..Default::default() })
+            .await
+            .unwrap();
+
+        assert_eq!(unfiltered.len(), 1);
+        assert!(filtered.is_empty());
     }
 
     #[tokio::test]
