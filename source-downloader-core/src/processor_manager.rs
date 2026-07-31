@@ -589,8 +589,14 @@ impl ProcessorManager {
             );
 
             let strategy = FileStrategy {
-                save_path_pattern: None,
-                filename_pattern: None,
+                save_path_pattern: file_opt_cfg
+                    .save_path_pattern
+                    .as_ref()
+                    .map(|pattern| PathPattern::new_cel(pattern.clone())),
+                filename_pattern: file_opt_cfg
+                    .filename_pattern
+                    .as_ref()
+                    .map(|pattern| PathPattern::new_cel(pattern.clone())),
                 file_content_filters,
             };
             result.push(FileRule { matcher: Box::new(matcher), strategy })
@@ -615,7 +621,9 @@ impl Drop for ProcessorWrapper {
 mod test {
     use crate::component_manager::ComponentManager;
     use crate::components::get_build_in_component_supplier;
-    use crate::config::{ProcessorConfig, ProcessorOptionConfig, YamlConfigOperator};
+    use crate::config::{
+        FileRuleConfig, ProcessorConfig, ProcessorOptionConfig, YamlConfigOperator,
+    };
     use crate::processor_manager::ProcessorManager;
     use source_downloader_sdk::component::ComponentRootType;
     use std::collections::HashSet;
@@ -772,5 +780,48 @@ mod test {
             status: ProcessingStatus::WaitingToRename,
         };
         assert!(!options.item_content_filters[0].filter(&item_content).await);
+    }
+
+    #[test]
+    fn file_group_patterns_are_compiled_into_strategy() {
+        let manager = ProcessorManager::new(
+            Arc::new(ComponentManager::new(Arc::new(YamlConfigOperator::new(
+                "./tests/resources/config.yaml",
+            )))),
+            Arc::new(MemoryProcessingStorage::new()),
+        );
+        let options = ProcessorOptionConfig {
+            file_grouping: vec![FileRuleConfig {
+                save_path_pattern: Some("{series}/Season {season}".to_owned()),
+                filename_pattern: Some("{title} - {episode}".to_owned()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let config = ProcessorConfig {
+            name: "file-group-patterns".to_owned(),
+            enabled: true,
+            save_path: String::new(),
+            triggers: Vec::new(),
+            source: String::new(),
+            item_file_resolver: String::new(),
+            downloader: String::new(),
+            file_mover: String::new(),
+            options: options.clone(),
+            category: None,
+            tags: HashSet::new(),
+        };
+
+        let rules = manager.apply_file_grouping(&config, &options).unwrap();
+        let strategy = &rules[0].strategy;
+
+        assert_eq!(
+            strategy.save_path_pattern.as_ref().map(|pattern| pattern.pattern.as_str()),
+            Some("{series}/Season {season}")
+        );
+        assert_eq!(
+            strategy.filename_pattern.as_ref().map(|pattern| pattern.pattern.as_str()),
+            Some("{title} - {episode}")
+        );
     }
 }
