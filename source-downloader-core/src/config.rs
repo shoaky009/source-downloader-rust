@@ -1,3 +1,4 @@
+use crate::process::file::VariableErrorStrategy;
 use indexmap::IndexMap;
 #[allow(dead_code, unused)]
 use moka::sync::Cache;
@@ -92,6 +93,8 @@ pub struct ProcessorOptionConfig {
     pub variable_conflict_strategy: Option<String>,
     #[serde(skip_serializing_if = "is_default")]
     pub variable_name_replace: HashMap<String, String>,
+    #[serde(skip_serializing_if = "is_default")]
+    pub variable_error_strategy: VariableErrorStrategy,
     #[serde(skip_serializing_if = "Clone::clone")]
     pub save_processing_content: bool,
     #[serde(skip_serializing_if = "is_rename_task_interval_default")]
@@ -249,6 +252,7 @@ impl Default for ProcessorOptionConfig {
             file_replacement_decider: None,
             variable_name_replace: HashMap::new(),
             variable_conflict_strategy: None,
+            variable_error_strategy: VariableErrorStrategy::Stay,
             save_processing_content: true,
             rename_task_interval: "5m".to_string(),
             rename_times_threshold: 3,
@@ -570,6 +574,7 @@ mod test {
         ComponentConfig, Config, ConfigOperator, ProcessorOptionConfig,
         YamlConfigOperator,
     };
+    use crate::process::file::VariableErrorStrategy;
     use source_downloader_sdk::component::ComponentRootType;
     use source_downloader_sdk::serde_json::Map;
     use std::fs;
@@ -701,5 +706,42 @@ mod test {
         let s = serde_json::to_string(&c).unwrap();
         assert!(!s.contains("\"rename-task-interval\":\"5m\""));
         assert!(s.contains("\"fetch-limit\":51"));
+    }
+
+    #[test]
+    fn variable_error_strategy_matches_kotlin_config() {
+        assert_eq!(
+            ProcessorOptionConfig::default().variable_error_strategy,
+            VariableErrorStrategy::Stay
+        );
+
+        for (raw, expected) in [
+            ("ORIGINAL", VariableErrorStrategy::Original),
+            ("PATTERN", VariableErrorStrategy::Pattern),
+            ("STAY", VariableErrorStrategy::Stay),
+            ("TO_UNRESOLVED", VariableErrorStrategy::ToUnresolved),
+        ] {
+            let config = serde_json::from_str::<ProcessorOptionConfig>(&format!(
+                r#"{{"variable-error-strategy":"{raw}"}}"#
+            ))
+            .unwrap();
+            assert_eq!(config.variable_error_strategy, expected);
+
+            let serialized = serde_json::to_string(&config).unwrap();
+            if expected == VariableErrorStrategy::Stay {
+                assert!(!serialized.contains("variable-error-strategy"));
+            } else {
+                assert!(
+                    serialized.contains(&format!(r#""variable-error-strategy":"{raw}""#))
+                );
+            }
+        }
+
+        assert!(
+            serde_json::from_str::<ProcessorOptionConfig>(
+                r#"{"variable-error-strategy":"UNKNOWN"}"#
+            )
+            .is_err()
+        );
     }
 }

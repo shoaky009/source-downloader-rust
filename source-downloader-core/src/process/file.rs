@@ -1,6 +1,7 @@
 use crate::expression::cel::{CelCompiledExpressionFactory, FACTORY};
 use crate::expression::{CompiledExpression, CompiledExpressionFactory};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
@@ -67,12 +68,14 @@ pub struct Renamer {
     pub path_name_length_limit: usize,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum VariableErrorStrategy {
     Original,
-    ToUnresolved,
-    #[allow(unused)]
     Pattern,
+    #[default]
+    Stay,
+    ToUnresolved,
 }
 
 #[derive(Debug, Clone)]
@@ -125,7 +128,7 @@ struct ParseResult {
 impl Default for Renamer {
     fn default() -> Self {
         Self {
-            variable_error_strategy: VariableErrorStrategy::Original,
+            variable_error_strategy: VariableErrorStrategy::Stay,
             variable_replacers: vec![],
             variable_process_chain: vec![],
             trimming: HashMap::new(),
@@ -210,7 +213,7 @@ impl Renamer {
 
         // 处理 STAY 策略
         if !filename_result.success
-            && self.variable_error_strategy == VariableErrorStrategy::Original
+            && self.variable_error_strategy == VariableErrorStrategy::Stay
         {
             let file_download_path = file.file_download_path();
             let target_filename = file_download_path
@@ -441,7 +444,9 @@ impl Renamer {
 
         // 错误策略处理
         match self.variable_error_strategy {
-            VariableErrorStrategy::Original | VariableErrorStrategy::ToUnresolved => {
+            VariableErrorStrategy::Original
+            | VariableErrorStrategy::Stay
+            | VariableErrorStrategy::ToUnresolved => {
                 result.path = file_name;
             }
             VariableErrorStrategy::Pattern => {
@@ -476,7 +481,7 @@ impl Renamer {
         }
 
         let fallback_path = match self.variable_error_strategy {
-            VariableErrorStrategy::Original => {
+            VariableErrorStrategy::Original | VariableErrorStrategy::Stay => {
                 file.file_download_path().parent().unwrap_or(Path::new("")).to_path_buf()
             }
             VariableErrorStrategy::Pattern => source_path.join(&parse.path),
@@ -758,7 +763,7 @@ mod tests {
     }
 
     #[test]
-    fn test_variable_error_given_original_strategy() {
+    fn test_variable_error_given_stay_strategy() {
         let mut raw = RawFileContent {
             filename_pattern: &PathPattern::new_cel("{name} - {season}".to_owned()),
             save_path_pattern: &PathPattern::new_cel("{name}/S{season}".to_owned()),
@@ -784,6 +789,31 @@ mod tests {
             &RenameVariables::default(),
         );
         assert_eq!(content.file_download_path, *content.target_path());
+    }
+
+    #[test]
+    fn test_variable_error_given_original_strategy() {
+        let raw = RawFileContent {
+            filename_pattern: &PathPattern::new_cel("{name} - {season}".to_owned()),
+            save_path_pattern: &PathPattern::new_cel("S{season}".to_owned()),
+            variables: &hashmap! {
+              "season".to_owned() => "01".to_owned(),
+            },
+            ..Default::default()
+        };
+        let renamer = Renamer {
+            variable_error_strategy: VariableErrorStrategy::Original,
+            ..DEFAULT_RENAMER.clone()
+        };
+
+        let content = renamer.create_file_content(
+            &SourceItem::default(),
+            raw,
+            &RenameVariables::default(),
+        );
+
+        assert_eq!(SOURCE_SAVE_PATH.join("S01").join("1.txt"), *content.target_path());
+        assert_eq!(1, content.errors.len());
     }
 
     #[test]

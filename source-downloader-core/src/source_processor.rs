@@ -415,6 +415,7 @@ impl SourceProcessor {
         processing_storage: Arc<dyn ProcessingStorage>,
         category: Option<String>,
         tags: HashSet<String>,
+        renamer: Renamer,
         options: ProcessorOptions,
     ) -> Self {
         let download_path = Path::new(downloader.default_download_path()).into();
@@ -434,7 +435,7 @@ impl SourceProcessor {
             options,
             instance_id: INSTANCE_ID_GENERATOR.fetch_add(1, Ordering::Relaxed),
             processing: AtomicBool::new(false),
-            renamer: Renamer::default(),
+            renamer,
             download_path,
         }
     }
@@ -2857,6 +2858,7 @@ mod test {
             storage.clone(),
             None,
             HashSet::new(),
+            Renamer::default(),
             ProcessorOptions {
                 save_path_pattern: PathPattern::new_cel(String::new()),
                 filename_pattern: PathPattern::new_cel(String::new()),

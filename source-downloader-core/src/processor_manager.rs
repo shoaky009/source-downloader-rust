@@ -6,7 +6,7 @@ use crate::components::source_item_identity_filter::SourceItemIdentityFilter;
 use crate::config::{ListenerMode, ProcessorConfig, ProcessorOptionConfig};
 use crate::expression::CompiledExpressionFactory;
 use crate::expression::cel::FACTORY;
-use crate::process::file::PathPattern;
+use crate::process::file::{PathPattern, Renamer};
 use crate::process::rule::{
     ExpressionAndTagMatcher, FileRule, FileStrategy, ItemRule, ItemStrategy,
 };
@@ -153,6 +153,10 @@ impl ProcessorManager {
             self.processing_storage.to_owned(),
             config.category.to_owned(),
             config.tags.to_owned(),
+            Renamer {
+                variable_error_strategy: config.options.variable_error_strategy,
+                ..Renamer::default()
+            },
             self.create_options(&config, task_group)?,
         ));
         let instance_id = processor.instance_id();

@@ -69,8 +69,8 @@ Rules:
 
 ### Renamer options and component wiring
 
-- [ ] **Configure `VariableErrorStrategy`**
-  - Add config parsing and map Kotlin `STAY`, `TO_UNRESOLVED`, and `PATTERN` behavior to Rust `Original`, `ToUnresolved`, and `Pattern`.
+- [x] **Configure `VariableErrorStrategy`**
+  - Add config parsing for Kotlin `ORIGINAL`, `PATTERN`, `STAY`, and `TO_UNRESOLVED`, preserving the distinct `ORIGINAL` and `STAY` behavior.
   - Stop constructing every processor with an opaque `Renamer::default()`.
   - Suggested commit: `feat: configure variable error strategy`
 
