@@ -772,7 +772,15 @@ trait Process {
                         p_rt.coordinator.listener_context.has_error = true;
                         self.on_item_error(p, &mut p_rt.coordinator, &source_item, &err)
                             .await;
-                        stop_after_item = true;
+                        if p.options.item_error_continue {
+                            warn!(
+                                "[item-continue-on-error] {} {}",
+                                err.message(),
+                                source_item
+                            );
+                        } else {
+                            stop_after_item = true;
+                        }
                     }
                 }
                 ItemAction::Error(err) => {
@@ -815,7 +823,7 @@ trait Process {
                     match self.on_item_process_complete(p, &content, &files).await {
                         Ok(()) => {
                             item_runtime.processed_inc();
-                            if self
+                            match self
                                 .on_item_success(
                                     p,
                                     advance_pointer,
@@ -825,9 +833,12 @@ trait Process {
                                     files,
                                 )
                                 .await
-                                .is_err()
                             {
-                                stop_after_item = true;
+                                Ok(()) => {}
+                                Err(err) if p.options.item_error_continue => {
+                                    warn!("[item-continue-on-error] {}", err.message());
+                                }
+                                Err(_) => stop_after_item = true,
                             }
                         }
                         Err(err) => {
@@ -2013,6 +2024,7 @@ mod test {
         states: ParkingMutex<Vec<ProcessorSourceState>>,
         initial_state: ParkingMutex<Option<ProcessorSourceState>>,
         next_content_id: AtomicUsize,
+        fail_next_state_save: AtomicBool,
     }
 
     impl PointerStorage {
@@ -2091,6 +2103,11 @@ mod test {
             &self,
             state: &ProcessorSourceState,
         ) -> Result<ProcessorSourceState, StorageError> {
+            if self.fail_next_state_save.swap(false, Ordering::AcqRel) {
+                return Err(StorageError {
+                    message: "failed to save processor source state".to_owned(),
+                });
+            }
             self.states.lock().push(state.clone());
             Ok(state.clone())
         }
@@ -2112,6 +2129,7 @@ mod test {
         submit_count: Option<Arc<AtomicUsize>>,
         unique_files: bool,
         skippable_download_item: Option<usize>,
+        fail_next_state_save: bool,
         submit_probe: Option<Arc<ParallelismProbe>>,
     }
 
@@ -2126,6 +2144,7 @@ mod test {
                 submit_count: None,
                 unique_files: false,
                 skippable_download_item: None,
+                fail_next_state_save: false,
                 submit_probe: None,
             }
         }
@@ -2160,7 +2179,10 @@ mod test {
             skippable_download_item: settings.skippable_download_item,
             submit_probe: settings.submit_probe,
         });
-        let storage = Arc::new(PointerStorage::default());
+        let storage = Arc::new(PointerStorage {
+            fail_next_state_save: AtomicBool::new(settings.fail_next_state_save),
+            ..Default::default()
+        });
         let item_filters: Vec<Arc<dyn SourceItemFilter>> =
             if filter_items { vec![Arc::new(RejectAllItems)] } else { Vec::new() };
         let processor = SourceProcessor::new(
@@ -2357,6 +2379,24 @@ mod test {
                 parallelism: 2,
                 item_error_continue: true,
                 invalid_item: Some(1),
+                ..Default::default()
+            },
+        );
+
+        processor.run().await.unwrap();
+
+        assert_eq!(storage.saved_pointers(), vec![json!(2), json!(3)]);
+    }
+
+    #[tokio::test]
+    async fn item_error_continue_recovers_from_pointer_save_error() {
+        let (processor, storage) = pointer_test_processor_with_settings(
+            false,
+            3,
+            false,
+            PointerTestSettings {
+                item_error_continue: true,
+                fail_next_state_save: true,
                 ..Default::default()
             },
         );
