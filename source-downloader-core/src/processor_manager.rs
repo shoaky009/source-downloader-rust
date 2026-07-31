@@ -16,8 +16,8 @@ use crate::process::variable::{
 use crate::source_processor::{ProcessorOptions, SourceProcessor};
 use parking_lot::RwLock;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentRootType, FileContentFilter, FileTagger, ItemContentFilter,
-    SourceFileFilter, SourceItemFilter, VariableProvider,
+    ComponentError, ComponentId, ComponentRootType, FileContentFilter, FileTagger,
+    ItemContentFilter, SdComponent, SourceFileFilter, SourceItemFilter, VariableProvider,
 };
 use source_downloader_sdk::storage::ProcessingStorage;
 use std::collections::{HashMap, HashSet};
@@ -45,6 +45,16 @@ impl ProcessorManager {
         }
     }
 
+    fn get_component_for_processor(
+        &self,
+        component_id: &ComponentId,
+        processor_name: &str,
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
+        self.component_manager
+            .get_component(component_id)?
+            .require_and_mark_ref(processor_name)
+    }
+
     pub fn create_processor(&self, config: &ProcessorConfig) {
         if config.enabled.not() {
             info!("Processor[disabled] {}", config.name);
@@ -53,6 +63,7 @@ impl ProcessorManager {
         let processor_wrapper = match self.create_internal(config) {
             Ok(p) => p,
             Err(err) => {
+                self.component_manager.remove_processor_refs(&config.name);
                 error!("Failed to create processor {}, cause: {}", config.name, err);
                 self.processor_wrappers.write().insert(
                     config.name.to_owned(),
@@ -76,27 +87,15 @@ impl ProcessorManager {
         let processor_task = processor_wrapper.processor.as_ref().unwrap();
         for component_ref in config.triggers.iter() {
             let id = &ComponentRootType::Trigger.parse_component_id(component_ref);
-            let trigger_wrapper = match self.component_manager.get_component(id) {
-                Ok(w) => w,
-                Err(e) => {
+            let component = match self.get_component_for_processor(id, &config.name) {
+                Ok(component) => component,
+                Err(error) => {
                     warn!(
-                        "Processor {} using a error trigger: {} will not add run task, cause: {}",
-                        config.name, component_ref, e
+                        "Processor {} using an invalid trigger: {} cause: {}",
+                        config.name, component_ref, error
                     );
                     continue;
                 }
-            };
-
-            let component = match trigger_wrapper.get_and_mark_ref(config.name.to_owned())
-            {
-                None => {
-                    error!(
-                        "Trigger {} state not expected, it may be a bug",
-                        component_ref
-                    );
-                    continue;
-                }
-                Some(p) => p,
             };
             match component.as_trigger() {
                 Ok(x) => {
@@ -115,35 +114,25 @@ impl ProcessorManager {
         config: &ProcessorConfig,
     ) -> Result<Arc<ProcessorWrapper>, ComponentError> {
         let source_id = ComponentRootType::Source.parse_component_id(&config.source);
-        let source = self
-            .component_manager
-            .get_component(&source_id)?
-            .require_component()?
-            .as_source()?;
+        let source =
+            self.get_component_for_processor(&source_id, &config.name)?.as_source()?;
 
+        let item_file_resolver_id = ComponentRootType::ItemFileResolver
+            .parse_component_id(&config.item_file_resolver);
         let item_file_resolver = self
-            .component_manager
-            .get_component(
-                &ComponentRootType::ItemFileResolver
-                    .parse_component_id(&config.item_file_resolver),
-            )?
-            .require_component()?
+            .get_component_for_processor(&item_file_resolver_id, &config.name)?
             .as_item_file_resolver()?;
 
+        let downloader_id =
+            ComponentRootType::Downloader.parse_component_id(&config.downloader);
         let downloader = self
-            .component_manager
-            .get_component(
-                &ComponentRootType::Downloader.parse_component_id(&config.downloader),
-            )?
-            .require_component()?
+            .get_component_for_processor(&downloader_id, &config.name)?
             .as_downloader()?;
 
+        let file_mover_id =
+            ComponentRootType::FileMover.parse_component_id(&config.file_mover);
         let file_mover = self
-            .component_manager
-            .get_component(
-                &ComponentRootType::FileMover.parse_component_id(&config.file_mover),
-            )?
-            .require_component()?
+            .get_component_for_processor(&file_mover_id, &config.name)?
             .as_file_mover()?;
 
         let b = config
@@ -197,9 +186,7 @@ impl ProcessorManager {
         for x in &opt.item_filters {
             let component_id = ComponentRootType::SourceItemFilter.parse_component_id(&x);
             item_filters.push(
-                self.component_manager
-                    .get_component(&component_id)?
-                    .require_component()?
+                self.get_component_for_processor(&component_id, &config.name)?
                     .as_source_item_filter()?,
             );
         }
@@ -209,9 +196,7 @@ impl ProcessorManager {
         for x in &opt.source_file_filters {
             let component_id = ComponentRootType::SourceFileFilter.parse_component_id(&x);
             source_file_filters.push(
-                self.component_manager
-                    .get_component(&component_id)?
-                    .require_component()?
+                self.get_component_for_processor(&component_id, &config.name)?
                     .as_source_file_filter()?,
             );
         }
@@ -221,9 +206,7 @@ impl ProcessorManager {
         for x in &opt.variable_providers {
             let component_id = ComponentRootType::VariableProvider.parse_component_id(&x);
             variable_providers.push(
-                self.component_manager
-                    .get_component(&component_id)?
-                    .require_component()?
+                self.get_component_for_processor(&component_id, &config.name)?
                     .as_variable_provider()?,
             );
         }
@@ -241,9 +224,7 @@ impl ProcessorManager {
         for x in &opt.file_taggers {
             let component_id = ComponentRootType::FileTagger.parse_component_id(&x);
             file_taggers.push(
-                self.component_manager
-                    .get_component(&component_id)?
-                    .require_component()?
+                self.get_component_for_processor(&component_id, &config.name)?
                     .as_file_tagger()?,
             );
         }
@@ -264,9 +245,7 @@ impl ProcessorManager {
             let component_id =
                 ComponentRootType::FileContentFilter.parse_component_id(&x);
             file_content_filters.push(
-                self.component_manager
-                    .get_component(&component_id)?
-                    .require_component()?
+                self.get_component_for_processor(&component_id, &config.name)?
                     .as_file_content_filter()?,
             );
         }
@@ -287,9 +266,7 @@ impl ProcessorManager {
             let component_id =
                 ComponentRootType::ItemContentFilter.parse_component_id(&x);
             item_content_filters.push(
-                self.component_manager
-                    .get_component(&component_id)?
-                    .require_component()?
+                self.get_component_for_processor(&component_id, &config.name)?
                     .as_item_content_filter()?,
             );
         }
@@ -299,20 +276,16 @@ impl ProcessorManager {
             let component_id =
                 ComponentRootType::ProcessListener.parse_component_id(&x.id);
             let listener = self
-                .component_manager
-                .get_component(&component_id)?
-                .require_component()?
+                .get_component_for_processor(&component_id, &config.name)?
                 .as_process_listener()?;
             process_listeners.push(listener);
         }
 
         // ==
+        let file_exists_detector_id = ComponentRootType::FileExistsDetector
+            .parse_component_id(opt.file_exists_detector.as_deref().unwrap_or("simple"));
         let file_exists_detector = self
-            .component_manager
-            .get_component(&ComponentRootType::FileExistsDetector.parse_component_id(
-                opt.file_exists_detector.as_deref().unwrap_or("simple"),
-            ))?
-            .require_component()?
+            .get_component_for_processor(&file_exists_detector_id, &config.name)?
             .as_file_exists_detector()?;
 
         Ok(ProcessorOptions {
@@ -341,15 +314,15 @@ impl ProcessorManager {
                 },
                 opt.variable_name_replace.to_owned(),
             ),
-            save_processing_content: config.options.save_processing_content.to_owned(),
+            save_processing_content: config.options.save_processing_content,
             rename_task_interval: humantime::parse_duration(
                 &config.options.rename_task_interval,
             )
             .map_err(|e| e.to_string())?,
-            rename_times_threshold: config.options.rename_times_threshold.to_owned(),
-            parallelism: config.options.parallelism.to_owned(),
+            rename_times_threshold: config.options.rename_times_threshold,
+            parallelism: config.options.parallelism,
             task_group: Some(group),
-            fetch_limit: config.options.fetch_limit.to_owned(),
+            fetch_limit: config.options.fetch_limit,
             item_error_continue: config.options.item_error_continue,
             pointer_batch_mode: config.options.pointer_batch_mode,
             item_rules: self.apply_item_grouping(config, opt, identity_filter)?,
@@ -371,6 +344,7 @@ impl ProcessorManager {
         info!("Processor[destroying] {}", name);
         let Some(wrapper) = removed else { return };
         debug!("ProcessorWp[on-destroy-arc] {}", Arc::strong_count(&wrapper));
+        self.component_manager.remove_processor_refs(name);
         let Some(processor) = &wrapper.processor else {
             return;
         };
@@ -464,11 +438,10 @@ impl ProcessorManager {
                     for name in filter_names {
                         let cid =
                             ComponentRootType::SourceItemFilter.parse_component_id(name);
-                        let wp = self.component_manager.get_component(&cid)?;
-
-                        let filter = wp.require_component()?.as_source_item_filter()?;
+                        let filter = self
+                            .get_component_for_processor(&cid, &cfg.name)?
+                            .as_source_item_filter()?;
                         filters.push(filter);
-                        wp.get_and_mark_ref(cfg.name.to_owned());
                     }
                     Some(filters)
                 } else {
@@ -492,10 +465,10 @@ impl ProcessorManager {
                     for name in provider_names {
                         let cid =
                             ComponentRootType::VariableProvider.parse_component_id(name);
-                        let wp = self.component_manager.get_component(&cid)?;
-                        let provider = wp.require_component()?.as_variable_provider()?;
+                        let provider = self
+                            .get_component_for_processor(&cid, &cfg.name)?
+                            .as_variable_provider()?;
                         providers.push(provider);
-                        wp.get_and_mark_ref(cfg.name.to_owned());
                     }
                     Some(providers)
                 } else {
@@ -575,11 +548,10 @@ impl ProcessorManager {
                     for name in filter_names {
                         let cid =
                             ComponentRootType::FileContentFilter.parse_component_id(name);
-                        let wp = self.component_manager.get_component(&cid)?;
-
-                        let filter = wp.require_component()?.as_file_content_filter()?;
+                        let filter = self
+                            .get_component_for_processor(&cid, &cfg.name)?
+                            .as_file_content_filter()?;
                         filters.push(filter);
-                        wp.get_and_mark_ref(cfg.name.to_owned());
                     }
                     Some(filters)
                 } else {
@@ -635,18 +607,19 @@ mod test {
     use crate::components::get_build_in_component_supplier;
     use crate::config::{ProcessorConfig, ProcessorOptionConfig, YamlConfigOperator};
     use crate::processor_manager::ProcessorManager;
+    use source_downloader_sdk::component::ComponentRootType;
     use std::collections::HashSet;
     use std::sync::Arc;
     use storage_memory::MemoryProcessingStorage;
 
     #[test]
     fn normal_cases() {
-        let component_manager = ComponentManager::new(Arc::new(YamlConfigOperator::new(
-            "./tests/resources/config.yaml",
+        let component_manager = Arc::new(ComponentManager::new(Arc::new(
+            YamlConfigOperator::new("./tests/resources/config.yaml"),
         )));
         let _ = component_manager.register_suppliers(get_build_in_component_supplier());
         let manager = ProcessorManager::new(
-            Arc::new(component_manager),
+            component_manager.clone(),
             Arc::new(MemoryProcessingStorage::new()),
         );
         let name = "normal-case";
@@ -668,17 +641,41 @@ mod test {
         assert!(processor_wp.is_some());
         assert!(processor_wp.as_ref().unwrap().error_message.is_none());
         assert!(processor_wp.as_ref().unwrap().processor.is_some());
+        let referenced_ids = [
+            ComponentRootType::Source.parse_component_id("system-file:test"),
+            ComponentRootType::ItemFileResolver.parse_component_id("system-file:test"),
+            ComponentRootType::Downloader.parse_component_id("http"),
+            ComponentRootType::FileMover.parse_component_id("system-file"),
+            ComponentRootType::FileExistsDetector.parse_component_id("simple"),
+        ];
+        for id in &referenced_ids {
+            assert!(
+                component_manager.get_component(id).unwrap().get_refs().contains(name)
+            );
+        }
+        let source_component = component_manager
+            .get_component(&referenced_ids[0])
+            .unwrap()
+            .require_component()
+            .unwrap();
+        let source_refs_while_running = Arc::strong_count(&source_component);
+        drop(processor_wp);
         manager.destroy_processor(name);
         assert!(!manager.processor_exists(name));
+        assert!(Arc::strong_count(&source_component) < source_refs_while_running);
+        for id in &referenced_ids {
+            assert!(component_manager.get_component(id).unwrap().get_refs().is_empty());
+        }
     }
 
     #[test]
     fn create_processor_given_error_component() {
-        let component_manager = ComponentManager::new(Arc::new(YamlConfigOperator::new(
-            "./tests/resources/config.yaml",
+        let component_manager = Arc::new(ComponentManager::new(Arc::new(
+            YamlConfigOperator::new("./tests/resources/config.yaml"),
         )));
+        component_manager.register_suppliers(get_build_in_component_supplier()).unwrap();
         let manager = ProcessorManager::new(
-            Arc::new(component_manager),
+            component_manager.clone(),
             Arc::new(MemoryProcessingStorage::new()),
         );
 
@@ -687,9 +684,9 @@ mod test {
             name: name.to_string(),
             enabled: true,
             triggers: vec![],
-            source: "system-file:not-exists".to_string(),
+            source: "system-file:test".to_string(),
             item_file_resolver: "system-file:test".to_string(),
-            downloader: "http".to_string(),
+            downloader: "not-exists".to_string(),
             file_mover: "system-file".to_string(),
             save_path: "./tests/resources/output".to_string(),
             options: ProcessorOptionConfig::default(),
@@ -699,6 +696,15 @@ mod test {
         let processor_wp = manager.get_processor(name);
         assert!(processor_wp.is_some());
         assert!(processor_wp.unwrap().error_message.is_some());
+        let source_id = ComponentRootType::Source.parse_component_id("system-file:test");
+        assert!(
+            component_manager.get_component(&source_id).unwrap().get_refs().is_empty()
+        );
+        let resolver_id =
+            ComponentRootType::ItemFileResolver.parse_component_id("system-file:test");
+        assert!(
+            component_manager.get_component(&resolver_id).unwrap().get_refs().is_empty()
+        );
     }
     #[tokio::test]
     async fn content_filter_options_keep_exclusions_and_item_filter_references() {

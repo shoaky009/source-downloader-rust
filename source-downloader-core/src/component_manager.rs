@@ -1,10 +1,10 @@
-﻿#![allow(dead_code)]
+#![allow(dead_code)]
 
 use crate::config::{ConfigOperator, Properties};
 use parking_lot::RwLock;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentId, ComponentRootType, ComponentSupplier, ComponentType, SdComponent,
-    Trigger,
+    ComponentError, ComponentId, ComponentRootType, ComponentSupplier, ComponentType,
+    SdComponent, Trigger,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -56,19 +56,13 @@ impl ComponentManager {
     ) -> Result<bool, ComponentError> {
         let component_types = supplier.supply_types();
         for component_type in component_types {
-            if self
-                .component_suppliers
-                .read()
-                .contains_key(&component_type)
-            {
+            if self.component_suppliers.read().contains_key(&component_type) {
                 return Err(ComponentError::new(format!(
                     "Component type {:?} already registered",
                     component_type
                 )));
             }
-            self.component_suppliers
-                .write()
-                .insert(component_type, supplier.clone());
+            self.component_suppliers.write().insert(component_type, supplier.clone());
         }
         Ok(true)
     }
@@ -83,7 +77,10 @@ impl ComponentManager {
         Ok(true)
     }
 
-    pub fn get_component(&self, id: &ComponentId) -> Result<Arc<ComponentWrapper>, ComponentError> {
+    pub fn get_component(
+        &self,
+        id: &ComponentId,
+    ) -> Result<Arc<ComponentWrapper>, ComponentError> {
         let instance_name = id.display();
 
         {
@@ -97,7 +94,10 @@ impl ComponentManager {
         let component_type = &id.component_type;
         let name = &id.name;
         let supplier = guard.get(component_type).ok_or_else(|| {
-            ComponentError::new(format!("Supplier not found for type: {}", component_type))
+            ComponentError::new(format!(
+                "Supplier not found for type: {}",
+                component_type
+            ))
         })?;
 
         let types = supplier.supply_types();
@@ -108,7 +108,7 @@ impl ComponentManager {
             Ok(c) => {
                 info!("Component[created] {}", instance_name);
                 (Some(c), None)
-            },
+            }
             Err(e) => {
                 eprintln!("Failed to create component {}: {}", instance_name, e);
                 (None, Some(e))
@@ -147,8 +147,9 @@ impl ComponentManager {
             }
         }
 
-        target_wrapper
-            .ok_or_else(|| ComponentError::new(format!("未找到类型为 '{}' 的组件", component_type)))
+        target_wrapper.ok_or_else(|| {
+            ComponentError::new(format!("未找到类型为 '{}' 的组件", component_type))
+        })
     }
 
     fn get_component_props(
@@ -179,11 +180,7 @@ impl ComponentManager {
 
         Err(ComponentError::new(format!(
             "Component config not found, types {:?} name:{}",
-            types
-                .iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<_>>()
-                .join(","),
+            types.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(","),
             name,
         )))
     }
@@ -232,6 +229,12 @@ impl ComponentManager {
         self.component_wrappers.read().values().cloned().collect()
     }
 
+    pub fn remove_processor_refs(&self, processor_name: &str) {
+        for wrapper in self.component_wrappers.read().values() {
+            wrapper.remove_ref(processor_name);
+        }
+    }
+
     pub fn for_each_trigger<F>(&self, mut f: F)
     where
         F: FnMut(&ComponentWrapper, Arc<dyn Trigger>),
@@ -275,15 +278,19 @@ impl ComponentWrapper {
             return Ok(self.component.as_ref().unwrap().clone());
         }
         Err(ComponentError::new(
-            self.creation_error
-                .clone()
-                .unwrap_or_else(|| format!("Component {} not created", self.id.display())),
+            self.creation_error.clone().unwrap_or_else(|| {
+                format!("Component {} not created", self.id.display())
+            }),
         ))
     }
 
-    pub fn get_and_mark_ref(&self, processor_name: String) -> Option<Arc<dyn SdComponent>> {
-        self.processor_refs.write().insert(processor_name);
-        self.component.clone()
+    pub fn require_and_mark_ref(
+        &self,
+        processor_name: &str,
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
+        let component = self.require_component()?;
+        self.processor_refs.write().insert(processor_name.to_owned());
+        Ok(component)
     }
 
     pub fn remove_ref(&self, processor_name: &str) {
@@ -328,8 +335,9 @@ mod tests {
     use source_downloader_sdk::component::{ComponentRootType, ComponentSupplier};
     use std::sync::{Arc, LazyLock};
 
-    static CONFIG_OP: LazyLock<Arc<dyn ConfigOperator>> =
-        LazyLock::new(|| Arc::new(YamlConfigOperator::new("./tests/resources/config.yaml")));
+    static CONFIG_OP: LazyLock<Arc<dyn ConfigOperator>> = LazyLock::new(|| {
+        Arc::new(YamlConfigOperator::new("./tests/resources/config.yaml"))
+    });
     // 预期一切正常
     #[tokio::test]
     async fn normal_case() {
@@ -347,18 +355,12 @@ mod tests {
 
         // multiple time get a component case, the component should be the same instance
         let component_wp2 = manager.get_component(id).unwrap();
-        assert!(Arc::ptr_eq(
-            &component_arc,
-            &component_wp2.component.as_ref().unwrap()
-        ));
+        assert!(Arc::ptr_eq(&component_arc, &component_wp2.component.as_ref().unwrap()));
 
         // to destroy a component case, the component should be recreated so that the instance is different
         manager.destroy(id);
         let component_wp3 = manager.get_component(id).unwrap();
-        assert!(!Arc::ptr_eq(
-            &component_arc,
-            &component_wp3.component.as_ref().unwrap()
-        ));
+        assert!(!Arc::ptr_eq(&component_arc, &component_wp3.component.as_ref().unwrap()));
     }
 
     #[test]
@@ -391,9 +393,7 @@ mod tests {
         let error = result.unwrap_err();
         assert!(error.message.starts_with("Supplier not found for type:"));
 
-        manager
-            .register_supplier(Arc::new(SystemFileSourceSupplier {}))
-            .unwrap();
+        manager.register_supplier(Arc::new(SystemFileSourceSupplier {})).unwrap();
 
         let result2 = manager.get_component(id);
         assert!(result2.is_err());
