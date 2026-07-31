@@ -320,3 +320,47 @@ impl SourcePointer for MikanSourcePointer {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn converts_mikan_torrent_publication_date() {
+        let channel = Channel::read_from(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+                <rss version="2.0">
+                  <channel>
+                    <title>Mikan</title>
+                    <link>https://mikanani.me</link>
+                    <description>Mikan feed</description>
+                    <item>
+                      <title>Episode 01</title>
+                      <link>https://mikanani.me/Home/Episode/example</link>
+                      <pubDate>Thu, 31 Jul 2026 00:00:00 +0800</pubDate>
+                      <enclosure
+                        url="https://mikanani.me/Download/example.torrent"
+                        length="123"
+                        type="application/x-bittorrent" />
+                      <torrent>
+                        <link>https://mikanani.me/Download/example.torrent</link>
+                        <contentLength>123</contentLength>
+                        <pubDate>2026-07-31T15:26:37.123</pubDate>
+                      </torrent>
+                    </item>
+                  </channel>
+                </rss>"#
+                .as_slice(),
+        )
+        .unwrap();
+
+        let item = MikanSource::convert_item(&channel.items[0]).unwrap();
+
+        assert_eq!("Episode 01", item.title);
+        assert_eq!("2026-07-31 15:26:37.123 +08:00:00", item.datetime.to_string());
+        assert_eq!(
+            "https://mikanani.me/Download/example.torrent",
+            item.download_uri.to_string()
+        );
+    }
+}

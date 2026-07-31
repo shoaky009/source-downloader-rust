@@ -44,7 +44,7 @@ retry = "2"
 tokio-retry2 = "0.9"
 fastmurmur3 = "0.2.0"
 
-rss-for-mikan = "2.0.4-mikan"
+rss-for-mikan = "=2.0.4-mikan"
 reqwest = { version = "0.12", default-features = false }
 scraper = "0.25"
 indexmap = { version = "2" }
