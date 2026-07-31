@@ -1,9 +1,9 @@
+use source_downloader_sdk::SdComponent;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ProcessTask, SdComponent,
     SdComponentMetadata, Stateful, TaskRegistry, Trigger,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
-use source_downloader_sdk::SdComponent;
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, Mutex};
 
@@ -20,14 +20,18 @@ impl ComponentSupplier for FixedScheduleTriggerSupplier {
         vec![ComponentType::trigger("fixed".to_string())]
     }
 
-    fn apply(&self, props: &Map<String, Value>) -> Result<Arc<dyn SdComponent>, ComponentError> {
+    fn apply(
+        &self,
+        props: &Map<String, Value>,
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let interval_str = props
             .get("interval")
             .ok_or_else(|| ComponentError::from("Missing 'interval' property"))?
             .as_str()
             .ok_or_else(|| ComponentError::from("Invalid 'interval' property"))?;
-        let interval = humantime::parse_duration(interval_str)
-            .map_err(|e| ComponentError::from(e.to_string() + " for 'interval' property"))?;
+        let interval = humantime::parse_duration(interval_str).map_err(|e| {
+            ComponentError::from(e.to_string() + " for 'interval' property")
+        })?;
 
         let on_start_run_tasks = match props.get("on-start-run-tasks") {
             None => false,
@@ -37,10 +41,7 @@ impl ComponentSupplier for FixedScheduleTriggerSupplier {
             },
         };
 
-        Ok(Arc::new(FixedScheduleTrigger::new(
-            interval,
-            on_start_run_tasks,
-        )))
+        Ok(Arc::new(FixedScheduleTrigger::new(interval, on_start_run_tasks)))
     }
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
@@ -129,18 +130,12 @@ impl Trigger for FixedScheduleTrigger {
 
     fn add_task(&self, task: Arc<dyn ProcessTask>) {
         self.task_registry.add(task);
-        debug!(
-            "Current task count: {}",
-            self.task_registry.tasks.read().len()
-        );
+        debug!("Current task count: {}", self.task_registry.tasks.read().len());
     }
 
     fn remove_task(&self, task: Arc<dyn ProcessTask>) {
         self.task_registry.remove(task);
-        debug!(
-            "Current task count: {}",
-            self.task_registry.tasks.read().len()
-        );
+        debug!("Current task count: {}", self.task_registry.tasks.read().len());
     }
 }
 
@@ -150,10 +145,7 @@ impl Debug for FixedScheduleTrigger {
             .field("interval", &self.interval)
             .field("on_start_run_tasks", &self.on_start_run_tasks)
             .field("tasks", &self.task_registry.tasks.read().len())
-            .field(
-                "worker_handle",
-                &self.worker_handle.lock().unwrap().is_some(),
-            )
+            .field("worker_handle", &self.worker_handle.lock().unwrap().is_some())
             .finish()
     }
 }
@@ -249,10 +241,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(10)).await;
 
         // 即使时间没到 100ms，因为 run_on_start 是 true，应该已经执行了 1 次
-        assert!(
-            counter.load(Ordering::SeqCst) >= 1,
-            "Should run immediately on start"
-        );
+        assert!(counter.load(Ordering::SeqCst) >= 1, "Should run immediately on start");
 
         trigger.stop();
     }
@@ -269,18 +258,11 @@ mod tests {
 
         // 刚启动，应该还没执行
         tokio::time::sleep(Duration::from_millis(5)).await;
-        assert_eq!(
-            counter.load(Ordering::SeqCst),
-            0,
-            "Should NOT run immediately"
-        );
+        assert_eq!(counter.load(Ordering::SeqCst), 0, "Should NOT run immediately");
 
         // 等待超过 50ms
         tokio::time::sleep(Duration::from_millis(60)).await;
-        assert!(
-            counter.load(Ordering::SeqCst) >= 1,
-            "Should run after interval"
-        );
+        assert!(counter.load(Ordering::SeqCst) >= 1, "Should run after interval");
 
         trigger.stop();
     }

@@ -1,8 +1,12 @@
-use crate::expression::{source_file_variables, source_item_variables, CompiledExpression};
+use crate::expression::{
+    CompiledExpression, source_file_variables, source_item_variables,
+};
 use crate::process::file::PathPattern;
 use serde_json::Value;
-use source_downloader_sdk::component::{FileContentFilter, SourceFile, SourceItemFilter, VariableProvider};
 use source_downloader_sdk::SourceItem;
+use source_downloader_sdk::component::{
+    FileContentFilter, SourceFile, SourceItemFilter, VariableProvider,
+};
 use std::collections::HashSet;
 use std::sync::Arc;
 

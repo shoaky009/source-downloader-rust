@@ -1,21 +1,23 @@
-use crate::error_handle::AppError;
 use crate::ApplicationContext;
+use crate::error_handle::AppError;
 use axum::extract::{FromRequestParts, Path, Query, State};
-use axum::http::request::Parts;
 use axum::http::StatusCode;
-use axum::response::sse::Event;
+use axum::http::request::Parts;
 use axum::response::Sse;
+use axum::response::sse::Event;
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use futures_util::Stream;
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use source_downloader_core::application::CoreApplication;
 use source_downloader_core::component_manager::ComponentManager;
 use source_downloader_core::config::ComponentConfig;
 use source_downloader_sdk::component::ComponentRootType::Trigger;
-use source_downloader_sdk::component::{ComponentError, ComponentId, ComponentRootType, ComponentType};
+use source_downloader_sdk::component::{
+    ComponentError, ComponentId, ComponentRootType, ComponentType,
+};
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::convert::Infallible;
@@ -35,10 +37,7 @@ pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
                     "/{root_type}/{type_name}/{name}",
                     put(save_component_props).delete(delete_component),
                 )
-                .route(
-                    "/{root_type}/{type_name}/{name}/reload",
-                    post(reload_component),
-                )
+                .route("/{root_type}/{type_name}/{name}/reload", post(reload_component))
                 .route("/types", get(all_types))
                 .route("/schema", get(component_schema))
                 .route("/state-stream", get(state_stream)),
@@ -64,20 +63,14 @@ async fn query_components(
     let mut results: Vec<ComponentInfo> = all_configs
         .into_iter()
         .filter(|(root_type_str, _)| {
-            query
-                .root_type
-                .as_ref()
-                .map_or(true, |t| t == root_type_str)
+            query.root_type.as_ref().map_or(true, |t| t == root_type_str)
         })
         .flat_map(|(root_type_str, configs)| {
             let all_components = all_components.clone();
             configs
                 .into_iter()
                 .filter(|config| {
-                    query
-                        .type_name
-                        .as_ref()
-                        .map_or(true, |t| t == &config.component_type)
+                    query.type_name.as_ref().map_or(true, |t| t == &config.component_type)
                 })
                 .filter(|config| query.name.as_ref().map_or(true, |n| n == &config.name))
                 .map(move |config| {
@@ -92,10 +85,8 @@ async fn query_components(
                         &config.name,
                     );
 
-                    let wrapper = all_components
-                        .iter()
-                        .find(|w| w.id == component_id)
-                        .cloned();
+                    let wrapper =
+                        all_components.iter().find(|w| w.id == component_id).cloned();
 
                     let state_detail = wrapper.as_ref().and_then(|w| {
                         if w.primary {
@@ -203,9 +194,11 @@ async fn delete_component(
             )));
         }
     }
-    _core
-        .config_operator
-        .delete_component(&path.root_type, &path.type_name, &path.name)?;
+    _core.config_operator.delete_component(
+        &path.root_type,
+        &path.type_name,
+        &path.name,
+    )?;
     Ok(())
 }
 
@@ -220,9 +213,7 @@ async fn reload_component(
     ))?;
     let removed = _core.component_manager.destroy(&id);
     if removed.is_none() {
-        return Err(AppError::NotFound(
-            "Component instance not found".to_string(),
-        ));
+        return Err(AppError::NotFound("Component instance not found".to_string()));
     };
 
     for name in removed.unwrap().get_refs() {
@@ -261,16 +252,15 @@ async fn all_types(
             .iter()
             .flat_map(|x| x.supply_types())
             .filter(|x| q.root_type.as_ref().map_or(true, |t| *t == x.root_type))
-            .map(|x| ComponentTypeInfo {
-                root_type: x.root_type,
-                name: x.name,
-            })
+            .map(|x| ComponentTypeInfo { root_type: x.root_type, name: x.name })
             .collect::<Vec<_>>(),
     )
 }
 
 #[axum::debug_handler]
-async fn component_schema(State(_core): State<Arc<CoreApplication>>) -> Json<Vec<String>> {
+async fn component_schema(
+    State(_core): State<Arc<CoreApplication>>,
+) -> Json<Vec<String>> {
     info!("component_schema");
     Json(vec![])
 }
@@ -287,7 +277,8 @@ async fn state_stream(
         .map(|x| ComponentId::parse(x))
         .collect::<Result<HashSet<_>, _>>()
         .unwrap();
-    let stream = ComponentStateStream::new(_core.component_manager.clone(), component_ids);
+    let stream =
+        ComponentStateStream::new(_core.component_manager.clone(), component_ids);
     Sse::new(stream)
 }
 
@@ -317,7 +308,10 @@ struct ComponentStateStream {
 }
 
 impl ComponentStateStream {
-    fn new(component_manager: Arc<ComponentManager>, component_ids: HashSet<ComponentId>) -> Self {
+    fn new(
+        component_manager: Arc<ComponentManager>,
+        component_ids: HashSet<ComponentId>,
+    ) -> Self {
         Self {
             component_manager,
             component_ids,
@@ -329,7 +323,10 @@ impl ComponentStateStream {
 impl Stream for ComponentStateStream {
     type Item = Result<Event, Infallible>;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
         match Pin::new(&mut self.interval).poll_tick(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(_) => {
@@ -349,7 +346,10 @@ impl Stream for ComponentStateStream {
                         let event = Event::default()
                             .id(wrapper.id.display())
                             .event("component-state")
-                            .data(source_downloader_sdk::serde_json::to_string(&state).unwrap_or("{}".to_string()));
+                            .data(
+                                source_downloader_sdk::serde_json::to_string(&state)
+                                    .unwrap_or("{}".to_string()),
+                            );
                         return Poll::Ready(Some(Ok(event)));
                     }
                 }
@@ -431,10 +431,13 @@ where
 {
     type Rejection = (StatusCode, String);
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
         let query = parts.uri.query().unwrap_or("");
-        let value =
-            serde_qs::from_str(query).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+        let value = serde_qs::from_str(query)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
         Ok(Qs(value))
     }
 }

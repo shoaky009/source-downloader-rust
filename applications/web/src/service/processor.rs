@@ -1,5 +1,5 @@
-use crate::error_handle::AppError;
 use crate::ApplicationContext;
+use crate::error_handle::AppError;
 use axum::extract::{Path, Query, State};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
@@ -7,10 +7,10 @@ use serde::{Deserialize, Serialize};
 use serde_qs::to_string;
 use source_downloader_core::application::CoreApplication;
 use source_downloader_core::config::ProcessorConfig;
+use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::ProcessTask;
 use source_downloader_sdk::serde_json::{Map, Value};
 use source_downloader_sdk::time::UtcDateTime;
-use source_downloader_sdk::SourceItem;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::info;
@@ -22,17 +22,12 @@ pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
             Router::new()
                 .route(
                     "/{name}",
-                    get(get_processor)
-                        .put(update_processor)
-                        .delete(delete_processor),
+                    get(get_processor).put(update_processor).delete(delete_processor),
                 )
                 .route("/", get(query_processors).post(create_processor))
                 .route("/{name}/reload", post(reload_processor))
                 .route("/{name}/dry-run", get(dry_run).post(dry_run))
-                .route(
-                    "/{name}/dry-run-stream",
-                    get(dry_run_stream).post(dry_run_stream),
-                )
+                .route("/{name}/dry-run-stream", get(dry_run_stream).post(dry_run_stream))
                 .route("/{name}/trigger", post(trigger_processor))
                 .route("/{name}/rename", post(trigger_rename))
                 .route("/{name}/items", post(post_items))
@@ -44,7 +39,10 @@ pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
 }
 
 #[axum::debug_handler]
-async fn get_processor(State(_): State<Arc<CoreApplication>>, Path(name): Path<String>) -> () {
+async fn get_processor(
+    State(_): State<Arc<CoreApplication>>,
+    Path(name): Path<String>,
+) -> () {
     info!("get_processor name={}", name);
     todo!()
 }
@@ -163,16 +161,15 @@ async fn post_items(
     Path(_name): Path<String>,
     Json(items): Json<Vec<SourceItem>>,
 ) -> () {
-    info!(
-        "post_items name={}, items={}",
-        _name,
-        to_string(&items).unwrap()
-    );
+    info!("post_items name={}, items={}", _name, to_string(&items).unwrap());
     todo!()
 }
 
 #[axum::debug_handler]
-async fn get_state(State(_): State<Arc<CoreApplication>>, Path(name): Path<String>) -> () {
+async fn get_state(
+    State(_): State<Arc<CoreApplication>>,
+    Path(name): Path<String>,
+) -> () {
     info!("get_state name={}", name);
     todo!()
 }

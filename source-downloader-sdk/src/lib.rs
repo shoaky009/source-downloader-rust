@@ -126,7 +126,7 @@ pub mod test_utils {
                 errors: vec![],
                 status: Undetected,
                 target_path: OnceLock::default(),
-                data: None
+                data: None,
             }
         }
     }

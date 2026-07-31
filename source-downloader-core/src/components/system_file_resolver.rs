@@ -1,4 +1,3 @@
-use std::fmt::{Display, Formatter};
 use async_trait::async_trait;
 use serde_json::{Map, Value};
 use source_downloader_sdk::component::{
@@ -6,6 +5,7 @@ use source_downloader_sdk::component::{
     SdComponentMetadata, SourceFile,
 };
 use source_downloader_sdk::{SdComponent, SourceItem};
+use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 use std::sync::Arc;
 use url::Url;
@@ -20,7 +20,10 @@ impl ComponentSupplier for SystemFileResolverSupplier {
         vec![ComponentType::file_resolver("system-file".to_owned())]
     }
 
-    fn apply(&self, _: &Map<String, Value>) -> Result<Arc<dyn SdComponent>, ComponentError> {
+    fn apply(
+        &self,
+        _: &Map<String, Value>,
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         Ok(Arc::new(INSTANCE))
     }
 
@@ -85,10 +88,7 @@ mod tests {
             .path_and_query(format!("file://{}", file_path.to_str().unwrap()))
             .build()
             .unwrap();
-        let item = SourceItem {
-            download_uri,
-            ..Default::default()
-        };
+        let item = SourceItem { download_uri, ..Default::default() };
 
         let resolver = INSTANCE;
         let result = resolver.resolve_files(&item).await;
@@ -118,10 +118,7 @@ mod tests {
             .path_and_query(format!("file://{}", root.to_str().unwrap()))
             .build()
             .unwrap();
-        let item = SourceItem {
-            download_uri,
-            ..Default::default()
-        };
+        let item = SourceItem { download_uri, ..Default::default() };
 
         let resolver = INSTANCE;
         let result = resolver.resolve_files(&item).await;
@@ -148,10 +145,7 @@ mod tests {
             .path_and_query(format!("file://{}", encoded_path))
             .build()
             .unwrap();
-        let item = SourceItem {
-            download_uri,
-            ..Default::default()
-        };
+        let item = SourceItem { download_uri, ..Default::default() };
         let resolver = INSTANCE;
         let result = resolver.resolve_files(&item).await;
 
@@ -162,14 +156,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_non_existent_path() {
-        let download_uri = Uri::builder()
-            .path_and_query("file:///non/existent/path")
-            .build()
-            .unwrap();
-        let item = SourceItem {
-            download_uri,
-            ..Default::default()
-        };
+        let download_uri =
+            Uri::builder().path_and_query("file:///non/existent/path").build().unwrap();
+        let item = SourceItem { download_uri, ..Default::default() };
 
         let resolver = INSTANCE;
         let result = resolver.resolve_files(&item).await;

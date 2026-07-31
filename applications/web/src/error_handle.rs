@@ -58,21 +58,15 @@ impl IntoResponse for AppError {
                 "Internal Server Error".to_string(),
                 Some(msg.clone()),
             ),
-            Self::NotFound(msg) => (
-                StatusCode::NOT_FOUND,
-                "Not Found".to_string(),
-                Some(msg.clone()),
-            ),
-            Self::BadRequest(msg) => (
-                StatusCode::BAD_REQUEST,
-                "Bad Request".to_string(),
-                Some(msg.clone()),
-            ),
-            Self::Unauthorized(msg) => (
-                StatusCode::UNAUTHORIZED,
-                "Unauthorized".to_string(),
-                Some(msg.clone()),
-            ),
+            Self::NotFound(msg) => {
+                (StatusCode::NOT_FOUND, "Not Found".to_string(), Some(msg.clone()))
+            }
+            Self::BadRequest(msg) => {
+                (StatusCode::BAD_REQUEST, "Bad Request".to_string(), Some(msg.clone()))
+            }
+            Self::Unauthorized(msg) => {
+                (StatusCode::UNAUTHORIZED, "Unauthorized".to_string(), Some(msg.clone()))
+            }
         };
 
         if status_code.as_u16() >= 500 {
@@ -92,7 +86,8 @@ impl IntoResponse for AppError {
 }
 
 pub async fn error_handler(request: Request<Body>, next: Next) -> impl IntoResponse {
-    let result = panic::catch_unwind(AssertUnwindSafe(|| async { next.run(request).await }));
+    let result =
+        panic::catch_unwind(AssertUnwindSafe(|| async { next.run(request).await }));
     match result {
         Ok(future) => {
             // 正常情况，执行 future 并返回响应
@@ -109,7 +104,8 @@ pub async fn error_handler(request: Request<Body>, next: Next) -> impl IntoRespo
             };
 
             log::error!("Request handler panicked: {}", message);
-            AppError::InternalError(format!("Internal server error: {}", message)).into_response()
+            AppError::InternalError(format!("Internal server error: {}", message))
+                .into_response()
         }
     }
 }

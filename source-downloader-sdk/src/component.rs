@@ -877,9 +877,7 @@ pub enum FileContentStatus {
 
 pub trait ProcessContext {
     fn processor(&self) -> &ProcessorInfo;
-    fn processed_items(
-        &self,
-    ) -> Box<dyn ExactSizeIterator<Item = &SourceItem> + '_>;
+    fn processed_items(&self) -> Box<dyn ExactSizeIterator<Item = &SourceItem> + '_>;
     fn get_item_content(&self, item: &SourceItem) -> Option<InProcessingItem<'_>>;
     fn has_error(&self) -> bool;
 }

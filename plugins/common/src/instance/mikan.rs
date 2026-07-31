@@ -44,10 +44,7 @@ impl MikanClient {
             .build()
             .unwrap_or_default();
 
-        Self {
-            token,
-            http_client: client,
-        }
+        Self { token, http_client: client }
     }
 
     /// 获取 Bangumi 页面信息
@@ -55,24 +52,21 @@ impl MikanClient {
         &self,
         url: &str,
     ) -> Result<BangumiPageInfo, Arc<reqwest::Error>> {
-        let key = UrlKey {
-            url: url.to_string(),
-            token: self.token.clone(),
-        };
+        let key = UrlKey { url: url.to_string(), token: self.token.clone() };
         let future = self.fetch_bangumi_page_info(key.url.clone());
         Ok(BANGUMI_CACHE.try_get_with(key, future).await?)
     }
 
     /// 获取 Episode 页面信息
-    pub async fn get_episode_page_info(&self, url: &str) -> Result<EpisodePageInfo, String> {
+    pub async fn get_episode_page_info(
+        &self,
+        url: &str,
+    ) -> Result<EpisodePageInfo, String> {
         let future = self.fetch_episode_page_info(url);
         // 访问全局缓存
         EPISODE_CACHE
             .try_get_with(
-                UrlKey {
-                    url: url.to_owned(),
-                    token: self.token.to_owned(),
-                },
+                UrlKey { url: url.to_owned(), token: self.token.to_owned() },
                 future,
             )
             .await
@@ -85,7 +79,8 @@ impl MikanClient {
         &self,
         url_str: String,
     ) -> Result<BangumiPageInfo, reqwest::Error> {
-        let html = Self::fetch_html(&self.http_client, &url_str, self.token.as_deref()).await?;
+        let html =
+            Self::fetch_html(&self.http_client, &url_str, self.token.as_deref()).await?;
         let document = Html::parse_document(&html);
         let selector = Selector::parse(".bangumi-info a").unwrap();
         let subject_id = document.select(&selector).find_map(|element| {
@@ -98,15 +93,17 @@ impl MikanClient {
             None
         });
 
-        Ok(BangumiPageInfo {
-            bgm_tv_subject_id: subject_id,
-        })
+        Ok(BangumiPageInfo { bgm_tv_subject_id: subject_id })
     }
 
-    async fn fetch_episode_page_info(&self, uri: &str) -> Result<EpisodePageInfo, reqwest::Error> {
+    async fn fetch_episode_page_info(
+        &self,
+        uri: &str,
+    ) -> Result<EpisodePageInfo, reqwest::Error> {
         let base_url = Url::parse(uri).unwrap();
 
-        let html = Self::fetch_html(&self.http_client, uri, self.token.as_deref()).await?;
+        let html =
+            Self::fetch_html(&self.http_client, uri, self.token.as_deref()).await?;
         let document = Html::parse_document(&html);
 
         let title_selector = Selector::parse(".bangumi-title a").unwrap();
@@ -126,11 +123,7 @@ impl MikanClient {
             .and_then(|el| el.value().attr("href"))
             .map(|href| resolve_url(&base_url, href));
 
-        Ok(EpisodePageInfo {
-            bangumi_title,
-            mikan_href,
-            fansub_rss,
-        })
+        Ok(EpisodePageInfo { bangumi_title, mikan_href, fansub_rss })
     }
 
     async fn fetch_html(

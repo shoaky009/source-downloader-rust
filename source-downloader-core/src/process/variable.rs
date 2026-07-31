@@ -21,10 +21,7 @@ pub trait ConflictStrategy: Sync + Send {
 pub struct AnyStrategy;
 impl ConflictStrategy for AnyStrategy {
     fn resolve(&self, _: &str, candidates: &[Candidate]) -> String {
-        candidates
-            .last()
-            .map(|c| c.value.clone())
-            .unwrap_or_default()
+        candidates.last().map(|c| c.value.clone()).unwrap_or_default()
     }
 }
 
@@ -52,7 +49,9 @@ impl ConflictStrategy for VoteStrategy {
         }
         counts
             .into_iter()
-            .max_by(|(_, (cnt1, idx1)), (_, (cnt2, idx2))| cnt1.cmp(cnt2).then(idx2.cmp(idx1)))
+            .max_by(|(_, (cnt1, idx1)), (_, (cnt2, idx2))| {
+                cnt1.cmp(cnt2).then(idx2.cmp(idx1))
+            })
             .map(|(v, _)| v.clone())
             .unwrap_or_default()
     }
@@ -86,19 +85,19 @@ pub struct VariableAggregation {
 }
 
 impl VariableAggregation {
-    pub fn new(strategy: Box<dyn ConflictStrategy>, name_replace: HashMap<String, String>) -> Self {
-        Self {
-            strategy,
-            name_replace,
-        }
+    pub fn new(
+        strategy: Box<dyn ConflictStrategy>,
+        name_replace: HashMap<String, String>,
+    ) -> Self {
+        Self { strategy, name_replace }
     }
 
     /// 合并单层变量 (如 itemVariables)
     /// inputs: [(accuracy, variables)]
     pub fn merge(&self, inputs: &[(i32, PatternVariables)]) -> PatternVariables {
-        self.merge_borrowed(inputs.iter().map(|(accuracy, variables)| {
-            (*accuracy, variables)
-        }))
+        self.merge_borrowed(
+            inputs.iter().map(|(accuracy, variables)| (*accuracy, variables)),
+        )
     }
 
     fn merge_borrowed<'a>(
@@ -108,11 +107,8 @@ impl VariableAggregation {
         let mut grouped: HashMap<String, Vec<Candidate>> = HashMap::new();
         for (index, (accuracy, variables)) in inputs.into_iter().enumerate() {
             for (key, value) in variables {
-                let final_key = self
-                    .name_replace
-                    .get(key)
-                    .cloned()
-                    .unwrap_or_else(|| key.clone());
+                let final_key =
+                    self.name_replace.get(key).cloned().unwrap_or_else(|| key.clone());
                 grouped.entry(final_key).or_default().push(Candidate {
                     value,
                     accuracy,
@@ -132,7 +128,10 @@ impl VariableAggregation {
 
     /// 合并多文件变量 (如 fileVariables)
     /// inputs: [(accuracy, Vec<PatternVariables>)]
-    pub fn merge_files(&self, inputs: &[(i32, Vec<PatternVariables>)]) -> Vec<PatternVariables> {
+    pub fn merge_files(
+        &self,
+        inputs: &[(i32, Vec<PatternVariables>)],
+    ) -> Vec<PatternVariables> {
         if inputs.is_empty() {
             return vec![];
         }
@@ -141,13 +140,9 @@ impl VariableAggregation {
 
         (0..file_count)
             .map(|file_index| {
-                self.merge_borrowed(inputs.iter().filter_map(
-                    |(accuracy, files)| {
-                        files
-                            .get(file_index)
-                            .map(|variables| (*accuracy, variables))
-                    },
-                ))
+                self.merge_borrowed(inputs.iter().filter_map(|(accuracy, files)| {
+                    files.get(file_index).map(|variables| (*accuracy, variables))
+                }))
             })
             .collect()
     }
@@ -161,33 +156,22 @@ mod tests {
     fn test_vote() {
         let agg = VariableAggregation::new(
             Box::new(VoteStrategy),
-            vec![("seasonNumber".into(), "season".into())]
-                .into_iter()
-                .collect(),
+            vec![("seasonNumber".into(), "season".into())].into_iter().collect(),
         );
 
         // 模拟输入数据: (accuracy, variables)
         let inputs = vec![
             (
                 2,
-                [
-                    ("seasonNumber".into(), "01".into()),
-                    ("test1".into(), "2".into()),
-                ]
-                .into(),
+                [("seasonNumber".into(), "01".into()), ("test1".into(), "2".into())]
+                    .into(),
             ),
             (
                 2,
-                [
-                    ("seasonNumber".into(), "01".into()),
-                    ("test2".into(), "2".into()),
-                ]
-                .into(),
+                [("seasonNumber".into(), "01".into()), ("test2".into(), "2".into())]
+                    .into(),
             ),
-            (
-                2,
-                [("season".into(), "02".into()), ("test3".into(), "2".into())].into(),
-            ),
+            (2, [("season".into(), "02".into()), ("test3".into(), "2".into())].into()),
         ];
 
         let result = agg.merge(&inputs);

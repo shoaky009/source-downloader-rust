@@ -1,11 +1,16 @@
 pub mod cel;
 
-use source_downloader_sdk::component::{FileContent, ItemContent, PatternVariables, SourceFile};
+use source_downloader_sdk::component::{
+    FileContent, ItemContent, PatternVariables, SourceFile,
+};
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::any::Any;
 
 pub trait CompiledExpressionFactory: Send + Sync {
-    fn create<T>(&self, expression: &str) -> Result<Box<dyn CompiledExpression<T>>, String>
+    fn create<T>(
+        &self,
+        expression: &str,
+    ) -> Result<Box<dyn CompiledExpression<T>>, String>
     where
         T: ExprValue;
 }
@@ -21,36 +26,23 @@ pub trait ExprValue: Send + Sync + Sized + 'static {
     fn from_value(value: &dyn Any) -> Result<Self, String>;
 }
 
-pub fn source_item_variables(item: &source_downloader_sdk::SourceItem) -> Map<String, Value> {
+pub fn source_item_variables(
+    item: &source_downloader_sdk::SourceItem,
+) -> Map<String, Value> {
     let mut vars = Map::new();
     vars.insert("title".to_owned(), Value::from(item.title.to_owned()));
-    vars.insert(
-        "datetime".to_owned(),
-        Value::from(item.datetime.to_string()),
-    );
+    vars.insert("datetime".to_owned(), Value::from(item.datetime.to_string()));
     vars.insert("year".to_owned(), Value::from(item.datetime.year()));
-    vars.insert(
-        "date".to_owned(),
-        Value::from(item.datetime.date().to_string()),
-    );
+    vars.insert("date".to_owned(), Value::from(item.datetime.date().to_string()));
     vars.insert("month".to_owned(), Value::from(item.datetime.month() as u8));
     vars.insert("day".to_owned(), Value::from(item.datetime.day()));
     vars.insert("link".to_owned(), Value::from(item.link.to_string()));
-    vars.insert(
-        "downloadUri".to_owned(),
-        Value::from(item.download_uri.to_string()),
-    );
-    vars.insert(
-        "contentType".to_owned(),
-        Value::from(item.content_type.to_string()),
-    );
+    vars.insert("downloadUri".to_owned(), Value::from(item.download_uri.to_string()));
+    vars.insert("contentType".to_owned(), Value::from(item.content_type.to_string()));
     vars.insert(
         "tags".to_owned(),
         Value::from(
-            item.tags
-                .iter()
-                .map(|x| Value::from(x.to_string()))
-                .collect::<Vec<Value>>(),
+            item.tags.iter().map(|x| Value::from(x.to_string())).collect::<Vec<Value>>(),
         ),
     );
 
@@ -88,10 +80,7 @@ pub fn source_file_variables(file: &SourceFile) -> Map<String, Value> {
     vars.insert(
         "tags".to_owned(),
         Value::from(
-            file.tags
-                .iter()
-                .map(|x| Value::from(x.to_string()))
-                .collect::<Vec<Value>>(),
+            file.tags.iter().map(|x| Value::from(x.to_string())).collect::<Vec<Value>>(),
         ),
     );
     vars.insert("attrs".to_owned(), Value::from(file.attrs.to_owned()));
@@ -127,17 +116,11 @@ pub fn file_content_variables(file: &FileContent) -> Map<String, Value> {
     vars.insert(
         "tags".to_owned(),
         Value::from(
-            file.tags
-                .iter()
-                .map(|x| Value::from(x.to_string()))
-                .collect::<Vec<Value>>(),
+            file.tags.iter().map(|x| Value::from(x.to_string())).collect::<Vec<Value>>(),
         ),
     );
     vars.insert("attrs".to_owned(), Value::from(file.attrs.to_owned()));
-    vars.insert(
-        "vars".to_owned(),
-        pattern_variables_value(&file.pattern_variables),
-    );
+    vars.insert("vars".to_owned(), pattern_variables_value(&file.pattern_variables));
 
     let path_segments: Vec<Value> = path
         .strip_prefix(&file.download_path)

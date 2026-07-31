@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
-use syn::{parse_macro_input, DeriveInput, Path};
+use syn::{DeriveInput, Path, parse_macro_input};
 
 #[proc_macro_derive(SdComponent, attributes(component))]
 pub fn derive_component(input: TokenStream) -> TokenStream {

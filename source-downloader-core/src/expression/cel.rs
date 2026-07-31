@@ -11,7 +11,10 @@ pub struct CelCompiledExpressionFactory {}
 pub const FACTORY: CelCompiledExpressionFactory = CelCompiledExpressionFactory {};
 
 impl CompiledExpressionFactory for CelCompiledExpressionFactory {
-    fn create<T>(&self, expression: &str) -> Result<Box<dyn CompiledExpression<T>>, String>
+    fn create<T>(
+        &self,
+        expression: &str,
+    ) -> Result<Box<dyn CompiledExpression<T>>, String>
     where
         T: ExprValue + 'static,
     {
@@ -34,9 +37,7 @@ where
         context.add_function("containsAny", contains_any);
         for (k, v) in vars.iter() {
             // 预期不应该错误
-            let _ = context
-                .add_variable(k.as_str(), Self::json_to_cel(v))
-                .unwrap();
+            let _ = context.add_variable(k.as_str(), Self::json_to_cel(v)).unwrap();
         }
         let value = self.program.execute(&context).map_err(|e| e.to_string())?;
         T::from_value(&value)
@@ -45,10 +46,7 @@ where
 
 impl<T> CelCompiledExpression<T> {
     pub fn new(program: Program) -> Self {
-        Self {
-            program,
-            _marker: PhantomData,
-        }
+        Self { program, _marker: PhantomData }
     }
 
     fn json_to_cel(value: &serde_json::Value) -> Value {
@@ -66,10 +64,8 @@ impl<T> CelCompiledExpression<T> {
                 Value::List(Arc::new(arr.iter().map(Self::json_to_cel).collect()))
             }
             serde_json::Value::Object(obj) => {
-                let map: HashMap<String, Value> = obj
-                    .iter()
-                    .map(|(k, v)| (k.clone(), Self::json_to_cel(v)))
-                    .collect();
+                let map: HashMap<String, Value> =
+                    obj.iter().map(|(k, v)| (k.clone(), Self::json_to_cel(v))).collect();
                 Value::Map(map.into())
             }
         }
@@ -180,8 +176,8 @@ fn contains_any(
 
 #[cfg(test)]
 mod tests {
-    use crate::expression::cel::FACTORY;
     use crate::expression::CompiledExpressionFactory;
+    use crate::expression::cel::FACTORY;
     use source_downloader_sdk::serde_json::Map;
 
     #[test]

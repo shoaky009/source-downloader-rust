@@ -1,8 +1,8 @@
-use crate::error_handle::error_handler;
 use crate::ApplicationContext;
+use crate::error_handle::error_handler;
 use axum::extract::State;
 use axum::routing::{get, post};
-use axum::{middleware, Router};
+use axum::{Router, middleware};
 use source_downloader_core::application::CoreApplication;
 use std::sync::Arc;
 

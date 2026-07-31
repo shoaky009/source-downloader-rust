@@ -25,10 +25,7 @@ impl Plugin for CommonPlugin {
     }
 
     fn description(&self) -> PluginDescription {
-        PluginDescription {
-            name: "common".to_string(),
-            version: "0.1.0".to_string(),
-        }
+        PluginDescription { name: "common".to_string(), version: "0.1.0".to_string() }
     }
 }
 // #[unsafe(no_mangle)]

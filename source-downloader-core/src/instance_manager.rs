@@ -2,7 +2,7 @@ use crate::config::{ConfigOperator, Properties};
 use parking_lot::RwLock;
 use source_downloader_sdk::component::ComponentError;
 use source_downloader_sdk::instance::InstanceFactory;
-use std::any::{type_name, Any, TypeId};
+use std::any::{Any, TypeId, type_name};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -45,15 +45,13 @@ impl InstanceManager {
 
         let final_props = match props {
             Some(p) => p,
-            None => self
-                .config_operator
-                .get_instance_props(name)
-                .map_err(|e| e.message)?,
+            None => {
+                self.config_operator.get_instance_props(name).map_err(|e| e.message)?
+            }
         };
 
-        let new_instance = factory
-            .create_instance(&final_props.inner)
-            .map_err(|e| e.message)?;
+        let new_instance =
+            factory.create_instance(&final_props.inner).map_err(|e| e.message)?;
         let instance_type_id = (*new_instance).type_id();
         if request_type_id != instance_type_id {
             let factory_type_name = factory.factory_name();
@@ -116,7 +114,7 @@ mod test {
     use crate::instance_manager::InstanceManager;
     use source_downloader_sdk::component::ComponentError;
     use source_downloader_sdk::instance::InstanceFactory;
-    use source_downloader_sdk::serde_json::{from_str, Map, Value};
+    use source_downloader_sdk::serde_json::{Map, Value, from_str};
     use std::any::{Any, TypeId};
     use std::sync::Arc;
 
@@ -126,25 +124,22 @@ mod test {
             "./tests/resources/config.yaml",
         )));
         let instance_name = "client1";
-        assert!(
-            manager
-                .load_instance::<String>(instance_name, None)
-                .is_err()
-        );
+        assert!(manager.load_instance::<String>(instance_name, None).is_err());
         let _ = manager.register_instance_factory(Arc::new(ClientFactory {}));
 
         let vars: Map<String, Value> = from_str(r#"{"name": "hello"}"#).unwrap();
-        let hello_value1 = manager
-            .load_instance::<Client>(instance_name, Some(Properties::from_map(vars.clone())));
+        let hello_value1 = manager.load_instance::<Client>(
+            instance_name,
+            Some(Properties::from_map(vars.clone())),
+        );
         assert!(hello_value1.is_ok());
         assert_eq!("hello", hello_value1.as_ref().unwrap().name);
 
-        let hello_value2 = manager
-            .load_instance::<Client>(instance_name, Some(Properties::from_map(vars.clone())));
-        assert!(Arc::ptr_eq(
-            &hello_value2.unwrap(),
-            hello_value1.as_ref().unwrap()
-        ));
+        let hello_value2 = manager.load_instance::<Client>(
+            instance_name,
+            Some(Properties::from_map(vars.clone())),
+        );
+        assert!(Arc::ptr_eq(&hello_value2.unwrap(), hello_value1.as_ref().unwrap()));
 
         // get by type
         let instances = manager.get_instances::<Client>();
@@ -155,8 +150,10 @@ mod test {
         assert_eq!(0, manager.instances.read().len());
 
         // destroy all instances
-        let _ = manager
-            .load_instance::<Client>(instance_name, Some(Properties::from_map(vars.clone())));
+        let _ = manager.load_instance::<Client>(
+            instance_name,
+            Some(Properties::from_map(vars.clone())),
+        );
         manager.destroy_all_instances();
         assert_eq!(0, manager.instances.read().len());
     }
@@ -169,11 +166,7 @@ mod test {
         let _ = manager.register_instance_factory(Arc::new(ErrorImplFactory {}));
         let result = manager.load_instance::<String>("client1", None);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .starts_with("Factory implementation error")
-        );
+        assert!(result.unwrap_err().starts_with("Factory implementation error"));
     }
 
     struct ClientFactory {}

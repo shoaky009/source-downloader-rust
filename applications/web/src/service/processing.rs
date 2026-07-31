@@ -4,9 +4,11 @@ use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 use source_downloader_core::application::CoreApplication;
-use source_downloader_sdk::storage::{ItemContentLite, ProcessingContent, ProcessingStatus};
-use source_downloader_sdk::time::{OffsetDateTime, UtcDateTime};
 use source_downloader_sdk::SourceItem;
+use source_downloader_sdk::storage::{
+    ItemContentLite, ProcessingContent, ProcessingStatus,
+};
+use source_downloader_sdk::time::{OffsetDateTime, UtcDateTime};
 use std::sync::Arc;
 use tracing::info;
 
@@ -62,10 +64,7 @@ async fn query_contents(
     State(_core): State<Arc<CoreApplication>>,
     Query(query): Query<QueryContents>,
 ) -> Json<Vec<ProcessingContent>> {
-    info!(
-        "query_contents limit={} offset={}",
-        query.limit, query.offset
-    );
+    info!("query_contents limit={} offset={}", query.limit, query.offset);
     vec![].into()
 }
 
@@ -84,12 +83,18 @@ async fn update_content(
 }
 
 #[axum::debug_handler]
-async fn delete_content(State(_core): State<Arc<CoreApplication>>, Path(id): Path<String>) -> () {
+async fn delete_content(
+    State(_core): State<Arc<CoreApplication>>,
+    Path(id): Path<String>,
+) -> () {
     info!("delete_content id={}", id);
 }
 
 #[axum::debug_handler]
-async fn reprocess(State(_core): State<Arc<CoreApplication>>, Path(id): Path<String>) -> () {
+async fn reprocess(
+    State(_core): State<Arc<CoreApplication>>,
+    Path(id): Path<String>,
+) -> () {
     info!("reprocess id={}", id);
 }
 

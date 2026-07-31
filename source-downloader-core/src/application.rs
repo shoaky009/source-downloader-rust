@@ -38,8 +38,7 @@ impl CoreApplication {
             }
         };
         info!("从目录加载插件: {}", path.display());
-        self.plugin_manager
-            .load_dylib_plugins(path.to_str().unwrap());
+        self.plugin_manager.load_dylib_plugins(path.to_str().unwrap());
     }
 
     fn register_instance_factory(&self) {
@@ -47,9 +46,7 @@ impl CoreApplication {
             for plugin in plugins {
                 plugin.get_instance_factories().iter().for_each(|x| {
                     // 有重复的直接crash
-                    self.instance_manager
-                        .register_instance_factory(x.clone())
-                        .unwrap();
+                    self.instance_manager.register_instance_factory(x.clone()).unwrap();
                 });
             }
         })

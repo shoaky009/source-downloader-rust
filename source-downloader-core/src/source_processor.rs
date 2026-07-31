@@ -5,6 +5,7 @@ use crate::process::variable::VariableAggregation;
 use async_trait::async_trait;
 use backon::Retryable;
 use backon::{BackoffBuilder, ExponentialBuilder};
+use futures_util::stream::{FuturesOrdered, StreamExt};
 use humantime::format_duration;
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -24,11 +25,11 @@ use source_downloader_sdk::component::{FileMover, ProcessingError};
 use source_downloader_sdk::component::{FileTagger, ProcessTask, SourceFile};
 use source_downloader_sdk::component::{ItemFileResolver, ItemPointer, SourcePointer};
 use source_downloader_sdk::component::{PatternVariables, VariableProvider};
+use source_downloader_sdk::serde_json::Value;
 use source_downloader_sdk::storage::{
     ItemContentLite, ProcessingContent, ProcessingContentQuery, ProcessingStatus,
     ProcessingStorage, ProcessingTargetPath, ProcessorSourceState,
 };
-use source_downloader_sdk::serde_json::Value;
 use source_downloader_sdk::time::OffsetDateTime;
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
@@ -160,15 +161,11 @@ impl ListenerContext {
 
     fn add(&mut self, content: ProcessingContent, files: Vec<FileContent>) {
         let index = self.contents.len();
-        self.content_indices
-            .insert(content.item_hash.to_owned(), index);
+        self.content_indices.insert(content.item_hash.to_owned(), index);
         self.contents.push((content, files));
     }
 
-    fn get_item_content_by_hash(
-        &self,
-        item_hash: &str,
-    ) -> Option<InProcessingItem<'_>> {
+    fn get_item_content_by_hash(&self, item_hash: &str) -> Option<InProcessingItem<'_>> {
         let index = *self.content_indices.get(item_hash)?;
         let (content, files) = self.contents.get(index)?;
         Some(InProcessingItem {
@@ -191,13 +188,9 @@ impl ProcessContext for ListenerContext {
         &self.processor_info
     }
 
-    fn processed_items(
-        &self,
-    ) -> Box<dyn ExactSizeIterator<Item = &SourceItem> + '_> {
+    fn processed_items(&self) -> Box<dyn ExactSizeIterator<Item = &SourceItem> + '_> {
         Box::new(
-            self.contents
-                .iter()
-                .map(|(content, _)| &content.item_content.source_item),
+            self.contents.iter().map(|(content, _)| &content.item_content.source_item),
         )
     }
 
@@ -212,18 +205,27 @@ impl ProcessContext for ListenerContext {
 
 #[allow(dead_code, unused)]
 struct ProcessRuntime {
-    pub trace_id: String,
-    pub mutex: Mutex<()>,
-    source_state: ProcessorSourceState,
-    source_pointer: Box<dyn SourcePointer>,
-    process_submitted_items: RwLock<HashSet<String>>,
-    processed_count: AtomicU32,
-    filter_count: AtomicU32,
+    trace_id: String,
+    item: ItemProcessRuntime,
+    coordinator: ProcessCoordinator,
     process_start_at: Option<Instant>,
     process_end_at: Option<Instant>,
     fetch_start_at: Option<Instant>,
     fetch_end_at: Option<Instant>,
+}
+
+struct ItemProcessRuntime {
+    mutex: Mutex<()>,
+    process_submitted_items: RwLock<HashSet<String>>,
+    processed_count: AtomicU32,
+    filter_count: AtomicU32,
+    reserved_target_paths: RwLock<HashSet<PathBuf>>,
     cancel_items: Vec<SourceItem>,
+}
+
+struct ProcessCoordinator {
+    source_state: ProcessorSourceState,
+    source_pointer: Box<dyn SourcePointer>,
     listener_context: ListenerContext,
 }
 
@@ -245,18 +247,37 @@ enum ItemAction {
     Error(ProcessingError),
 }
 
-impl ProcessRuntime {
+impl ItemProcessRuntime {
     fn filter_inc(&self) {
         self.filter_count.fetch_add(1, Ordering::Relaxed);
     }
+    fn reserve_target_paths(&self, files: &mut [FileContent]) -> bool {
+        let mut has_conflict = false;
+        let mut reserved = self.reserved_target_paths.write();
+        for file in files
+            .iter_mut()
+            .filter(|file| matches!(file.status, Normal | TargetExists | ReadyReplace))
+        {
+            if !reserved.insert(file.target_path().to_path_buf()) {
+                file.status = FileConflict;
+                file.exist_target_path = None;
+                has_conflict = true;
+            }
+        }
+        has_conflict
+    }
+
     fn processed_inc(&self) {
         self.processed_count.fetch_add(1, Ordering::Relaxed);
     }
+}
+
+impl ProcessRuntime {
     fn summary(&self) -> String {
         format!(
             "处理了{}个 过滤了{}个; [total] took {}; [fetch-items] took {}; [process-items] took {}",
-            self.processed_count.load(Ordering::Acquire),
-            self.filter_count.load(Ordering::Acquire),
+            self.item.processed_count.load(Ordering::Acquire),
+            self.item.filter_count.load(Ordering::Acquire),
             match (self.process_start_at, self.process_end_at) {
                 (Some(start), Some(end)) =>
                     Self::format_duration(end.duration_since(start)),
@@ -578,7 +599,7 @@ impl SourceProcessor {
 
     async fn advance_source_pointer(
         &self,
-        ctx: &mut ProcessRuntime,
+        ctx: &mut ProcessCoordinator,
         source_item: &SourceItem,
         item_pointer: &dyn ItemPointer,
     ) -> Result<(), ProcessingError> {
@@ -649,7 +670,7 @@ trait Process {
     async fn on_item_error(
         &self,
         _p: &SourceProcessor,
-        _ctx: &mut ProcessRuntime,
+        _ctx: &mut ProcessCoordinator,
         _item: &SourceItem,
         _err: &ProcessingError,
     ) {
@@ -658,7 +679,7 @@ trait Process {
     async fn on_item_filtered(
         &self,
         _p: &SourceProcessor,
-        _ctx: &mut ProcessRuntime,
+        _ctx: &mut ProcessCoordinator,
         _source_item: &SourceItem,
         _item_pointer: &dyn ItemPointer,
     ) -> Result<(), ProcessingError> {
@@ -668,7 +689,8 @@ trait Process {
     async fn on_item_success(
         &self,
         _p: &SourceProcessor,
-        _ctx: &mut ProcessRuntime,
+        _advance_pointer: bool,
+        _ctx: &mut ProcessCoordinator,
         _item_pointer: &dyn ItemPointer,
         _content: ProcessingContent,
         _files: Vec<FileContent>,
@@ -687,57 +709,89 @@ trait Process {
         }
         let _processing_guard = ProcessingGuard::new(&p.processing);
         let mut p_rt = self.init_process_context(p, start_time).await?;
-        debug!("Fetch with pointer: {}", p_rt.source_pointer.dump());
+        debug!("Fetch with pointer: {}", p_rt.coordinator.source_pointer.dump());
         p_rt.fetch_start_at = Some(Instant::now());
         let items = SourceProcessor::apply_retry(
             || async {
-                p.source.fetch(p_rt.source_pointer.as_ref(), p.options.fetch_limit).await
+                p.source
+                    .fetch(
+                        p_rt.coordinator.source_pointer.as_ref(),
+                        p.options.fetch_limit,
+                    )
+                    .await
             },
             "fetch-source-items",
         )
         .await?;
         p_rt.fetch_end_at = Some(Instant::now());
+        let parallelism = p.options.parallelism.max(1) as usize;
+        if p.options.parallelism == 0 {
+            warn!("Processor parallelism=0 is invalid; using parallelism=1");
+        }
+        let process = self;
+        let item_runtime = &p_rt.item;
+        let processor = p;
+        let make_item_future =
+            move |item: source_downloader_sdk::component::PointedItem| async move {
+                let item_pointer = item.item_pointer;
+                let source_item = item.source_item;
+                let item_action = process
+                    .process_item(&source_item, item_runtime, processor)
+                    .await
+                    .unwrap_or_else(ItemAction::Error);
+                (item_pointer, source_item, item_action)
+            };
+        let mut remaining_items = items.into_iter();
+        let mut item_results = FuturesOrdered::new();
+        for item in remaining_items.by_ref().take(parallelism) {
+            item_results.push_back(make_item_future(item));
+        }
 
-        for item in items {
-            let item_pointer = item.item_pointer;
-            let source_item = item.source_item;
-            let item_action = self
-                .process_item(&source_item, &p_rt, p)
-                .await
-                .unwrap_or_else(|error| ItemAction::Error(error));
+        let mut stop_scheduling = false;
+        while let Some((item_pointer, source_item, item_action)) =
+            item_results.next().await
+        {
+            let advance_pointer = !stop_scheduling;
+            let mut stop_after_item = false;
             match item_action {
                 ItemAction::Skip(reason) => {
                     debug!("[item-skip] {} {:?} ", reason, source_item);
-                    continue;
                 }
                 ItemAction::Filtered(reason) => {
                     debug!("[item-filtered] {} {:?} ", reason, source_item);
-                    self.on_item_filtered(
-                        p,
-                        &mut p_rt,
-                        &source_item,
-                        item_pointer.as_ref(),
-                    )
-                    .await?;
-                    continue;
+                    if advance_pointer
+                        && let Err(err) = self
+                            .on_item_filtered(
+                                p,
+                                &mut p_rt.coordinator,
+                                &source_item,
+                                item_pointer.as_ref(),
+                            )
+                            .await
+                    {
+                        p_rt.coordinator.listener_context.has_error = true;
+                        self.on_item_error(p, &mut p_rt.coordinator, &source_item, &err)
+                            .await;
+                        stop_after_item = true;
+                    }
                 }
                 ItemAction::Error(err) => {
-                    p_rt.processed_inc();
-                    p_rt.listener_context.has_error = true;
-                    self.on_item_error(p, &mut p_rt, &source_item, &err).await;
-                    if matches!(err, ProcessingError::NonRetryable { skip: true, .. }) {
+                    item_runtime.processed_inc();
+                    p_rt.coordinator.listener_context.has_error = true;
+                    self.on_item_error(p, &mut p_rt.coordinator, &source_item, &err)
+                        .await;
+                    let skippable =
+                        matches!(err, ProcessingError::NonRetryable { skip: true, .. });
+                    if skippable || p.options.item_error_continue {
                         warn!(
-                            "[item-skip-on-error] 异常为可跳过类型 {} {}",
+                            "[item-continue-on-error] {} {}",
                             err.message(),
                             source_item
                         );
-                        continue;
+                    } else {
+                        warn!("[item-stop-on-error] {}, 停止提交新 Item", err.message());
+                        stop_after_item = true;
                     }
-                    warn!(
-                        "[item-non-retryable-error] 异常为不可跳过类型 {}, 退出本次触发处理",
-                        err.message()
-                    );
-                    break;
                 }
                 ItemAction::Success {
                     files,
@@ -751,53 +805,72 @@ trait Process {
                         processor_name: p.name.clone(),
                         item_hash: source_item.hashing(),
                         item_identity: source_item.identity.clone(),
-                        item_content: ItemContentLite {
-                            source_item,
-                            item_variables,
-                        },
+                        item_content: ItemContentLite { source_item, item_variables },
                         rename_times,
                         status,
                         failure_reason,
                         created_at: OffsetDateTime::now_utc(),
                         updated_at: None,
                     };
-                    if let Err(err) =
-                        self.on_item_process_complete(p, &content, &files).await
-                    {
-                        p_rt.processed_inc();
-                        p_rt.listener_context.has_error = true;
-                        let source_item = &content.item_content.source_item;
-                        self.on_item_error(p, &mut p_rt, source_item, &err)
-                            .await;
-                        if matches!(
-                            err,
-                            ProcessingError::NonRetryable { skip: true, .. }
-                        ) {
-                            warn!(
-                                "[item-skip-on-error] 异常为可跳过类型 {} {}",
-                                err.message(),
-                                source_item
-                            );
-                            continue;
+                    match self.on_item_process_complete(p, &content, &files).await {
+                        Ok(()) => {
+                            item_runtime.processed_inc();
+                            if self
+                                .on_item_success(
+                                    p,
+                                    advance_pointer,
+                                    &mut p_rt.coordinator,
+                                    item_pointer.as_ref(),
+                                    content,
+                                    files,
+                                )
+                                .await
+                                .is_err()
+                            {
+                                stop_after_item = true;
+                            }
                         }
-                        warn!(
-                            "[item-non-retryable-error] 异常为不可跳过类型 {}, 退出本次触发处理",
-                            err.message()
-                        );
-                        break;
+                        Err(err) => {
+                            item_runtime.processed_inc();
+                            p_rt.coordinator.listener_context.has_error = true;
+                            let source_item = &content.item_content.source_item;
+                            self.on_item_error(
+                                p,
+                                &mut p_rt.coordinator,
+                                source_item,
+                                &err,
+                            )
+                            .await;
+                            let skippable = matches!(
+                                err,
+                                ProcessingError::NonRetryable { skip: true, .. }
+                            );
+                            if skippable || p.options.item_error_continue {
+                                warn!(
+                                    "[item-continue-on-error] {} {}",
+                                    err.message(),
+                                    source_item
+                                );
+                            } else {
+                                warn!(
+                                    "[item-stop-on-error] {}, 停止提交新 Item",
+                                    err.message()
+                                );
+                                stop_after_item = true;
+                            }
+                        }
                     }
-                    p_rt.processed_inc();
-                    self.on_item_success(
-                        p,
-                        &mut p_rt,
-                        item_pointer.as_ref(),
-                        content,
-                        files,
-                    )
-                    .await?;
                 }
             }
+
+            if stop_after_item {
+                stop_scheduling = true;
+            }
+            if !stop_scheduling && let Some(item) = remaining_items.next() {
+                item_results.push_back(make_item_future(item));
+            }
         }
+        drop(item_results);
         self.on_process_complete(p, &p_rt).await?;
         p_rt.process_end_at = Some(Instant::now());
         info!("[run-done] {} {}", p.name, p_rt.summary());
@@ -841,18 +914,23 @@ trait Process {
             trace_id: PROCESS_ID_GENERATOR
                 .fetch_add(i64::MIN, Ordering::Relaxed)
                 .to_string(),
-            mutex: Mutex::new(()),
-            source_state,
-            source_pointer,
-            process_submitted_items: RwLock::new(HashSet::new()),
-            processed_count: AtomicU32::new(0),
-            filter_count: AtomicU32::new(0),
+            item: ItemProcessRuntime {
+                mutex: Mutex::new(()),
+                process_submitted_items: RwLock::new(HashSet::new()),
+                processed_count: AtomicU32::new(0),
+                filter_count: AtomicU32::new(0),
+                reserved_target_paths: RwLock::new(HashSet::new()),
+                cancel_items: vec![],
+            },
+            coordinator: ProcessCoordinator {
+                source_state,
+                source_pointer,
+                listener_context: ListenerContext::new(p),
+            },
             process_start_at: Some(start_time),
             process_end_at: None,
             fetch_start_at: None,
             fetch_end_at: None,
-            cancel_items: vec![],
-            listener_context: ListenerContext::new(p),
         };
         Ok(p_ctx)
     }
@@ -979,7 +1057,7 @@ trait Process {
     async fn process_item(
         &self,
         source_item: &SourceItem,
-        rt: &ProcessRuntime,
+        rt: &ItemProcessRuntime,
         p: &SourceProcessor,
     ) -> Result<ItemAction, ProcessingError> {
         let item_hash = source_item.hashing();
@@ -1046,15 +1124,28 @@ trait Process {
                 break;
             }
         }
-        //  ==== 数据准备阶段结束, 开始决定是否下载
-        if content_status != ProcessingStatus::Filtered {
-            // 1. 根据目标文件路径更新file_content状态
-            self.update_file_content_status(p, source_item, &mut file_contents).await;
+        if content_status == ProcessingStatus::Filtered {
+            return Ok(ItemAction::Success {
+                files: file_contents,
+                item_variables,
+                rename_times: 0,
+                status: content_status,
+                failure_reason,
+            });
         }
         let (should_download, mut content_status) = {
             let _guard = rt.mutex.lock().await;
+            self.update_file_content_status(p, source_item, &mut file_contents).await;
+            let has_reserved_target_conflict =
+                rt.reserve_target_paths(&mut file_contents);
             self.identify_files_to_replace(p, source_item, &mut file_contents).await?;
-            self.probe_content_status(p, rt, source_item, &file_contents)
+            self.probe_content_status(
+                p,
+                rt,
+                source_item,
+                &file_contents,
+                has_reserved_target_conflict,
+            )
         };
         let mut rename_times = 0;
         if should_download {
@@ -1333,13 +1424,17 @@ trait Process {
     fn probe_content_status(
         &self,
         p: &SourceProcessor,
-        rt: &ProcessRuntime,
+        rt: &ItemProcessRuntime,
         source_item: &SourceItem,
         files: &[FileContent],
+        has_reserved_target_conflict: bool,
     ) -> (bool, ProcessingStatus) {
         if files.is_empty() {
             return (false, ProcessingStatus::NoFiles);
         };
+        if has_reserved_target_conflict {
+            return (false, ProcessingStatus::TargetAlreadyExists);
+        }
         if files.iter().any(|file| file.status == ReadyReplace) {
             return (true, ProcessingStatus::WaitingToRename);
         };
@@ -1450,8 +1545,7 @@ trait Process {
         // </editor-fold>
         let mut result: Vec<FileContent> = vec![];
 
-        let item_var =
-            p.renamer.item_rename_variables(source_item, item_variables);
+        let item_var = p.renamer.item_rename_variables(source_item, item_variables);
 
         let empty_vars = &PatternVariables::new();
         let file_count = relative_files.len();
@@ -1528,14 +1622,14 @@ impl Process for NormalProcess {
         ctx: &ProcessRuntime,
     ) -> Result<(), ProcessingError> {
         if p.options.pointer_batch_mode
-            || ctx.processed_count.load(Ordering::Acquire) == 0
+            || ctx.item.processed_count.load(Ordering::Acquire) == 0
         {
-            p.save_source_state(&ctx.source_state)
+            p.save_source_state(&ctx.coordinator.source_state)
                 .await
                 .map_err(ProcessingError::non_retryable)?;
         }
         for listener in &p.options.process_listeners {
-            listener.on_process_completed(&ctx.listener_context);
+            listener.on_process_completed(&ctx.coordinator.listener_context);
         }
         Ok(())
     }
@@ -1574,7 +1668,7 @@ impl Process for NormalProcess {
     async fn on_item_error(
         &self,
         p: &SourceProcessor,
-        ctx: &mut ProcessRuntime,
+        ctx: &mut ProcessCoordinator,
         item: &SourceItem,
         error: &ProcessingError,
     ) {
@@ -1586,7 +1680,7 @@ impl Process for NormalProcess {
     async fn on_item_filtered(
         &self,
         p: &SourceProcessor,
-        ctx: &mut ProcessRuntime,
+        ctx: &mut ProcessCoordinator,
         source_item: &SourceItem,
         item_pointer: &dyn ItemPointer,
     ) -> Result<(), ProcessingError> {
@@ -1596,31 +1690,37 @@ impl Process for NormalProcess {
     async fn on_item_success(
         &self,
         p: &SourceProcessor,
-        ctx: &mut ProcessRuntime,
+        advance_pointer: bool,
+        ctx: &mut ProcessCoordinator,
         item_pointer: &dyn ItemPointer,
         content: ProcessingContent,
         files: Vec<FileContent>,
     ) -> Result<(), ProcessingError> {
-        p.advance_source_pointer(
-            ctx,
-            &content.item_content.source_item,
-            item_pointer,
-        )
-        .await?;
         let item_hash = content.item_hash.to_owned();
         ctx.listener_context.add(content, files);
         let completed = ctx
             .listener_context
             .get_item_content_by_hash(&item_hash)
             .expect("completed item was just inserted");
+        let source_item = completed.source_item.clone();
         let item_content = ItemContent {
-            source_item: completed.source_item,
+            source_item: &source_item,
             file_contents: completed.file_contents,
             item_variables: completed.item_variables,
             status: *completed.status,
         };
         for listener in &p.options.process_listeners {
             listener.on_item_success(&ctx.listener_context, &item_content);
+        }
+        if advance_pointer
+            && let Err(error) =
+                p.advance_source_pointer(ctx, &source_item, item_pointer).await
+        {
+            ctx.listener_context.has_error = true;
+            for listener in &p.options.process_listeners {
+                listener.on_item_error(&ctx.listener_context, &source_item, &error);
+            }
+            return Err(error);
         }
         Ok(())
     }
@@ -1676,10 +1776,6 @@ pub fn decode_files_from_compressed(
 
 #[allow(dead_code)]
 struct DryRunProcess {}
-#[allow(dead_code)]
-struct Reprocess {}
-#[allow(dead_code)]
-struct FixedItemProcess {}
 
 #[cfg(test)]
 mod test {
@@ -1730,8 +1826,47 @@ mod test {
     }
 
     #[derive(Debug)]
+    struct ParallelismProbe {
+        active: AtomicUsize,
+        max_active: AtomicUsize,
+        first_items_started: tokio::sync::Barrier,
+        completed: ParkingMutex<Vec<usize>>,
+    }
+
+    impl ParallelismProbe {
+        fn new(first_item_barrier_size: usize) -> Self {
+            Self {
+                active: AtomicUsize::new(0),
+                max_active: AtomicUsize::new(0),
+                first_items_started: tokio::sync::Barrier::new(first_item_barrier_size),
+                completed: ParkingMutex::new(Vec::new()),
+            }
+        }
+
+        async fn record(&self, sequence: usize) {
+            let active = self.active.fetch_add(1, AtomicOrdering::AcqRel) + 1;
+            self.max_active.fetch_max(active, AtomicOrdering::AcqRel);
+            if sequence <= 2 {
+                self.first_items_started.wait().await;
+            }
+            if sequence == 1 {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            self.completed.lock().push(sequence);
+            self.active.fetch_sub(1, AtomicOrdering::AcqRel);
+        }
+    }
+
+    #[derive(Debug)]
     struct PointerTestComponent {
         item_count: usize,
+        probe: Option<Arc<ParallelismProbe>>,
+        invalid_item: Option<usize>,
+        resolved_file: Option<PathBuf>,
+        submit_count: Option<Arc<AtomicUsize>>,
+        unique_files: bool,
+        skippable_download_item: Option<usize>,
+        submit_probe: Option<Arc<ParallelismProbe>>,
     }
 
     impl Display for PointerTestComponent {
@@ -1786,14 +1921,47 @@ mod test {
 
     #[async_trait]
     impl ItemFileResolver for PointerTestComponent {
-        async fn resolve_files(&self, _: &SourceItem) -> Vec<SourceFile> {
+        async fn resolve_files(&self, item: &SourceItem) -> Vec<SourceFile> {
+            let sequence = item
+                .title
+                .strip_prefix("item-")
+                .and_then(|value| value.parse::<usize>().ok())
+                .expect("pointer test item sequence");
+            if let Some(probe) = &self.probe {
+                probe.record(sequence).await;
+            }
+            if self.invalid_item == Some(sequence) {
+                let path = PathBuf::from(format!("{sequence}.txt"));
+                return vec![SourceFile::new(path.clone()), SourceFile::new(path)];
+            }
+            if let Some(path) = &self.resolved_file {
+                return vec![SourceFile::new(path.clone())];
+            }
+            if self.unique_files {
+                return vec![SourceFile::new(PathBuf::from(format!("{sequence}.txt")))];
+            }
             Vec::new()
         }
     }
 
     #[async_trait]
     impl Downloader for PointerTestComponent {
-        async fn submit(&self, _: &DownloadTask) -> Result<(), ProcessingError> {
+        async fn submit(&self, task: &DownloadTask) -> Result<(), ProcessingError> {
+            if let Some(submit_count) = &self.submit_count {
+                submit_count.fetch_add(1, AtomicOrdering::AcqRel);
+            }
+            let sequence = task
+                .source_item
+                .title
+                .strip_prefix("item-")
+                .and_then(|value| value.parse::<usize>().ok())
+                .expect("pointer test item sequence");
+            if let Some(probe) = &self.submit_probe {
+                probe.record(sequence).await;
+            }
+            if self.skippable_download_item == Some(sequence) {
+                return Err(ProcessingError::skip("skippable test error"));
+            }
             Ok(())
         }
 
@@ -1935,12 +2103,63 @@ mod test {
         }
     }
 
+    struct PointerTestSettings {
+        parallelism: u32,
+        item_error_continue: bool,
+        probe: Option<Arc<ParallelismProbe>>,
+        invalid_item: Option<usize>,
+        resolved_file: Option<PathBuf>,
+        submit_count: Option<Arc<AtomicUsize>>,
+        unique_files: bool,
+        skippable_download_item: Option<usize>,
+        submit_probe: Option<Arc<ParallelismProbe>>,
+    }
+
+    impl Default for PointerTestSettings {
+        fn default() -> Self {
+            Self {
+                parallelism: 1,
+                item_error_continue: false,
+                probe: None,
+                invalid_item: None,
+                resolved_file: None,
+                submit_count: None,
+                unique_files: false,
+                skippable_download_item: None,
+                submit_probe: None,
+            }
+        }
+    }
+
     fn pointer_test_processor(
         pointer_batch_mode: bool,
         item_count: usize,
         filter_items: bool,
     ) -> (SourceProcessor, Arc<PointerStorage>) {
-        let component = Arc::new(PointerTestComponent { item_count });
+        pointer_test_processor_with_settings(
+            pointer_batch_mode,
+            item_count,
+            filter_items,
+            PointerTestSettings::default(),
+        )
+    }
+
+    fn pointer_test_processor_with_settings(
+        pointer_batch_mode: bool,
+        item_count: usize,
+        filter_items: bool,
+        settings: PointerTestSettings,
+    ) -> (SourceProcessor, Arc<PointerStorage>) {
+        let component = Arc::new(PointerTestComponent {
+            item_count,
+            probe: settings.probe,
+            invalid_item: settings.invalid_item,
+            resolved_file: settings.resolved_file,
+            submit_count: settings.submit_count,
+            unique_files: settings.unique_files,
+            skippable_download_item: settings.skippable_download_item,
+            submit_probe: settings.submit_probe,
+        });
         let storage = Arc::new(PointerStorage::default());
         let item_filters: Vec<Arc<dyn SourceItemFilter>> =
             if filter_items { vec![Arc::new(RejectAllItems)] } else { Vec::new() };
@@ -1971,10 +2190,10 @@ mod test {
                 save_processing_content: false,
                 rename_task_interval: Duration::from_secs(300),
                 rename_times_threshold: 3,
-                parallelism: 1,
+                parallelism: settings.parallelism,
                 task_group: None,
                 fetch_limit: 50,
-                item_error_continue: false,
+                item_error_continue: settings.item_error_continue,
                 pointer_batch_mode,
                 item_rules: Vec::new(),
                 file_rules: Vec::new(),
@@ -2018,6 +2237,151 @@ mod test {
         processor.run().await.unwrap();
 
         assert_eq!(storage.saved_pointers(), vec![json!(1), json!(1)]);
+    }
+
+    #[tokio::test]
+    async fn parallel_items_commit_pointers_in_fetch_order() {
+        let probe = Arc::new(ParallelismProbe::new(2));
+        let (processor, storage) = pointer_test_processor_with_settings(
+            false,
+            3,
+            false,
+            PointerTestSettings {
+                parallelism: 2,
+                probe: Some(probe.clone()),
+                ..Default::default()
+            },
+        );
+
+        tokio::time::timeout(Duration::from_secs(1), processor.run())
+            .await
+            .expect("parallel processing timed out")
+            .unwrap();
+
+        assert_eq!(probe.max_active.load(AtomicOrdering::Acquire), 2);
+        assert_ne!(probe.completed.lock().first(), Some(&1));
+
+        assert_eq!(storage.saved_pointers(), vec![json!(1), json!(2), json!(3)]);
+    }
+    #[tokio::test]
+    async fn parallel_items_submit_downloads_concurrently() {
+        let probe = Arc::new(ParallelismProbe::new(2));
+        let (processor, _) = pointer_test_processor_with_settings(
+            false,
+            2,
+            false,
+            PointerTestSettings {
+                parallelism: 2,
+                unique_files: true,
+                submit_probe: Some(probe.clone()),
+                ..Default::default()
+            },
+        );
+
+        tokio::time::timeout(Duration::from_secs(1), processor.run())
+            .await
+            .expect("parallel downloads timed out")
+            .unwrap();
+
+        assert_eq!(probe.max_active.load(AtomicOrdering::Acquire), 2);
+    }
+    #[tokio::test]
+    async fn parallel_items_reserve_shared_target_once() {
+        let submit_count = Arc::new(AtomicUsize::new(0));
+        let (processor, storage) = pointer_test_processor_with_settings(
+            false,
+            2,
+            false,
+            PointerTestSettings {
+                parallelism: 2,
+                resolved_file: Some(PathBuf::from("shared.txt")),
+                submit_count: Some(submit_count.clone()),
+                ..Default::default()
+            },
+        );
+
+        processor.run().await.unwrap();
+
+        assert_eq!(submit_count.load(AtomicOrdering::Acquire), 1);
+        assert_eq!(storage.saved_pointers(), vec![json!(1), json!(2)]);
+    }
+
+    #[tokio::test]
+    async fn zero_parallelism_runs_sequentially() {
+        let probe = Arc::new(ParallelismProbe::new(1));
+        let (processor, storage) = pointer_test_processor_with_settings(
+            false,
+            2,
+            false,
+            PointerTestSettings {
+                parallelism: 0,
+                probe: Some(probe.clone()),
+                ..Default::default()
+            },
+        );
+
+        processor.run().await.unwrap();
+
+        assert_eq!(probe.max_active.load(AtomicOrdering::Acquire), 1);
+        assert_eq!(storage.saved_pointers(), vec![json!(1), json!(2)]);
+    }
+
+    #[tokio::test]
+    async fn item_error_stops_new_work_and_drains_started_items() {
+        let probe = Arc::new(ParallelismProbe::new(2));
+        let (processor, storage) = pointer_test_processor_with_settings(
+            false,
+            3,
+            false,
+            PointerTestSettings {
+                parallelism: 2,
+                probe: Some(probe.clone()),
+                invalid_item: Some(1),
+                ..Default::default()
+            },
+        );
+
+        processor.run().await.unwrap();
+
+        assert_eq!(*probe.completed.lock(), vec![2, 1]);
+        assert!(storage.saved_pointers().is_empty());
+    }
+
+    #[tokio::test]
+    async fn item_error_continue_processes_remaining_items() {
+        let (processor, storage) = pointer_test_processor_with_settings(
+            false,
+            3,
+            false,
+            PointerTestSettings {
+                parallelism: 2,
+                item_error_continue: true,
+                invalid_item: Some(1),
+                ..Default::default()
+            },
+        );
+
+        processor.run().await.unwrap();
+
+        assert_eq!(storage.saved_pointers(), vec![json!(2), json!(3)]);
+    }
+    #[tokio::test]
+    async fn skippable_item_error_continues_when_error_continue_is_disabled() {
+        let (processor, storage) = pointer_test_processor_with_settings(
+            false,
+            3,
+            false,
+            PointerTestSettings {
+                parallelism: 2,
+                unique_files: true,
+                skippable_download_item: Some(1),
+                ..Default::default()
+            },
+        );
+
+        processor.run().await.unwrap();
+
+        assert_eq!(storage.saved_pointers(), vec![json!(2), json!(3)]);
     }
 
     #[tokio::test]
@@ -2098,11 +2462,7 @@ mod test {
     impl source_downloader_sdk::component::SdComponent for RecordingListener {}
 
     impl ProcessListener for RecordingListener {
-        fn on_item_success(
-            &self,
-            ctx: &dyn ProcessContext,
-            item_content: &ItemContent,
-        ) {
+        fn on_item_success(&self, ctx: &dyn ProcessContext, item_content: &ItemContent) {
             self.successes.fetch_add(1, AtomicOrdering::Relaxed);
             self.context_visible.store(
                 ctx.get_item_content(item_content.source_item).is_some(),
@@ -2120,10 +2480,9 @@ mod test {
         }
 
         fn on_process_completed(&self, ctx: &dyn ProcessContext) {
-            self.completed_items.lock().extend(
-                ctx.processed_items()
-                    .map(|item| item.title.to_owned()),
-            );
+            self.completed_items
+                .lock()
+                .extend(ctx.processed_items().map(|item| item.title.to_owned()));
             self.completions.fetch_add(1, AtomicOrdering::Relaxed);
         }
     }
@@ -2140,23 +2499,31 @@ mod test {
         assert_eq!(listener.errors.load(AtomicOrdering::Relaxed), 0);
         assert_eq!(listener.completions.load(AtomicOrdering::Relaxed), 1);
         assert!(listener.context_visible.load(AtomicOrdering::Relaxed));
-        assert_eq!(
-            *listener.completed_items.lock(),
-            vec!["item-1".to_owned()]
-        );
+        assert_eq!(*listener.completed_items.lock(), vec!["item-1".to_owned()]);
     }
 
     #[tokio::test]
     async fn process_context_preserves_completed_item_order() {
-        let (mut processor, _) = pointer_test_processor(false, 2, false);
+        let probe = Arc::new(ParallelismProbe::new(2));
+        let (mut processor, _) = pointer_test_processor_with_settings(
+            false,
+            3,
+            false,
+            PointerTestSettings {
+                parallelism: 2,
+                probe: Some(probe.clone()),
+                ..Default::default()
+            },
+        );
         let listener = Arc::new(RecordingListener::default());
         processor.options.process_listeners = vec![listener.clone()];
 
         processor.run().await.unwrap();
+        assert_ne!(probe.completed.lock().first(), Some(&1));
 
         assert_eq!(
             *listener.completed_items.lock(),
-            vec!["item-1".to_owned(), "item-2".to_owned()]
+            vec!["item-1".to_owned(), "item-2".to_owned(), "item-3".to_owned()]
         );
     }
 

@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use serde_json::{Map, Value};
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, DownloadTask, Downloader, ProcessingError,
-    SdComponent, SdComponentMetadata, SourceFile,
+    ComponentError, ComponentSupplier, ComponentType, DownloadTask, Downloader,
+    ProcessingError, SdComponent, SdComponentMetadata, SourceFile,
 };
 use source_downloader_sdk::{SdComponent, SourceItem};
 use std::fmt::{Display, Formatter};
@@ -16,10 +16,11 @@ impl ComponentSupplier for HttpDownloaderSupplier {
         vec![ComponentType::downloader("http".to_string())]
     }
 
-    fn apply(&self, props: &Map<String, Value>) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        Ok(Arc::new(HttpDownloader {
-            path: props["download-path"].to_string(),
-        }))
+    fn apply(
+        &self,
+        props: &Map<String, Value>,
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
+        Ok(Arc::new(HttpDownloader { path: props["download-path"].to_string() }))
     }
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
@@ -51,7 +52,11 @@ impl Downloader for HttpDownloader {
         &self.path
     }
 
-    async fn cancel(&self, item: &SourceItem, files: &[SourceFile]) -> Result<(), ProcessingError> {
+    async fn cancel(
+        &self,
+        item: &SourceItem,
+        files: &[SourceFile],
+    ) -> Result<(), ProcessingError> {
         todo!()
     }
 }

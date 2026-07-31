@@ -3643,6 +3643,7 @@ dependencies = [
  "backon",
  "cel",
  "criterion",
+ "futures-util",
  "http-serde",
  "humantime",
  "indexmap",

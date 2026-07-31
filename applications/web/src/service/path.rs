@@ -8,10 +8,7 @@ use tracing::info;
 
 pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
     Router::new()
-        .nest(
-            "/target-path",
-            Router::new().route("/", delete(delete_target_paths)),
-        )
+        .nest("/target-path", Router::new().route("/", delete(delete_target_paths)))
         .with_state(ctx.core.clone())
 }
 

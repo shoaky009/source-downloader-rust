@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use source_downloader_sdk::storage::{
-    Error, ProcessingContent, ProcessingContentQuery, ProcessingStorage, ProcessingTargetPath,
-    ProcessorSourceState,
+    Error, ProcessingContent, ProcessingContentQuery, ProcessingStorage,
+    ProcessingTargetPath, ProcessorSourceState,
 };
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -14,9 +14,7 @@ pub struct MemoryProcessingStorage {
 
 impl MemoryProcessingStorage {
     pub fn new() -> Self {
-        Self {
-            contents: RwLock::new(HashMap::new()),
-        }
+        Self { contents: RwLock::new(HashMap::new()) }
     }
 }
 
@@ -42,7 +40,10 @@ impl ProcessingStorage for MemoryProcessingStorage {
         todo!()
     }
 
-    async fn find_content_by_id(&self, _: i64) -> Result<Option<ProcessingContent>, Error> {
+    async fn find_content_by_id(
+        &self,
+        _: i64,
+    ) -> Result<Option<ProcessingContent>, Error> {
         todo!()
     }
 

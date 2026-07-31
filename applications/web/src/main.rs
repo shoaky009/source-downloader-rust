@@ -1,5 +1,5 @@
 use axum::http::Uri;
-use axum::{http::StatusCode, middleware, response::IntoResponse, Router};
+use axum::{Router, http::StatusCode, middleware, response::IntoResponse};
 use clap::{Args, Parser};
 use problem_details::ProblemDetails;
 use source_downloader_core::application::{CoreApplication, CorePluginContext};
@@ -16,13 +16,14 @@ use storage_sqlite::SeaProcessingStorage;
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
 use tracing::{info, log};
-use tracing_subscriber::fmt::time::OffsetTime;
 use tracing_subscriber::EnvFilter;
-use web::{error_handle, service, ApplicationContext};
+use tracing_subscriber::fmt::time::OffsetTime;
+use web::{ApplicationContext, error_handle, service};
 
 #[tokio::main]
 async fn main() {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
         .with_timer(OffsetTime::local_rfc_3339().unwrap())
         .with_level(true)
@@ -36,15 +37,11 @@ async fn main() {
     let storage = create_storage(&config.db).await;
     let core = create_core_application(&storage, &config.source_downloader);
 
-    core.plugin_manager
-        .register_plugin(Box::new(common::PLUGIN));
+    core.plugin_manager.register_plugin(Box::new(common::PLUGIN));
     core.start();
 
     let app = Arc::new(core);
-    let ctx = Arc::new(ApplicationContext {
-        core: app.clone(),
-        storage,
-    });
+    let ctx = Arc::new(ApplicationContext { core: app.clone(), storage });
     run_web_server(ctx, &config).await;
 }
 
@@ -61,10 +58,7 @@ fn init_config() -> ApplicationConfig {
 }
 
 async fn create_storage(config: &Db) -> Arc<dyn ProcessingStorage> {
-    let url = config
-        .url
-        .clone()
-        .unwrap_or_else(|| "sqlite::memory:".to_string());
+    let url = config.url.clone().unwrap_or_else(|| "sqlite::memory:".to_string());
     let url = &url;
     info!("Using database url={}", url);
     let storage = SeaProcessingStorage::new(url).await.unwrap();
@@ -81,9 +75,8 @@ fn create_core_application(
     config_operator.init().unwrap();
     let component_manager = Arc::new(ComponentManager::new(config_operator.clone()));
     let instance_manager = Arc::new(InstanceManager::new(config_operator.clone()));
-    let plugin_ctx = Arc::new(CorePluginContext {
-        data_location: config.data_location.clone(),
-    });
+    let plugin_ctx =
+        Arc::new(CorePluginContext { data_location: config.data_location.clone() });
 
     let plugin_manager = PluginManager::new(plugin_ctx);
     let processor_manager = Arc::new(ProcessorManager::new(
@@ -101,11 +94,17 @@ fn create_core_application(
     }
 }
 
-async fn run_web_server(core_application: Arc<ApplicationContext>, config: &ApplicationConfig) {
+async fn run_web_server(
+    core_application: Arc<ApplicationContext>,
+    config: &ApplicationConfig,
+) {
     let app_router = service::app::register_routers(core_application.clone());
-    let component_routers = service::component::register_routers(core_application.clone());
-    let processor_routers = service::processor::register_routers(core_application.clone());
-    let processing_routers = service::processing::register_routers(core_application.clone());
+    let component_routers =
+        service::component::register_routers(core_application.clone());
+    let processor_routers =
+        service::processor::register_routers(core_application.clone());
+    let processing_routers =
+        service::processing::register_routers(core_application.clone());
     let path_routers = service::path::register_routers(core_application.clone());
     let api_routers = app_router
         .merge(component_routers)
@@ -121,9 +120,7 @@ async fn run_web_server(core_application: Arc<ApplicationContext>, config: &Appl
             Router::new()
                 .nest("/api", api_routers)
                 .fallback_service(
-                    ServeDir::new(&dir_path)
-                        .precompressed_gzip()
-                        .precompressed_br(),
+                    ServeDir::new(&dir_path).precompressed_gzip().precompressed_br(),
                 )
                 .fallback(move |uri: Uri| {
                     let dir = dir_path.clone();
@@ -159,11 +156,7 @@ struct ApplicationConfig {
 
 impl Default for Server {
     fn default() -> Self {
-        Self {
-            host: "0.0.0.0".to_string(),
-            port: 8080,
-            static_dir: None,
-        }
+        Self { host: "0.0.0.0".to_string(), port: 8080, static_dir: None }
     }
 }
 
@@ -232,9 +225,6 @@ struct Server {
         default_value_t = 8080
     )]
     port: u16,
-    #[arg(
-        long = "server.static_dir",
-        env = "SOURCE_DOWNLOADER_SERVER_STATIC_DIR"
-    )]
+    #[arg(long = "server.static_dir", env = "SOURCE_DOWNLOADER_SERVER_STATIC_DIR")]
     static_dir: Option<String>,
 }

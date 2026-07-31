@@ -4,7 +4,8 @@ use regex::Regex;
 use serde_json::{Map, Value, json};
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
-    FileContent, FileContentStatus, PatternVariables, SourceFile, Trimmer, VariableReplacer,
+    FileContent, FileContentStatus, PatternVariables, SourceFile, Trimmer,
+    VariableReplacer,
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -141,16 +142,10 @@ pub struct PathPattern {
 impl PathPattern {
     pub fn new(pattern: String, fac: &CelCompiledExpressionFactory) -> Self {
         if pattern.is_empty() {
-            return Self {
-                pattern,
-                expressions: vec![],
-            };
+            return Self { pattern, expressions: vec![] };
         }
         let expressions = Self::compile_expressions(&pattern, fac);
-        Self {
-            pattern,
-            expressions,
-        }
+        Self { pattern, expressions }
     }
 
     pub fn new_cel(pattern: String) -> Self {
@@ -179,9 +174,8 @@ impl PathPattern {
                 .unwrap_or("");
 
             // 调用工厂创建表达式对象
-            let expression = expression_factory
-                .create::<String>(expression_content)
-                .unwrap();
+            let expression =
+                expression_factory.create::<String>(expression_content).unwrap();
             expressions.push(ExpressionWrapper {
                 expression,
                 optional: is_optional,
@@ -206,7 +200,8 @@ impl Renamer {
         file: RawFileContent,
         extra_variables: &RenameVariables,
     ) -> FileContent {
-        let mut variables = self.file_rename_variables(source_item, &file, extra_variables);
+        let mut variables =
+            self.file_rename_variables(source_item, &file, extra_variables);
         let mut dir_result = self.save_directory_path(&file, &variables);
         let mut filename_result = self.target_filename(&file, &variables);
 
@@ -223,17 +218,9 @@ impl Renamer {
                 .and_then(|name| name.to_str())
                 .unwrap()
                 .to_owned();
-            let target_save_path = file_download_path
-                .parent()
-                .unwrap_or(Path::new(""))
-                .to_path_buf();
-            let SourceFile {
-                tags,
-                attrs,
-                download_uri,
-                data,
-                ..
-            } = file.source_file;
+            let target_save_path =
+                file_download_path.parent().unwrap_or(Path::new("")).to_path_buf();
+            let SourceFile { tags, attrs, download_uri, data, .. } = file.source_file;
             return FileContent {
                 download_path: file.download_path.to_owned(),
                 file_download_path,
@@ -275,11 +262,8 @@ impl Renamer {
             for (index, component) in rel_path.components().enumerate() {
                 let segment_name = component.as_os_str().to_str().unwrap_or("");
                 if segment_name.as_bytes().len() > self.path_name_length_limit {
-                    let segments = file
-                        .save_path_pattern
-                        .pattern
-                        .split("/")
-                        .collect::<Vec<_>>();
+                    let segments =
+                        file.save_path_pattern.pattern.split("/").collect::<Vec<_>>();
                     if let Some(pattern_part) = segments.get(index) {
                         self.execute_trim(
                             pattern_part,
@@ -298,13 +282,7 @@ impl Renamer {
         }
 
         let file_download_path = file.file_download_path();
-        let SourceFile {
-            tags,
-            attrs,
-            download_uri,
-            data,
-            ..
-        } = file.source_file;
+        let SourceFile { tags, attrs, download_uri, data, .. } = file.source_file;
         FileContent {
             download_path: file.download_path.to_owned(),
             file_download_path,
@@ -347,8 +325,13 @@ impl Renamer {
         }
     }
 
-    fn expect_variable_byte_size(&self, too_long_path: &str, variable_val: &str) -> usize {
-        let without_variable_size = too_long_path.replace(variable_val, "").as_bytes().len();
+    fn expect_variable_byte_size(
+        &self,
+        too_long_path: &str,
+        variable_val: &str,
+    ) -> usize {
+        let without_variable_size =
+            too_long_path.replace(variable_val, "").as_bytes().len();
         if self.path_name_length_limit > without_variable_size {
             self.path_name_length_limit - without_variable_size
         } else {
@@ -356,7 +339,11 @@ impl Renamer {
         }
     }
 
-    fn parse(&self, variables: &RenameVariables, path_pattern: &PathPattern) -> ParseResult {
+    fn parse(
+        &self,
+        variables: &RenameVariables,
+        path_pattern: &PathPattern,
+    ) -> ParseResult {
         if path_pattern.pattern.is_empty() {
             return ParseResult {
                 path: "".to_owned(),
@@ -407,14 +394,14 @@ impl Renamer {
         // 3. 添加剩余的文本 (类似 matcher.appendTail)
         path_builder.push_str(&raw_pattern[last_match_end..]);
 
-        ParseResult {
-            path: path_builder,
-            success,
-            failed_expressions,
-        }
+        ParseResult { path: path_builder, success, failed_expressions }
     }
 
-    fn target_filename(&self, file: &RawFileContent, variables: &RenameVariables) -> ParseResult {
+    fn target_filename(
+        &self,
+        file: &RawFileContent,
+        variables: &RenameVariables,
+    ) -> ParseResult {
         let file_download_path = file.file_download_path();
         let pattern = &file.filename_pattern;
         if pattern.pattern.is_empty() {
@@ -431,11 +418,8 @@ impl Renamer {
 
         let mut result = self.parse(&variables, &file.filename_pattern);
 
-        let file_name = file_download_path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap()
-            .to_owned();
+        let file_name =
+            file_download_path.file_name().and_then(|s| s.to_str()).unwrap().to_owned();
         if result.success {
             if result.path.trim().is_empty() {
                 result.path = file_name;
@@ -461,10 +445,8 @@ impl Renamer {
                 result.path = file_name;
             }
             VariableErrorStrategy::Pattern => {
-                let ext = file_download_path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("");
+                let ext =
+                    file_download_path.extension().and_then(|e| e.to_str()).unwrap_or("");
                 if !result.path.ends_with(ext) && !ext.is_empty() {
                     result.path = format!("{}.{}", result.path, ext);
                 }
@@ -494,11 +476,9 @@ impl Renamer {
         }
 
         let fallback_path = match self.variable_error_strategy {
-            VariableErrorStrategy::Original => file
-                .file_download_path()
-                .parent()
-                .unwrap_or(Path::new(""))
-                .to_path_buf(),
+            VariableErrorStrategy::Original => {
+                file.file_download_path().parent().unwrap_or(Path::new("")).to_path_buf()
+            }
             VariableErrorStrategy::Pattern => source_path.join(&parse.path),
             VariableErrorStrategy::ToUnresolved => {
                 let rel = file
@@ -559,10 +539,11 @@ impl Renamer {
         text
     }
 
-    fn apply_replacers_to_map(&self, map: &HashMap<String, String>) -> HashMap<String, String> {
-        map.iter()
-            .map(|(k, v)| (k.clone(), self.apply_replacers(k, v.clone())))
-            .collect()
+    fn apply_replacers_to_map(
+        &self,
+        map: &HashMap<String, String>,
+    ) -> HashMap<String, String> {
+        map.iter().map(|(k, v)| (k.clone(), self.apply_replacers(k, v.clone()))).collect()
     }
 
     // TODO 未完成
@@ -623,7 +604,8 @@ mod tests {
         tags: Default::default(),
         data: None,
     });
-    static PATTERN: LazyLock<PatternVariables> = LazyLock::new(|| PatternVariables::new());
+    static PATTERN: LazyLock<PatternVariables> =
+        LazyLock::new(|| PatternVariables::new());
 
     impl<'a> Default for RawFileContent<'a> {
         fn default() -> Self {
@@ -705,11 +687,9 @@ mod tests {
         };
         let mut extra = RenameVariables::default();
         extra.variables.insert("season".to_string(), json!("01"));
-        let content = DEFAULT_RENAMER.create_file_content(&SourceItem::default(), raw, &extra);
-        assert_eq!(
-            SOURCE_SAVE_PATH.join("test").join("S01"),
-            content.target_save_path
-        )
+        let content =
+            DEFAULT_RENAMER.create_file_content(&SourceItem::default(), raw, &extra);
+        assert_eq!(SOURCE_SAVE_PATH.join("test").join("S01"), content.target_save_path)
     }
 
     #[test]
@@ -719,21 +699,24 @@ mod tests {
             variables: &hashmap! {
               "name".to_owned() => "test".to_owned(),
             },
-            source_file: SourceFile { path: PathBuf::from_iter([
-                "src",
-                "test",
-                "resources",
-                "downloads",
-                "easd",
-                "222",
-                "1.mp4",
-            ]),
-            ..Default::default() },
+            source_file: SourceFile {
+                path: PathBuf::from_iter([
+                    "src",
+                    "test",
+                    "resources",
+                    "downloads",
+                    "easd",
+                    "222",
+                    "1.mp4",
+                ]),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let mut extra = RenameVariables::default();
         extra.variables.insert("season".to_string(), json!("01"));
-        let content = DEFAULT_RENAMER.create_file_content(&Default::default(), raw, &extra);
+        let content =
+            DEFAULT_RENAMER.create_file_content(&Default::default(), raw, &extra);
         assert_eq!("test - 01.mp4", content.target_filename);
     }
 
@@ -776,17 +759,15 @@ mod tests {
             },
             ..Default::default()
         };
-        let renamer = Renamer {
-            variable_error_strategy: Pattern,
-            ..DEFAULT_RENAMER.clone()
-        };
-        let content =
-            renamer.create_file_content(&SourceItem::default(), raw, &RenameVariables::default());
+        let renamer =
+            Renamer { variable_error_strategy: Pattern, ..DEFAULT_RENAMER.clone() };
+        let content = renamer.create_file_content(
+            &SourceItem::default(),
+            raw,
+            &RenameVariables::default(),
+        );
         assert_eq!(
-            SOURCE_SAVE_PATH
-                .join("{name}")
-                .join("S01")
-                .join("{name} - 01.txt"),
+            SOURCE_SAVE_PATH.join("{name}").join("S01").join("{name} - 01.txt"),
             *content.target_path()
         );
     }
@@ -795,13 +776,17 @@ mod tests {
     fn given_unresolved_filename_with_dir_item() {
         let raw = RawFileContent {
             save_path_pattern: &PathPattern::new_cel("{title}/S{season}".to_owned()),
-            filename_pattern: &PathPattern::new_cel("{title} S{season}E{episode}".to_owned()),
+            filename_pattern: &PathPattern::new_cel(
+                "{title} S{season}E{episode}".to_owned(),
+            ),
             variables: &hashmap! {
                 "season".to_owned() => "01".to_owned(),
                 "title".to_owned() => "test 01".to_owned(),
             },
-            source_file: SourceFile { path: PathBuf::from("1.txt"),
-            ..Default::default() },
+            source_file: SourceFile {
+                path: PathBuf::from("1.txt"),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -810,8 +795,11 @@ mod tests {
             ..DEFAULT_RENAMER.clone()
         };
 
-        let content =
-            renamer.create_file_content(&SourceItem::default(), raw, &RenameVariables::default());
+        let content = renamer.create_file_content(
+            &SourceItem::default(),
+            raw,
+            &RenameVariables::default(),
+        );
 
         // 预期路径: test 01/S01/unresolved/1.txt
         let path = PathBuf::from_iter(["test 01", "S01", "unresolved", "1.txt"]);
@@ -821,8 +809,10 @@ mod tests {
     #[test]
     fn given_unresolved_save_path_with_dir_item() {
         let raw = RawFileContent {
-            source_file: SourceFile { path: PathBuf::from_iter(["FATE", "AAAAA.mp4"]),
-            ..Default::default() },
+            source_file: SourceFile {
+                path: PathBuf::from_iter(["FATE", "AAAAA.mp4"]),
+                ..Default::default()
+            },
             save_path_pattern: &PathPattern::new_cel("{title}".to_string()),
             filename_pattern: &PathPattern::new_cel("S{season}E{episode}".to_string()),
             variables: &hashmap! {
@@ -837,8 +827,11 @@ mod tests {
             ..DEFAULT_RENAMER.clone()
         };
 
-        let content =
-            renamer.create_file_content(&SourceItem::default(), raw, &RenameVariables::default());
+        let content = renamer.create_file_content(
+            &SourceItem::default(),
+            raw,
+            &RenameVariables::default(),
+        );
 
         // {title} 缺失，进入 unresolved 分支
         let path = PathBuf::from_iter(["unresolved", "FATE", "S01E02.mp4"]);
@@ -848,8 +841,10 @@ mod tests {
     #[test]
     fn given_both_unresolved_with_dir_item() {
         let raw = RawFileContent {
-            source_file: SourceFile { path: PathBuf::from_iter(["FATE", "AAAAA.mp4"]),
-            ..Default::default() },
+            source_file: SourceFile {
+                path: PathBuf::from_iter(["FATE", "AAAAA.mp4"]),
+                ..Default::default()
+            },
             save_path_pattern: &PathPattern::new_cel("{Title}".to_string()),
             filename_pattern: &PathPattern::new_cel("S{Season}E{Episod}".to_string()),
             variables: &hashmap! {
@@ -864,8 +859,11 @@ mod tests {
             ..DEFAULT_RENAMER.clone()
         };
 
-        let content =
-            renamer.create_file_content(&SourceItem::default(), raw, &RenameVariables::default());
+        let content = renamer.create_file_content(
+            &SourceItem::default(),
+            raw,
+            &RenameVariables::default(),
+        );
 
         // 全部缺失，回退到原始路径
         let path = PathBuf::from_iter(["unresolved", "FATE", "AAAAA.mp4"]);
@@ -876,13 +874,9 @@ mod tests {
     fn normal_parse() {
         let mut variables = RenameVariables::default();
         variables.variables.insert("name".to_owned(), json!("111"));
-        variables
-            .variables
-            .insert("title".to_owned(), json!("test"));
-        let parse_result = DEFAULT_RENAMER.parse(
-            &variables,
-            &PathPattern::new_cel("{name}/{title}abc".to_string()),
-        );
+        variables.variables.insert("title".to_owned(), json!("test"));
+        let parse_result = DEFAULT_RENAMER
+            .parse(&variables, &PathPattern::new_cel("{name}/{title}abc".to_string()));
         assert_eq!("111/testabc", parse_result.path);
         assert!(parse_result.success && parse_result.failed_expressions.is_empty());
     }
@@ -892,10 +886,8 @@ mod tests {
         let mut variables = RenameVariables::default();
         variables.variables.insert("name".to_owned(), json!("111"));
         // : 代表可选
-        let parse_result = DEFAULT_RENAMER.parse(
-            &variables,
-            &PathPattern::new_cel("{name}/:{title}abc".to_string()),
-        );
+        let parse_result = DEFAULT_RENAMER
+            .parse(&variables, &PathPattern::new_cel("{name}/:{title}abc".to_string()));
         assert_eq!("111/abc", parse_result.path);
         assert!(parse_result.success && parse_result.failed_expressions.is_empty());
     }
@@ -907,8 +899,9 @@ mod tests {
         variables.variables.insert("episode".to_owned(), json!("2"));
         variables.variables.insert("source".to_owned(), json!("1"));
 
-        let pattern =
-            PathPattern::new_cel("{'test '+name} E{episode + '1'}:{' - '+source}".to_string());
+        let pattern = PathPattern::new_cel(
+            "{'test '+name} E{episode + '1'}:{' - '+source}".to_string(),
+        );
 
         let parse_result = DEFAULT_RENAMER.parse(&variables, &pattern);
         assert_eq!("test 111 E21 - 1", parse_result.path);
@@ -954,8 +947,7 @@ mod tests {
             attrs: serde_json::from_str(r#"{"creatorId": "Idk111"}"#).unwrap(),
             ..Default::default()
         };
-        let item_vars =
-            DEFAULT_RENAMER.item_rename_variables(&item, &hashmap! {});
+        let item_vars = DEFAULT_RENAMER.item_rename_variables(&item, &hashmap! {});
         let raw = RawFileContent {
             variables: &hashmap! {
                 "date".to_owned() => "2022-01-01".to_owned(),
@@ -963,20 +955,22 @@ mod tests {
                 "year".to_owned() => "2022".to_owned(),
                 "title".to_owned() => "123".to_owned(),
             },
-            save_path_pattern: &PathPattern::new_cel("{item.attrs.creatorId}/{date}".to_owned()),
+            save_path_pattern: &PathPattern::new_cel(
+                "{item.attrs.creatorId}/{date}".to_owned(),
+            ),
             filename_pattern: &PathPattern::new_cel("{file.attrs.seq}".to_owned()),
             // 假设 attrs 在 RawFileContent 中被放入了 file.attrs
-            source_file: SourceFile { path: PathBuf::from("2.txt"),
-            attrs: serde_json::from_str(r#"{"seq": "2"}"#).unwrap(),
-            ..Default::default() },
+            source_file: SourceFile {
+                path: PathBuf::from("2.txt"),
+                attrs: serde_json::from_str(r#"{"seq": "2"}"#).unwrap(),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
-        let content = DEFAULT_RENAMER.create_file_content(&SourceItem::default(), raw, &item_vars);
-        let expected = SOURCE_SAVE_PATH
-            .join("Idk111")
-            .join("2022-01-01")
-            .join("2.txt");
+        let content =
+            DEFAULT_RENAMER.create_file_content(&SourceItem::default(), raw, &item_vars);
+        let expected = SOURCE_SAVE_PATH.join("Idk111").join("2022-01-01").join("2.txt");
         assert_eq!(expected, *content.target_path());
     }
 
@@ -987,9 +981,13 @@ mod tests {
         //     ..renamer().clone()
         // };
         let raw = RawFileContent {
-            source_file: SourceFile { path: PathBuf::from_iter(["wp", "mp3", "origin", "1.mp3"]),
-            ..Default::default() },
-            save_path_pattern: &PathPattern::new_cel("wp-test/{file.originalLayout}".to_owned()),
+            source_file: SourceFile {
+                path: PathBuf::from_iter(["wp", "mp3", "origin", "1.mp3"]),
+                ..Default::default()
+            },
+            save_path_pattern: &PathPattern::new_cel(
+                "wp-test/{file.originalLayout}".to_owned(),
+            ),
             ..Default::default()
         };
         let content = DEFAULT_RENAMER.create_file_content(
@@ -997,23 +995,22 @@ mod tests {
             raw,
             &RenameVariables::default(),
         );
-        let expected = SOURCE_SAVE_PATH
-            .join("wp-test")
-            .join("mp3")
-            .join("origin")
-            .join("1.mp3");
+        let expected =
+            SOURCE_SAVE_PATH.join("wp-test").join("mp3").join("origin").join("1.mp3");
         assert_eq!(expected, *content.target_path());
     }
 
     #[test]
     fn given_dot_filename_should_no_extension() {
         let raw = RawFileContent {
-            source_file: SourceFile { path: PathBuf::from_iter([
-                "downloads",
-                "xxx",
-                "_____padding_file_0_如果您看到此文件，请升级到BitComet(比特彗星)0.85或以上版本____",
-            ]),
-            ..Default::default() },
+            source_file: SourceFile {
+                path: PathBuf::from_iter([
+                    "downloads",
+                    "xxx",
+                    "_____padding_file_0_如果您看到此文件，请升级到BitComet(比特彗星)0.85或以上版本____",
+                ]),
+                ..Default::default()
+            },
             filename_pattern: &PathPattern::new_cel("test".to_owned()),
             ..Default::default()
         };

@@ -2,10 +2,10 @@
 
 use crate::component::ComponentError;
 use crate::serde_json::{Map, Value};
-use std::any::{type_name, Any, TypeId};
+use std::any::{Any, TypeId, type_name};
 use std::sync::Arc;
 
-pub trait InstanceFactory : Send + Sync {
+pub trait InstanceFactory: Send + Sync {
     /// Create an instance of type T with the given properties.
     /// Returns an error if instance creation fails.
     fn create_instance(
