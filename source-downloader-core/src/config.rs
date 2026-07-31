@@ -147,7 +147,7 @@ pub struct FileRuleConfig {
     // pub file_replacement_decider: Option<String>
 }
 
-#[derive(Debug, Deserialize, Clone, Serialize, PartialEq)]
+#[derive(Debug, Deserialize, Clone, Copy, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ListenerMode {
     Each,

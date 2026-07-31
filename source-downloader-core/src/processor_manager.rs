@@ -3,7 +3,7 @@ use crate::components::expression_file_content_filter::ExpressionFileContentFilt
 use crate::components::expression_item_content_filter::ExpressionItemContentFilter;
 use crate::components::expression_item_filter::ExpressionItemFilter;
 use crate::components::source_item_identity_filter::SourceItemIdentityFilter;
-use crate::config::{ProcessorConfig, ProcessorOptionConfig};
+use crate::config::{ListenerMode, ProcessorConfig, ProcessorOptionConfig};
 use crate::expression::CompiledExpressionFactory;
 use crate::expression::cel::FACTORY;
 use crate::process::file::PathPattern;
@@ -17,7 +17,8 @@ use crate::source_processor::{ProcessorOptions, SourceProcessor};
 use parking_lot::RwLock;
 use source_downloader_sdk::component::{
     ComponentError, ComponentId, ComponentRootType, FileContentFilter, FileTagger,
-    ItemContentFilter, SdComponent, SourceFileFilter, SourceItemFilter, VariableProvider,
+    ItemContentFilter, ProcessListener, SdComponent, SourceFileFilter, SourceItemFilter,
+    VariableProvider,
 };
 use source_downloader_sdk::storage::ProcessingStorage;
 use std::collections::{HashMap, HashSet};
@@ -271,14 +272,15 @@ impl ProcessorManager {
             );
         }
         // ===
-        let mut process_listeners = vec![];
-        for x in &config.options.process_listeners {
-            let component_id =
-                ComponentRootType::ProcessListener.parse_component_id(&x.id);
+        let mut process_listeners: HashMap<ListenerMode, Vec<Arc<dyn ProcessListener>>> =
+            HashMap::new();
+        for listener_config in &config.options.process_listeners {
+            let component_id = ComponentRootType::ProcessListener
+                .parse_component_id(&listener_config.id);
             let listener = self
                 .get_component_for_processor(&component_id, &config.name)?
                 .as_process_listener()?;
-            process_listeners.push(listener);
+            process_listeners.entry(listener_config.mode).or_default().push(listener);
         }
 
         // ==

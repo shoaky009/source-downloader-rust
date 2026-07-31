@@ -1,4 +1,5 @@
 use crate::components::simple_file_exists_detector::SimpleFileExistsDetector;
+use crate::config::ListenerMode;
 use crate::process::file::{PathPattern, RawFileContent, Renamer};
 use crate::process::rule::{FileRule, ItemRule, ItemStrategy};
 use crate::process::variable::VariableAggregation;
@@ -113,7 +114,7 @@ pub struct ProcessorOptions {
     pub item_rules: Vec<ItemRule>,
     // ok
     pub file_rules: Vec<FileRule>,
-    pub process_listeners: Vec<Arc<dyn ProcessListener>>,
+    pub process_listeners: HashMap<ListenerMode, Vec<Arc<dyn ProcessListener>>>,
     pub file_exists_detector: Arc<dyn FileExistsDetector>,
     pub file_replacement_decider: Arc<dyn FileReplacementDecider>,
     // ok
@@ -363,6 +364,10 @@ impl SourceProcessor {
         self.instance_id
     }
 
+    fn process_listeners(&self, mode: ListenerMode) -> &[Arc<dyn ProcessListener>] {
+        self.options.process_listeners.get(&mode).map(Vec::as_slice).unwrap_or_default()
+    }
+
     pub async fn dry_run(&self) {
         DryRunProcess {};
     }
@@ -432,7 +437,7 @@ impl SourceProcessor {
                     listener_context.has_error = true;
                     let error =
                         ProcessingError::non_retryable("Asynchronous download failed");
-                    for listener in &self.options.process_listeners {
+                    for listener in self.process_listeners(ListenerMode::Each) {
                         listener.on_item_error(
                             &listener_context,
                             &content.item_content.source_item,
@@ -456,14 +461,14 @@ impl SourceProcessor {
                                 item_variables: completed.item_variables,
                                 status: *completed.status,
                             };
-                            for listener in &self.options.process_listeners {
+                            for listener in self.process_listeners(ListenerMode::Each) {
                                 listener
                                     .on_item_success(&listener_context, &item_content);
                             }
                         }
                         Err(error) => {
                             listener_context.has_error = true;
-                            for listener in &self.options.process_listeners {
+                            for listener in self.process_listeners(ListenerMode::Each) {
                                 listener.on_item_error(
                                     &listener_context,
                                     &content.item_content.source_item,
@@ -482,7 +487,7 @@ impl SourceProcessor {
             }
         }
         if had_items {
-            for listener in &self.options.process_listeners {
+            for listener in self.process_listeners(ListenerMode::Batch) {
                 listener.on_process_completed(&listener_context);
             }
         }
@@ -1639,8 +1644,12 @@ impl Process for NormalProcess {
                 .await
                 .map_err(ProcessingError::non_retryable)?;
         }
-        for listener in &p.options.process_listeners {
-            listener.on_process_completed(&ctx.coordinator.listener_context);
+        if !ctx.coordinator.listener_context.contents.is_empty()
+            && p.async_downloader.is_none()
+        {
+            for listener in p.process_listeners(ListenerMode::Batch) {
+                listener.on_process_completed(&ctx.coordinator.listener_context);
+            }
         }
         Ok(())
     }
@@ -1683,7 +1692,7 @@ impl Process for NormalProcess {
         item: &SourceItem,
         error: &ProcessingError,
     ) {
-        for listener in &p.options.process_listeners {
+        for listener in p.process_listeners(ListenerMode::Each) {
             listener.on_item_error(&ctx.listener_context, item, error);
         }
     }
@@ -1720,7 +1729,7 @@ impl Process for NormalProcess {
             item_variables: completed.item_variables,
             status: *completed.status,
         };
-        for listener in &p.options.process_listeners {
+        for listener in p.process_listeners(ListenerMode::Each) {
             listener.on_item_success(&ctx.listener_context, &item_content);
         }
         if advance_pointer
@@ -1728,7 +1737,7 @@ impl Process for NormalProcess {
                 p.advance_source_pointer(ctx, &source_item, item_pointer).await
         {
             ctx.listener_context.has_error = true;
-            for listener in &p.options.process_listeners {
+            for listener in p.process_listeners(ListenerMode::Each) {
                 listener.on_item_error(&ctx.listener_context, &source_item, &error);
             }
             return Err(error);
@@ -2219,7 +2228,7 @@ mod test {
                 pointer_batch_mode,
                 item_rules: Vec::new(),
                 file_rules: Vec::new(),
-                process_listeners: Vec::new(),
+                process_listeners: HashMap::new(),
                 file_exists_detector: Arc::new(SimpleFileExistsDetector {}),
                 file_replacement_decider: Arc::new(
                     crate::components::never_replace_decider::NeverReplaceDecider,
@@ -2536,18 +2545,43 @@ mod test {
     }
 
     #[tokio::test]
-    async fn process_notifies_item_and_completion_listeners() {
+    async fn process_notifies_listeners_for_their_configured_mode() {
         let (mut processor, _) = pointer_test_processor(false, 1, false);
-        let listener = Arc::new(RecordingListener::default());
-        processor.options.process_listeners = vec![listener.clone()];
+        processor.async_downloader = None;
+        let each_listener = Arc::new(RecordingListener::default());
+        let batch_listener = Arc::new(RecordingListener::default());
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Each, vec![each_listener.clone()]);
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Batch, vec![batch_listener.clone()]);
 
         processor.run().await.unwrap();
 
-        assert_eq!(listener.successes.load(AtomicOrdering::Relaxed), 1);
-        assert_eq!(listener.errors.load(AtomicOrdering::Relaxed), 0);
-        assert_eq!(listener.completions.load(AtomicOrdering::Relaxed), 1);
-        assert!(listener.context_visible.load(AtomicOrdering::Relaxed));
-        assert_eq!(*listener.completed_items.lock(), vec!["item-1".to_owned()]);
+        assert_eq!(each_listener.successes.load(AtomicOrdering::Relaxed), 1);
+        assert_eq!(each_listener.errors.load(AtomicOrdering::Relaxed), 0);
+        assert_eq!(each_listener.completions.load(AtomicOrdering::Relaxed), 0);
+        assert!(each_listener.context_visible.load(AtomicOrdering::Relaxed));
+        assert_eq!(batch_listener.successes.load(AtomicOrdering::Relaxed), 0);
+        assert_eq!(batch_listener.completions.load(AtomicOrdering::Relaxed), 1);
+        assert_eq!(*batch_listener.completed_items.lock(), vec!["item-1".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn async_process_defers_batch_listener_until_rename() {
+        let (mut processor, _) = pointer_test_processor(false, 1, false);
+        let batch_listener = Arc::new(RecordingListener::default());
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Batch, vec![batch_listener.clone()]);
+
+        processor.run().await.unwrap();
+
+        assert_eq!(batch_listener.completions.load(AtomicOrdering::Relaxed), 0);
     }
 
     #[tokio::test]
@@ -2563,8 +2597,12 @@ mod test {
                 ..Default::default()
             },
         );
+        processor.async_downloader = None;
         let listener = Arc::new(RecordingListener::default());
-        processor.options.process_listeners = vec![listener.clone()];
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Batch, vec![listener.clone()]);
 
         processor.run().await.unwrap();
         assert_ne!(probe.completed.lock().first(), Some(&1));
@@ -2686,8 +2724,16 @@ mod test {
         let (mut processor, _) = pointer_test_processor(false, 0, false);
         processor.name = processor_name.to_owned();
         processor.processing_storage = storage.clone();
-        let listener = Arc::new(RecordingListener::default());
-        processor.options.process_listeners = vec![listener.clone()];
+        let each_listener = Arc::new(RecordingListener::default());
+        let batch_listener = Arc::new(RecordingListener::default());
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Each, vec![each_listener.clone()]);
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Batch, vec![batch_listener.clone()]);
 
         assert_eq!(processor.run_rename().await.unwrap(), 1);
         let saved = storage.find_content_by_id(content_id).await.unwrap().unwrap();
@@ -2705,8 +2751,10 @@ mod test {
                 .unwrap()
                 .is_empty()
         );
-        assert_eq!(listener.successes.load(AtomicOrdering::Relaxed), 1);
-        assert_eq!(listener.completions.load(AtomicOrdering::Relaxed), 1);
+        assert_eq!(each_listener.successes.load(AtomicOrdering::Relaxed), 1);
+        assert_eq!(each_listener.completions.load(AtomicOrdering::Relaxed), 0);
+        assert_eq!(batch_listener.successes.load(AtomicOrdering::Relaxed), 0);
+        assert_eq!(batch_listener.completions.load(AtomicOrdering::Relaxed), 1);
         fs::remove_dir_all(root).unwrap();
     }
 
