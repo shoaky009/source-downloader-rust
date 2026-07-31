@@ -383,8 +383,12 @@ pub trait FileMover: SdComponent {
         fs::create_dir_all(path).map_err(Into::into)
     }
 
-    fn replace(&self, item_content: &ItemContent) -> Result<(), ProcessingError> {
-        for file in item_content.file_contents {
+    fn replace(
+        &self,
+        _source_item: &SourceItem,
+        files: &[&FileContent],
+    ) -> Result<(), ProcessingError> {
+        for file in files {
             let existing_path = file.exist_target_path.as_ref().ok_or_else(|| {
                 ProcessingError::non_retryable("exist_target_path is missing")
             })?;
@@ -500,7 +504,8 @@ pub trait FileTagger: SdComponent {
 pub trait FileReplacementDecider: SdComponent {
     fn should_replace(
         &self,
-        current: &ItemContent,
+        source_item: &SourceItem,
+        current_file: &FileContent,
         before: Option<&InProcessingItem>,
         existing_file: &SourceFile,
     ) -> bool;

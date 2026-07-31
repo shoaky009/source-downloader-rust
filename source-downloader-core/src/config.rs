@@ -87,6 +87,8 @@ pub struct ProcessorOptionConfig {
     #[serde(skip_serializing_if = "is_default")]
     pub file_taggers: Vec<String>,
     #[serde(skip_serializing_if = "is_default")]
+    pub file_replacement_decider: Option<String>,
+    #[serde(skip_serializing_if = "is_default")]
     pub variable_conflict_strategy: Option<String>,
     #[serde(skip_serializing_if = "is_default")]
     pub variable_name_replace: HashMap<String, String>,
@@ -244,6 +246,7 @@ impl Default for ProcessorOptionConfig {
             file_content_expression_exclusions: vec![],
             file_content_expression_inclusions: vec![],
             file_taggers: vec![],
+            file_replacement_decider: None,
             variable_name_replace: HashMap::new(),
             variable_conflict_strategy: None,
             save_processing_content: true,

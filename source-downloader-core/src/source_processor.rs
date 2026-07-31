@@ -15,8 +15,9 @@ use source_downloader_sdk::component::FileContentStatus::{
 };
 use source_downloader_sdk::component::{
     AsyncDownloader, DownloadOptions, DownloadTask, Downloader, FileContentFilter,
-    FileExistsDetector, InProcessingItem, ItemContent, ItemContentFilter, ProcessContext,
-    ProcessListener, ProcessorInfo, SourceFileFilter, SourceFileRef, SourceItemFilter,
+    FileExistsDetector, FileReplacementDecider, InProcessingItem, ItemContent,
+    ItemContentFilter, ProcessContext, ProcessListener, ProcessorInfo, SourceFileFilter,
+    SourceFileRef, SourceItemFilter,
 };
 use source_downloader_sdk::component::{FileContent, Source};
 use source_downloader_sdk::component::{FileMover, ProcessingError};
@@ -112,6 +113,7 @@ pub struct ProcessorOptions {
     pub file_rules: Vec<FileRule>,
     pub process_listeners: Vec<Arc<dyn ProcessListener>>,
     pub file_exists_detector: Arc<dyn FileExistsDetector>,
+    pub file_replacement_decider: Arc<dyn FileReplacementDecider>,
     // ok
     pub download_options: DownloadOptions,
 }
@@ -488,7 +490,7 @@ impl SourceProcessor {
     ) -> Result<Vec<FileContent>, ProcessingError> {
         let mut files = self.load_file_contents(content).await?;
         let target_paths = files.iter().map(FileContent::target_path).collect_vec();
-        let mut movement_result = None;
+        let mut rename_result = None;
         if files.iter().all(|file| file.status != ReadyReplace)
             && self.file_mover.exists(&target_paths).into_iter().all(|exists| exists)
         {
@@ -504,13 +506,17 @@ impl SourceProcessor {
                     &mut files,
                 )
                 .await;
-            let result = process
+            let movement_result = process
                 .do_movement(self, &content.item_content.source_item, &files)
                 .await;
-            let moved = result.is_ok();
-            movement_result = Some(result);
+            let replacement_result = process
+                .do_replacement(self, &content.item_content.source_item, &files)
+                .await;
+            let result = movement_result.and(replacement_result);
+            let renamed = result.is_ok();
+            rename_result = Some(result);
             content.rename_times += 1;
-            content.status = if moved {
+            content.status = if renamed {
                 ProcessingStatus::Renamed
             } else {
                 ProcessingStatus::WaitingToRename
@@ -528,7 +534,7 @@ impl SourceProcessor {
                 .await
                 .map_err(|error| ProcessingError::non_retryable(error.message))?;
         }
-        if let Some(Err(error)) = movement_result {
+        if let Some(Err(error)) = rename_result {
             return Err(error);
         }
         let paths = files
@@ -794,6 +800,125 @@ trait Process {
         Ok(p_ctx)
     }
 
+    async fn identify_files_to_replace(
+        &self,
+        p: &SourceProcessor,
+        source_item: &SourceItem,
+        files: &mut [FileContent],
+    ) -> Result<usize, ProcessingError> {
+        let candidate_indices = files
+            .iter()
+            .enumerate()
+            .filter_map(|(index, file)| {
+                (file.status == TargetExists && file.exist_target_path.is_some())
+                    .then_some(index)
+            })
+            .collect_vec();
+        if candidate_indices.is_empty() {
+            return Ok(0);
+        }
+        let existing_paths = candidate_indices
+            .iter()
+            .map(|index| {
+                files[*index]
+                    .exist_target_path
+                    .as_ref()
+                    .expect("replacement candidate has an existing target path")
+            })
+            .collect_vec();
+        let physical_exists = p.file_mover.exists(&existing_paths);
+        let path_strings = existing_paths
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect_vec();
+        let current_hash = source_item.hashing();
+        let relations = p
+            .processing_storage
+            .find_paths(&path_strings)
+            .await
+            .map_err(|error| ProcessingError::non_retryable(error.message))?
+            .into_iter()
+            .filter(|relation| relation.item_hash != current_hash)
+            .map(|relation| (relation.path, relation.item_hash))
+            .collect::<HashMap<_, _>>();
+        let item_hashes = relations.values().cloned().unique().collect_vec();
+        let prior_contents = if item_hashes.is_empty() {
+            Vec::new()
+        } else {
+            p.processing_storage
+                .query_processing_content(&ProcessingContentQuery {
+                    item_hash: Some(item_hashes),
+                    status: Some(vec![ProcessingStatus::Renamed]),
+                    ..Default::default()
+                })
+                .await
+                .map_err(|error| ProcessingError::non_retryable(error.message))?
+        };
+        let mut prior_by_hash = HashMap::new();
+        for content in prior_contents {
+            if prior_by_hash.contains_key(&content.item_hash) {
+                continue;
+            }
+            let content_id = content.id.ok_or_else(|| {
+                ProcessingError::non_retryable("Persisted replacement content has no id")
+            })?;
+            let encoded_files = p
+                .processing_storage
+                .find_file_contents(content_id)
+                .await
+                .map_err(|error| ProcessingError::non_retryable(error.message))?
+                .ok_or_else(|| {
+                    ProcessingError::non_retryable(format!(
+                        "File contents not found for replacement content {}",
+                        content_id
+                    ))
+                })?;
+            let key = content.item_hash.to_owned();
+            prior_by_hash
+                .insert(key, (content, decode_files_from_compressed(&encoded_files)?));
+        }
+
+        let mut replacement_count = 0;
+        for ((index, physical_exists), path) in
+            candidate_indices.into_iter().zip(physical_exists).zip(path_strings)
+        {
+            let file = &mut files[index];
+            let existing_path = file
+                .exist_target_path
+                .as_ref()
+                .expect("replacement candidate has an existing target path");
+            let existing_file = if physical_exists {
+                p.file_mover.path_metadata(existing_path)?
+            } else {
+                SourceFile::new(existing_path.to_path_buf())
+            };
+            let before =
+                relations.get(&path).and_then(|item_hash| prior_by_hash.get(item_hash));
+            let before_view = before.map(|(content, files)| InProcessingItem {
+                id: &content.id,
+                processor_name: &content.processor_name,
+                item_hash: &content.item_hash,
+                item_identity: &content.item_identity,
+                source_item: &content.item_content.source_item,
+                item_variables: &content.item_content.item_variables,
+                file_contents: files,
+                rename_times: &content.rename_times,
+                status: &content.status,
+                failure_reason: content.failure_reason.as_deref(),
+            });
+            if p.options.file_replacement_decider.should_replace(
+                source_item,
+                file,
+                before_view.as_ref(),
+                &existing_file,
+            ) {
+                file.status = ReadyReplace;
+                replacement_count += 1;
+            }
+        }
+        Ok(replacement_count)
+    }
+
     async fn process_item(
         &self,
         source_item: &SourceItem,
@@ -869,25 +994,27 @@ trait Process {
             // 1. 根据目标文件路径更新file_content状态
             self.update_file_content_status(p, source_item, &mut file_contents).await;
         }
-        let (should_download, mut content_status, replace_files) = {
+        let (should_download, mut content_status) = {
             let _guard = rt.mutex.lock().await;
-            // preoccupiedTargetPath
-            // identifyFilesToReplace
-            let (should_download, content_status) =
-                self.probe_content_status(p, rt, source_item, &file_contents, &vec![]);
-            (should_download, content_status, vec![])
+            self.identify_files_to_replace(p, source_item, &mut file_contents).await?;
+            self.probe_content_status(p, rt, source_item, &file_contents)
         };
         let mut rename_times = 0;
         if should_download {
-            self.do_download(p, source_item, &file_contents, &replace_files).await?;
+            self.do_download(p, source_item, &file_contents).await?;
             let is_sync = p.async_downloader.is_none();
             if is_sync {
                 let movement_res = self.do_movement(p, source_item, &file_contents).await;
-                let replacement_res = self
-                    .do_replacement(p, source_item, &file_contents, &replace_files)
-                    .await;
-                // 有点歧义后面重新定义
-                if movement_res.is_ok() || replacement_res.is_ok() {
+                let replacement_res =
+                    self.do_replacement(p, source_item, &file_contents).await;
+                let has_replacements =
+                    file_contents.iter().any(|file| file.status == ReadyReplace);
+                let postprocessing_succeeded = if has_replacements {
+                    movement_res.is_ok() && replacement_res.is_ok()
+                } else {
+                    movement_res.is_ok() || replacement_res.is_ok()
+                };
+                if postprocessing_succeeded {
                     content_status = ProcessingStatus::Renamed;
                     rename_times = 1;
                 } else {
@@ -951,25 +1078,24 @@ trait Process {
 
     async fn do_replacement(
         &self,
-        _p: &SourceProcessor,
-        _source_item: &SourceItem,
-        _file_contents: &Vec<FileContent>,
-        _replace_files: &Vec<FileContent>,
+        p: &SourceProcessor,
+        source_item: &SourceItem,
+        file_contents: &[FileContent],
     ) -> Result<(), ProcessingError> {
-        Ok(())
+        let replacement_files =
+            file_contents.iter().filter(|file| file.status == ReadyReplace).collect_vec();
+        p.file_mover.replace(source_item, &replacement_files)
     }
 
     async fn do_download(
         &self,
         p: &SourceProcessor,
         source_item: &SourceItem,
-        file_contents: &Vec<FileContent>,
-        replace_files: &Vec<FileContent>,
+        file_contents: &[FileContent],
     ) -> Result<(), ProcessingError> {
         let downloadable_files: Vec<&FileContent> = file_contents
             .iter()
             .filter(|file| file.status != TargetExists && file.status != Downloaded)
-            .chain(replace_files.iter())
             .collect();
         let all_files: Vec<SourceFileRef> =
             downloadable_files.iter().map(|file| (*file).into()).collect();
@@ -1163,13 +1289,12 @@ trait Process {
         p: &SourceProcessor,
         rt: &ProcessRuntime,
         source_item: &SourceItem,
-        files: &Vec<FileContent>,
-        replace_files: &Vec<FileContent>,
+        files: &[FileContent],
     ) -> (bool, ProcessingStatus) {
         if files.is_empty() {
             return (false, ProcessingStatus::NoFiles);
         };
-        if !replace_files.is_empty() {
+        if files.iter().any(|file| file.status == ReadyReplace) {
             return (true, ProcessingStatus::WaitingToRename);
         };
         if rt.cancel_items.contains(source_item) {
@@ -1808,6 +1933,9 @@ mod test {
                 file_rules: Vec::new(),
                 process_listeners: Vec::new(),
                 file_exists_detector: Arc::new(SimpleFileExistsDetector {}),
+                file_replacement_decider: Arc::new(
+                    crate::components::never_replace_decider::NeverReplaceDecider,
+                ),
                 download_options: DownloadOptions {
                     category: None,
                     tags: None,
@@ -1970,8 +2098,13 @@ mod test {
         let download_dir = root.join("download");
         let target_dir = root.join("target");
         fs::create_dir_all(&download_dir).unwrap();
+        fs::create_dir_all(&target_dir).unwrap();
         let download_file = download_dir.join("file.txt");
         fs::write(&download_file, b"content").unwrap();
+        let replacement_download_file = download_dir.join("replacement.txt");
+        let replacement_target_file = target_dir.join("replacement.txt");
+        fs::write(&replacement_download_file, b"new-content").unwrap();
+        fs::write(&replacement_target_file, b"old-content").unwrap();
 
         let source_item = SourceItem {
             title: "async-item".to_owned(),
@@ -1984,7 +2117,7 @@ mod test {
             identity: None,
         };
         let file = FileContent {
-            download_path: download_dir,
+            download_path: download_dir.clone(),
             file_download_path: download_file.clone(),
             source_save_path: target_dir.clone(),
             pattern_variables: HashMap::new(),
@@ -1996,6 +2129,22 @@ mod test {
             exist_target_path: None,
             errors: Vec::new(),
             status: Normal,
+            target_path: OnceLock::new(),
+            data: None,
+        };
+        let replacement_file = FileContent {
+            download_path: download_dir,
+            file_download_path: replacement_download_file.clone(),
+            source_save_path: target_dir.clone(),
+            pattern_variables: HashMap::new(),
+            tags: Vec::new(),
+            attrs: Default::default(),
+            file_uri: None,
+            target_save_path: target_dir.clone(),
+            target_filename: "replacement.txt".to_owned(),
+            exist_target_path: Some(replacement_target_file.clone()),
+            errors: Vec::new(),
+            status: ReadyReplace,
             target_path: OnceLock::new(),
             data: None,
         };
@@ -2018,7 +2167,7 @@ mod test {
         storage
             .save_file_contents(
                 content_id,
-                encode_files_and_compress(&vec![file]).unwrap(),
+                encode_files_and_compress(&vec![file, replacement_file]).unwrap(),
             )
             .await
             .unwrap();
@@ -2044,6 +2193,8 @@ mod test {
         assert!(!download_file.exists());
         let target_file = target_dir.join("renamed.txt");
         assert_eq!(fs::read(&target_file).unwrap(), b"content");
+        assert_eq!(fs::read(&replacement_target_file).unwrap(), b"new-content");
+        assert!(!replacement_download_file.exists());
         assert!(
             storage
                 .find_paths(&[target_file.to_string_lossy().into_owned()])
@@ -2053,6 +2204,155 @@ mod test {
         );
         assert_eq!(listener.successes.load(AtomicOrdering::Relaxed), 1);
         assert_eq!(listener.completions.load(AtomicOrdering::Relaxed), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[derive(Debug)]
+    struct ReplacementFileMover;
+
+    impl Display for ReplacementFileMover {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "replacement-test-mover")
+        }
+    }
+
+    impl source_downloader_sdk::component::SdComponent for ReplacementFileMover {}
+    impl FileMover for ReplacementFileMover {}
+
+    #[derive(Debug)]
+    struct AlwaysReplaceDecider {
+        saw_prior_item: AtomicBool,
+    }
+
+    impl Display for AlwaysReplaceDecider {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "always-replace")
+        }
+    }
+
+    impl source_downloader_sdk::component::SdComponent for AlwaysReplaceDecider {}
+
+    impl FileReplacementDecider for AlwaysReplaceDecider {
+        fn should_replace(
+            &self,
+            _: &SourceItem,
+            _: &FileContent,
+            before: Option<&InProcessingItem>,
+            _: &SourceFile,
+        ) -> bool {
+            self.saw_prior_item.store(before.is_some(), AtomicOrdering::Relaxed);
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn replacement_decider_receives_prior_item_and_replaces_target() {
+        use std::fs;
+        use std::sync::OnceLock;
+
+        let root = std::env::temp_dir()
+            .join(format!("source-downloader-replacement-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let target_file = root.join("target.txt");
+        let download_file = root.join("download.txt");
+        fs::write(&target_file, b"old").unwrap();
+        fs::write(&download_file, b"new").unwrap();
+
+        let previous_item = SourceItem {
+            title: "previous-item".to_owned(),
+            link: Uri::from_static("https://example.com/previous"),
+            datetime: OffsetDateTime::UNIX_EPOCH,
+            content_type: "text/plain".to_owned(),
+            download_uri: Uri::from_static("https://example.com/previous/file"),
+            attrs: Default::default(),
+            tags: Vec::new(),
+            identity: None,
+        };
+        let current_item = SourceItem {
+            title: "current-item".to_owned(),
+            link: Uri::from_static("https://example.com/current"),
+            datetime: OffsetDateTime::now_utc(),
+            content_type: "text/plain".to_owned(),
+            download_uri: Uri::from_static("https://example.com/current/file"),
+            attrs: Default::default(),
+            tags: Vec::new(),
+            identity: None,
+        };
+        let storage = storage().await.clone();
+        let processor_name = "replacement-test";
+        let mut previous_content = ProcessingContent {
+            id: None,
+            processor_name: processor_name.to_owned(),
+            item_hash: previous_item.hashing(),
+            item_identity: None,
+            item_content: ItemContentLite {
+                source_item: previous_item,
+                item_variables: HashMap::new(),
+            },
+            rename_times: 1,
+            status: ProcessingStatus::Renamed,
+            failure_reason: None,
+            created_at: OffsetDateTime::now_utc(),
+            updated_at: None,
+        };
+        let previous_id =
+            storage.save_processing_content(&previous_content).await.unwrap();
+        previous_content.id = Some(previous_id);
+        storage
+            .save_file_contents(
+                previous_id,
+                encode_files_and_compress(&Vec::new()).unwrap(),
+            )
+            .await
+            .unwrap();
+        storage
+            .save_paths(vec![ProcessingTargetPath {
+                path: target_file.to_string_lossy().into_owned(),
+                processor_name: processor_name.to_owned(),
+                item_hash: previous_content.item_hash.clone(),
+            }])
+            .await
+            .unwrap();
+
+        let mut file = FileContent {
+            download_path: root.clone(),
+            file_download_path: download_file.clone(),
+            source_save_path: root.clone(),
+            pattern_variables: HashMap::new(),
+            tags: Vec::new(),
+            attrs: Default::default(),
+            file_uri: None,
+            target_save_path: root.clone(),
+            target_filename: "target.txt".to_owned(),
+            exist_target_path: Some(target_file.clone()),
+            errors: Vec::new(),
+            status: TargetExists,
+            target_path: OnceLock::new(),
+            data: None,
+        };
+        file.target_path.set(target_file.clone()).unwrap();
+        let mut files = vec![file];
+        let (mut processor, _) = pointer_test_processor(false, 0, false);
+        processor.processing_storage = storage;
+        processor.file_mover = Arc::new(ReplacementFileMover);
+        let decider =
+            Arc::new(AlwaysReplaceDecider { saw_prior_item: AtomicBool::new(false) });
+        processor.options.file_replacement_decider = decider.clone();
+        let process = NormalProcess {};
+
+        assert_eq!(
+            process
+                .identify_files_to_replace(&processor, &current_item, &mut files)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(files[0].status, ReadyReplace);
+        assert!(decider.saw_prior_item.load(AtomicOrdering::Relaxed));
+        process.do_replacement(&processor, &current_item, &files).await.unwrap();
+        assert_eq!(fs::read(&target_file).unwrap(), b"new");
+        assert!(!download_file.exists());
         fs::remove_dir_all(root).unwrap();
     }
 }

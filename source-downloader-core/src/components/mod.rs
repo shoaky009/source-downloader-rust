@@ -6,6 +6,7 @@ pub mod expression_item_content_filter;
 pub mod expression_item_filter;
 pub mod fixed_schedule_trigger;
 pub mod http_downloader;
+pub mod never_replace_decider;
 pub mod simple_file_exists_detector;
 pub mod source_item_identity_filter;
 pub mod system_file_mover;
@@ -19,6 +20,7 @@ pub fn get_build_in_component_supplier() -> Vec<Arc<dyn ComponentSupplier>> {
         Arc::new(expression_item_filter::SUPPLIER),
         Arc::new(expression_item_content_filter::SUPPLIER),
         Arc::new(expression_file_content_filter::SUPPLIER),
+        Arc::new(never_replace_decider::SUPPLIER),
         Arc::new(system_file_source::SUPPLIER),
         Arc::new(system_file_resolver::SUPPLIER),
         Arc::new(http_downloader::SUPPLIER),

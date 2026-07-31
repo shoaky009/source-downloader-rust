@@ -287,6 +287,13 @@ impl ProcessorManager {
         let file_exists_detector = self
             .get_component_for_processor(&file_exists_detector_id, &config.name)?
             .as_file_exists_detector()?;
+        let file_replacement_decider_id = ComponentRootType::FileReplacementDecider
+            .parse_component_id(
+                opt.file_replacement_decider.as_deref().unwrap_or("never"),
+            );
+        let file_replacement_decider = self
+            .get_component_for_processor(&file_replacement_decider_id, &config.name)?
+            .as_file_replacement_decider()?;
 
         Ok(ProcessorOptions {
             save_path_pattern: Arc::new(PathPattern::new_cel(
@@ -303,6 +310,7 @@ impl ProcessorManager {
             file_taggers,
             process_listeners,
             file_exists_detector,
+            file_replacement_decider,
             variable_aggregation: VariableAggregation::new(
                 match &opt.variable_conflict_strategy {
                     None => Box::new(SmartStrategy),
