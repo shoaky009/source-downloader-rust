@@ -2,7 +2,7 @@ use crate::instance::mikan::MikanClient;
 use crate::util;
 use crate::util::{AsyncExpandIterator, ExpandHandler, IterationResult};
 use reqwest::StatusCode;
-use rss_for_mikan::{Channel, Item};
+use rss::{Channel, Item};
 use serde::{Deserialize, Serialize};
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
@@ -12,9 +12,9 @@ use source_downloader_sdk::component::{
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{Map, Value};
-use source_downloader_sdk::time::format_description::BorrowedFormatItem;
-use source_downloader_sdk::time::{OffsetDateTime, PrimitiveDateTime, UtcOffset};
-use source_downloader_sdk::{SdComponent, SourceItem, serde_json, time};
+use source_downloader_sdk::time::OffsetDateTime;
+use source_downloader_sdk::time::format_description::well_known::Rfc2822;
+use source_downloader_sdk::{SdComponent, SourceItem, serde_json};
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
@@ -24,11 +24,6 @@ use std::sync::Arc;
 pub struct MikanSourceSupplier {}
 
 pub const SUPPLIER: MikanSourceSupplier = MikanSourceSupplier {};
-
-static DATETIME_FORMAT: &[BorrowedFormatItem] = time::macros::format_description!(
-    "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond]"
-);
-static TIME_OFFSET: UtcOffset = time::macros::offset!(+8);
 
 impl ComponentSupplier for MikanSourceSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
@@ -111,7 +106,7 @@ impl Source for MikanSource {
         })?;
 
         let items: Vec<SourceItem> =
-            channel.items.iter().filter_map(|i| Self::convert_item(i)).collect();
+            channel.items().iter().filter_map(Self::convert_item).collect();
 
         if !self.all_episode {
             let result = items
@@ -152,20 +147,16 @@ impl Source for MikanSource {
 impl MikanSource {
     // TODO如果失败要打印一下日志
     fn convert_item(item: &Item) -> Option<SourceItem> {
-        let title = item.title.as_ref()?.to_string();
-        let link_str = item.link.as_ref()?;
-        let link = Uri::from_str(link_str).ok()?;
-        let enclosure = item.enclosure.as_ref()?;
-        let download_uri = Uri::from_str(&enclosure.url).ok()?;
-        let pub_date = item.torrent.as_ref().map(|x| x.pub_date.to_owned()).flatten()?;
-        let datetime = PrimitiveDateTime::parse(&pub_date, DATETIME_FORMAT)
-            .ok()?
-            .assume_offset(TIME_OFFSET);
+        let title = item.title()?.to_owned();
+        let link = Uri::from_str(item.link()?).ok()?;
+        let enclosure = item.enclosure()?;
+        let download_uri = Uri::from_str(enclosure.url()).ok()?;
+        let datetime = OffsetDateTime::parse(item.pub_date()?, &Rfc2822).ok()?;
         Some(SourceItem {
             title,
             link,
             datetime,
-            content_type: enclosure.mime_type.clone(),
+            content_type: enclosure.mime_type().to_owned(),
             download_uri,
             attrs: Default::default(),
             tags: Default::default(),
@@ -326,26 +317,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn converts_mikan_torrent_publication_date() {
+    fn converts_mikan_rss_item() {
         let channel = Channel::read_from(
-            br#"<?xml version="1.0" encoding="UTF-8"?>
-                <rss version="2.0">
+            br#"<?xml version="1.0" encoding="utf-8"?>
+                <rss
+                  xmlns:torrent="https://mikanani.me/0.1/"
+                  version="2.0">
                   <channel>
-                    <title>Mikan</title>
+                    <title>Mikan Project - My Bangumi</title>
                     <link>https://mikanani.me</link>
-                    <description>Mikan feed</description>
+                    <description>Mikan Project - My Bangumi</description>
                     <item>
                       <title>Episode 01</title>
                       <link>https://mikanani.me/Home/Episode/example</link>
-                      <pubDate>Thu, 31 Jul 2026 00:00:00 +0800</pubDate>
+                      <description>[Group] Episode 01</description>
+                      <guid isPermaLink="false">https://mikanani.me/Home/Episode/example</guid>
+                      <pubDate>Fri, 24 Jul 2026 16:22:47 +0800</pubDate>
                       <enclosure
                         url="https://mikanani.me/Download/example.torrent"
                         length="123"
                         type="application/x-bittorrent" />
-                      <torrent>
+                      <torrent xmlns="https://mikanani.me/0.1/">
                         <link>https://mikanani.me/Download/example.torrent</link>
                         <contentLength>123</contentLength>
-                        <pubDate>2026-07-31T15:26:37.123</pubDate>
+                        <pubDate>2025-01-01T00:00:00.000</pubDate>
                       </torrent>
                     </item>
                   </channel>
@@ -354,13 +349,14 @@ mod tests {
         )
         .unwrap();
 
-        let item = MikanSource::convert_item(&channel.items[0]).unwrap();
+        let item = MikanSource::convert_item(&channel.items()[0]).unwrap();
 
         assert_eq!("Episode 01", item.title);
-        assert_eq!("2026-07-31 15:26:37.123 +08:00:00", item.datetime.to_string());
+        assert_eq!("2026-07-24 16:22:47.0 +08:00:00", item.datetime.to_string());
         assert_eq!(
             "https://mikanani.me/Download/example.torrent",
             item.download_uri.to_string()
         );
+        assert_eq!("application/x-bittorrent", item.content_type);
     }
 }
