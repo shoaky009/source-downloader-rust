@@ -87,7 +87,7 @@ Rules:
   - Rust had no `Trimmer` implementation, so add Kotlin-equivalent `force` and `regex` built-ins.
   - Suggested commit: `feat: configure variable trimming and path limits`
 
-- [ ] **Implement Variable Process Chain**
+- [x] **Implement Variable Process Chain**
   - Replace the unused `Renamer::variable_process_chain: Vec<String>` placeholder with a real model.
   - Add input, ordered provider chain, optional condition, key mapping, include keys, and exclude keys.
   - Exercise `VariableProvider::extract_from()` and `primary_variable_name()`; both are currently unused.

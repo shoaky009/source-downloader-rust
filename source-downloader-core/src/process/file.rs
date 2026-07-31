@@ -6,7 +6,7 @@ use serde_json::{Map, Value, json};
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
     FileContent, FileContentStatus, PatternVariables, SourceFile, Trimmer,
-    VariableReplacer,
+    VariableProvider, VariableReplacer,
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -63,7 +63,7 @@ impl<'a> RawFileContent<'a> {
 pub struct Renamer {
     pub variable_error_strategy: VariableErrorStrategy,
     pub variable_replacers: Vec<Arc<dyn VariableReplacer>>,
-    pub variable_process_chain: Vec<String>,
+    pub variable_process_chain: Vec<VariableProcessChain>,
     pub trimming: HashMap<String, Vec<Arc<dyn Trimmer>>>,
     pub path_name_length_limit: usize,
 }
@@ -76,6 +76,78 @@ pub enum VariableErrorStrategy {
     #[default]
     Stay,
     ToUnresolved,
+}
+
+#[derive(Clone, Default)]
+pub struct VariableProcessOutput {
+    pub key_mapping: HashMap<String, String>,
+    pub exclude_keys: std::collections::HashSet<String>,
+    pub include_keys: std::collections::HashSet<String>,
+}
+
+#[derive(Clone)]
+pub struct VariableProcessChain {
+    pub input: String,
+    pub chain: Vec<Arc<dyn VariableProvider>>,
+    pub output: VariableProcessOutput,
+    pub condition: Option<Arc<dyn CompiledExpression<bool>>>,
+}
+
+impl VariableProcessChain {
+    fn process(
+        &self,
+        item: &SourceItem,
+        value: &str,
+        context: &Map<String, Value>,
+    ) -> HashMap<String, String> {
+        let mut accumulated = value.to_owned();
+        let mut extracted = HashMap::new();
+        let mut completed = true;
+        for provider in &self.chain {
+            let Some(primary) = provider.primary_variable_name() else {
+                completed = false;
+                break;
+            };
+            let Some(values) = provider.extract_from(item, &accumulated) else {
+                completed = false;
+                break;
+            };
+            for (key, value) in &values {
+                let text = match value {
+                    Value::String(value) => value.clone(),
+                    value => value.to_string(),
+                };
+                extracted.insert(key.clone(), text);
+            }
+            if let Some(value) = extracted.get(&primary) {
+                accumulated.clone_from(value);
+            }
+        }
+
+        let mut result = HashMap::new();
+        for (key, value) in extracted {
+            if context.contains_key(&key)
+                || self.output.exclude_keys.contains(&key)
+                || (!self.output.include_keys.is_empty()
+                    && !self.output.include_keys.contains(&key))
+            {
+                continue;
+            }
+            result
+                .insert(self.output.key_mapping.get(&key).cloned().unwrap_or(key), value);
+        }
+        if completed {
+            result.insert(
+                self.output
+                    .key_mapping
+                    .get(&self.input)
+                    .cloned()
+                    .unwrap_or_else(|| self.input.clone()),
+                accumulated,
+            );
+        }
+        result
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -507,42 +579,39 @@ impl Renamer {
 
     fn file_rename_variables(
         &self,
-        _: &SourceItem,
+        source_item: &SourceItem,
         file: &RawFileContent,
         extra: &RenameVariables,
     ) -> RenameVariables {
         let mut vars = Map::new();
         let file_pattern_vars = self.apply_replacers_to_map(&file.variables);
-        for (k, v) in &file_pattern_vars {
-            vars.insert(k.clone(), Value::String(v.clone()));
+        for (key, value) in &file_pattern_vars {
+            vars.insert(key.clone(), Value::String(value.clone()));
         }
 
         let file_attrs = self.apply_replacers_to_attrs(&file.source_file.attrs);
-
-        // 构建 file 对象变量
         let file_obj = json!({
             "name": self.apply_replacers("file.name", file.file_download_path().file_stem().unwrap().to_string_lossy().into_owned()),
             "attrs": file_attrs,
             "tags": file.source_file.tags,
             "vars": file.variables,
             "originalLayout": file.get_path_original_layout().into_iter()
-                .map(|s| self.apply_replacers("file.originalLayout", s))
+                .map(|value| self.apply_replacers("file.originalLayout", value))
                 .collect::<Vec<_>>()
-            // Windows?
                 .join("/")
         });
-        vars.insert("file".to_string(), file_obj);
+        vars.insert("file".to_owned(), file_obj);
 
-        // 合并 extra
-        for (k, v) in &extra.variables {
-            vars.entry(k.to_owned()).or_insert(v.to_owned());
+        let mut processed_variables =
+            self.process_variables(source_item, &mut vars, true);
+        for (key, value) in &extra.processed_variables {
+            processed_variables.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+        for (key, value) in &extra.variables {
+            vars.entry(key.clone()).or_insert_with(|| value.clone());
         }
 
-        RenameVariables {
-            variables: vars,
-            processed_variables: extra.processed_variables.to_owned(),
-            ..Default::default()
-        }
+        RenameVariables { variables: vars, processed_variables, ..Default::default() }
     }
 
     fn apply_replacers(&self, name: &str, mut text: String) -> String {
@@ -556,7 +625,9 @@ impl Renamer {
         &self,
         map: &HashMap<String, String>,
     ) -> HashMap<String, String> {
-        map.iter().map(|(k, v)| (k.clone(), self.apply_replacers(k, v.clone()))).collect()
+        map.iter()
+            .map(|(key, value)| (key.clone(), self.apply_replacers(key, value.clone())))
+            .collect()
     }
 
     fn apply_replacers_to_attrs(&self, attrs: &Map<String, Value>) -> Map<String, Value> {
@@ -570,6 +641,39 @@ impl Renamer {
                 (key.clone(), Value::String(self.apply_replacers(key, value)))
             })
             .collect()
+    }
+
+    fn process_variables(
+        &self,
+        item: &SourceItem,
+        variables: &mut Map<String, Value>,
+        with_condition: bool,
+    ) -> HashMap<String, String> {
+        let mut processed = HashMap::new();
+        for process in &self.variable_process_chain {
+            if with_condition
+                && process
+                    .condition
+                    .as_ref()
+                    .is_some_and(|condition| condition.execute(variables) != Ok(true))
+            {
+                continue;
+            }
+            let value = process
+                .input
+                .split('.')
+                .try_fold(Value::Object(variables.clone()), |current, key| {
+                    current.get(key).cloned()
+                });
+            let Some(Value::String(value)) = value else {
+                continue;
+            };
+            for (key, value) in process.process(item, &value, variables) {
+                variables.insert(key.clone(), Value::String(value.clone()));
+                processed.insert(key, value);
+            }
+        }
+        processed
     }
 
     pub fn item_rename_variables(
@@ -594,9 +698,15 @@ impl Renamer {
             "attrs": item_attrs,
         });
         variables.insert("item".to_owned(), item_variables);
+        let processed_variables = self
+            .process_variables(item, &mut variables, false)
+            .into_iter()
+            .map(|(key, value)| (key.clone(), self.apply_replacers(&key, value)))
+            .collect();
 
         RenameVariables {
             variables,
+            processed_variables,
             pattern_variables: replaced_item_variables,
             ..Default::default()
         }
@@ -616,13 +726,54 @@ mod tests {
     #[derive(Debug, source_downloader_sdk::SdComponent)]
     #[component(VariableReplacer)]
     struct KeyEchoReplacer;
-
     impl VariableReplacer for KeyEchoReplacer {
         fn replace(&self, key: &str, value: String) -> String {
             format!("{key}={value}")
         }
     }
 
+    #[derive(Debug, source_downloader_sdk::SdComponent)]
+    #[component(VariableProvider)]
+    struct TestExtractProvider {
+        suffix: &'static str,
+    }
+
+    impl Display for TestExtractProvider {
+        fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(formatter, "extract-{}", self.suffix)
+        }
+    }
+
+    #[source_downloader_sdk::async_trait::async_trait]
+    impl VariableProvider for TestExtractProvider {
+        async fn item_variables(&self, _: &SourceItem) -> HashMap<String, String> {
+            HashMap::new()
+        }
+
+        async fn file_variables(
+            &self,
+            _: &SourceItem,
+            _: &PatternVariables,
+            _: &[SourceFile],
+        ) -> Vec<PatternVariables> {
+            Vec::new()
+        }
+
+        fn extract_from(
+            &self,
+            _: &SourceItem,
+            value: &str,
+        ) -> Option<HashMap<String, Value>> {
+            Some(HashMap::from([(
+                "primary".to_owned(),
+                Value::String(format!("{value}{}", self.suffix)),
+            )]))
+        }
+
+        fn primary_variable_name(&self) -> Option<String> {
+            Some("primary".to_owned())
+        }
+    }
     impl Display for KeyEchoReplacer {
         fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
             formatter.write_str("key-echo")
@@ -774,6 +925,39 @@ mod tests {
 
         assert_eq!("abcdef.txt", content.target_filename);
         assert_eq!(SOURCE_SAVE_PATH.join("abcdefghij"), content.target_save_path);
+    }
+    #[test]
+    fn variable_process_steps_see_prior_outputs() {
+        let output = VariableProcessOutput {
+            exclude_keys: std::collections::HashSet::from(["primary".to_owned()]),
+            ..Default::default()
+        };
+        let renamer = Renamer {
+            variable_process_chain: vec![
+                VariableProcessChain {
+                    input: "raw".to_owned(),
+                    chain: vec![Arc::new(TestExtractProvider { suffix: "-one" })],
+                    output: output.clone(),
+                    condition: None,
+                },
+                VariableProcessChain {
+                    input: "raw".to_owned(),
+                    chain: vec![Arc::new(TestExtractProvider { suffix: "-two" })],
+                    output,
+                    condition: None,
+                },
+            ],
+            ..DEFAULT_RENAMER.clone()
+        };
+
+        let variables = renamer.item_rename_variables(
+            &SourceItem::default(),
+            &hashmap! { "raw".to_owned() => "seed".to_owned() },
+        );
+
+        assert_eq!(json!("seed-one-two"), variables.variables["raw"]);
+        assert_eq!("seed-one-two", variables.processed_variables["raw"]);
+        assert!(!variables.processed_variables.contains_key("primary"));
     }
 
     #[test]

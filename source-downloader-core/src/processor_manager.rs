@@ -6,7 +6,9 @@ use crate::components::source_item_identity_filter::SourceItemIdentityFilter;
 use crate::config::{ListenerMode, ProcessorConfig, ProcessorOptionConfig};
 use crate::expression::CompiledExpressionFactory;
 use crate::expression::cel::FACTORY;
-use crate::process::file::{PathPattern, Renamer};
+use crate::process::file::{
+    PathPattern, Renamer, VariableProcessChain, VariableProcessOutput,
+};
 use crate::process::rule::{
     ExpressionAndTagMatcher, FileRule, FileStrategy, ItemRule, ItemStrategy,
 };
@@ -225,11 +227,42 @@ impl ProcessorManager {
             trimming.insert(trimming_config.variable_name.clone(), trimmers);
         }
 
+        let mut variable_process_chain =
+            Vec::with_capacity(config.options.variable_process.len());
+        for process_config in &config.options.variable_process {
+            let mut chain = Vec::with_capacity(process_config.chain.len());
+            for provider_id in &process_config.chain {
+                let component_id =
+                    ComponentRootType::VariableProvider.parse_component_id(provider_id);
+                chain.push(
+                    self.get_component_for_processor(&component_id, &config.name)?
+                        .as_variable_provider()?,
+                );
+            }
+            let condition = process_config
+                .condition_expression
+                .as_deref()
+                .map(|expression| FACTORY.create::<bool>(expression))
+                .transpose()?
+                .map(Arc::from);
+            variable_process_chain.push(VariableProcessChain {
+                input: process_config.input.clone(),
+                chain,
+                output: VariableProcessOutput {
+                    key_mapping: process_config.output.key_mapping.clone(),
+                    exclude_keys: process_config.output.exclude_keys.clone(),
+                    include_keys: process_config.output.include_keys.clone(),
+                },
+                condition,
+            });
+        }
+
         Ok(Renamer {
             variable_error_strategy: config.options.variable_error_strategy,
             variable_replacers,
             trimming,
             path_name_length_limit: config.options.path_name_length_limit,
+            variable_process_chain,
             ..Renamer::default()
         })
     }

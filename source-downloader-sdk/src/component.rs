@@ -532,7 +532,7 @@ pub trait VariableProvider: SdComponent {
         item_variables: &PatternVariables,
         files: &[SourceFile],
     ) -> Vec<PatternVariables>;
-    async fn extract_from(
+    fn extract_from(
         &self,
         item: &SourceItem,
         value: &str,

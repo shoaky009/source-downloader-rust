@@ -2625,7 +2625,7 @@ mod test {
                 .collect()
         }
 
-        async fn extract_from(
+        fn extract_from(
             &self,
             _: &SourceItem,
             _: &str,

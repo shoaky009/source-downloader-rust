@@ -68,6 +68,8 @@ pub struct ProcessorOptionConfig {
     #[serde(skip_serializing_if = "is_default")]
     pub variable_replacers: Vec<VariableReplacerConfig>,
     #[serde(skip_serializing_if = "is_default")]
+    pub variable_process: Vec<VariableProcessConfig>,
+    #[serde(skip_serializing_if = "is_default")]
     pub trimming: Vec<TrimmingConfig>,
     #[serde(skip_serializing_if = "is_path_name_length_limit_default")]
     pub path_name_length_limit: usize,
@@ -167,6 +169,23 @@ impl Default for ListenerMode {
     fn default() -> Self {
         Self::Each
     }
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct VariableProcessOutputConfig {
+    pub key_mapping: HashMap<String, String>,
+    pub exclude_keys: HashSet<String>,
+    pub include_keys: HashSet<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct VariableProcessConfig {
+    pub input: String,
+    pub chain: Vec<String>,
+    pub output: VariableProcessOutputConfig,
+    pub condition_expression: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -291,6 +310,7 @@ impl Default for ProcessorOptionConfig {
             filename_pattern: "".to_string(),
             variable_providers: vec![],
             variable_replacers: vec![],
+            variable_process: vec![],
             trimming: vec![],
             path_name_length_limit: 255,
             item_filters: vec![],
@@ -810,6 +830,39 @@ mod test {
         );
         assert_eq!(128, config.path_name_length_limit);
         assert_eq!(255, ProcessorOptionConfig::default().path_name_length_limit);
+    }
+
+    #[test]
+    fn variable_process_matches_kotlin_config() {
+        let config = serde_json::from_str::<ProcessorOptionConfig>(
+            r#"{
+                "variable-process": [{
+                    "input": "raw",
+                    "chain": ["regex:first", "sequence:second"],
+                    "output": {
+                        "key-mapping": {"episode": "ep"},
+                        "exclude-keys": ["ignored"],
+                        "include-keys": ["episode"]
+                    },
+                    "condition-expression": "file.name == 'sample'"
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        let process = &config.variable_process[0];
+        assert_eq!("raw", process.input);
+        assert_eq!(vec!["regex:first", "sequence:second"], process.chain);
+        assert_eq!(
+            Some("ep"),
+            process.output.key_mapping.get("episode").map(String::as_str)
+        );
+        assert!(process.output.exclude_keys.contains("ignored"));
+        assert!(process.output.include_keys.contains("episode"));
+        assert_eq!(
+            Some("file.name == 'sample'"),
+            process.condition_expression.as_deref()
+        );
     }
 
     #[test]
