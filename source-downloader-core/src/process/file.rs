@@ -26,7 +26,7 @@ pub struct RawFileContent<'a> {
     pub variables: &'a PatternVariables,
     pub save_path_pattern: &'a PathPattern,
     pub filename_pattern: &'a PathPattern,
-    pub source_file: &'a SourceFile,
+    pub source_file: SourceFile,
 }
 
 impl<'a> RawFileContent<'a> {
@@ -218,24 +218,38 @@ impl Renamer {
         if !filename_result.success
             && self.variable_error_strategy == VariableErrorStrategy::Original
         {
-            let dp = file.file_download_path();
-            let filename = dp.file_name().and_then(|s| s.to_str()).unwrap();
-            let parent = dp.parent().unwrap_or(Path::new(""));
+            let file_download_path = file.file_download_path();
+            let target_filename = file_download_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap()
+                .to_owned();
+            let target_save_path = file_download_path
+                .parent()
+                .unwrap_or(Path::new(""))
+                .to_path_buf();
+            let SourceFile {
+                tags,
+                attrs,
+                download_uri,
+                data,
+                ..
+            } = file.source_file;
             return FileContent {
                 download_path: file.download_path.to_owned(),
-                file_download_path: file.file_download_path(),
+                file_download_path,
                 source_save_path: file.save_path.to_owned(),
                 pattern_variables: variables.processed_variables,
-                target_filename: filename.to_owned(),
-                target_save_path: parent.to_path_buf(),
+                target_filename,
+                target_save_path,
                 exist_target_path: None,
-                tags: file.source_file.tags.to_owned(),
-                attrs: file.source_file.attrs.to_owned(),
-                file_uri: file.source_file.download_uri.to_owned(),
+                tags,
+                attrs,
+                file_uri: download_uri,
                 errors,
                 status: FileContentStatus::Undetected,
                 target_path: OnceLock::new(),
-                data: file.source_file.data.to_owned(),
+                data,
             };
         }
         if !self.trimming.is_empty() {
@@ -284,21 +298,29 @@ impl Renamer {
             }
         }
 
+        let file_download_path = file.file_download_path();
+        let SourceFile {
+            tags,
+            attrs,
+            download_uri,
+            data,
+            ..
+        } = file.source_file;
         FileContent {
             download_path: file.download_path.to_owned(),
-            file_download_path: file.file_download_path(),
+            file_download_path,
             source_save_path: file.save_path.to_owned(),
             pattern_variables: variables.processed_variables,
             target_filename: filename_result.path,
             target_save_path: PathBuf::from_str(&dir_result.path).unwrap(),
             exist_target_path: None,
-            tags: file.source_file.tags.to_owned(),
-            attrs: file.source_file.attrs.to_owned(),
-            file_uri: file.source_file.download_uri.to_owned(),
+            tags,
+            attrs,
+            file_uri: download_uri,
             errors,
             status: FileContentStatus::Undetected,
             target_path: OnceLock::new(),
-            data: file.source_file.data.to_owned(),
+            data,
         }
     }
 
@@ -612,7 +634,7 @@ mod tests {
                 variables: &PATTERN,
                 save_path_pattern: &PATH_PATTERN,
                 filename_pattern: &PATH_PATTERN,
-                source_file: &SOURCE_FILE,
+                source_file: SOURCE_FILE.clone(),
             }
         }
     }
@@ -698,18 +720,16 @@ mod tests {
             variables: &hashmap! {
               "name".to_owned() => "test".to_owned(),
             },
-            source_file: &SourceFile {
-                path: PathBuf::from_iter([
-                    "src",
-                    "test",
-                    "resources",
-                    "downloads",
-                    "easd",
-                    "222",
-                    "1.mp4",
-                ]),
-                ..Default::default()
-            },
+            source_file: SourceFile { path: PathBuf::from_iter([
+                "src",
+                "test",
+                "resources",
+                "downloads",
+                "easd",
+                "222",
+                "1.mp4",
+            ]),
+            ..Default::default() },
             ..Default::default()
         };
         let mut extra = RenameVariables::default();
@@ -781,10 +801,8 @@ mod tests {
                 "season".to_owned() => "01".to_owned(),
                 "title".to_owned() => "test 01".to_owned(),
             },
-            source_file: &SourceFile {
-                path: PathBuf::from("1.txt"),
-                ..Default::default()
-            },
+            source_file: SourceFile { path: PathBuf::from("1.txt"),
+            ..Default::default() },
             ..Default::default()
         };
 
@@ -804,10 +822,8 @@ mod tests {
     #[test]
     fn given_unresolved_save_path_with_dir_item() {
         let raw = RawFileContent {
-            source_file: &SourceFile {
-                path: PathBuf::from_iter(["FATE", "AAAAA.mp4"]),
-                ..Default::default()
-            },
+            source_file: SourceFile { path: PathBuf::from_iter(["FATE", "AAAAA.mp4"]),
+            ..Default::default() },
             save_path_pattern: &PathPattern::new_cel("{title}".to_string()),
             filename_pattern: &PathPattern::new_cel("S{season}E{episode}".to_string()),
             variables: &hashmap! {
@@ -833,10 +849,8 @@ mod tests {
     #[test]
     fn given_both_unresolved_with_dir_item() {
         let raw = RawFileContent {
-            source_file: &SourceFile {
-                path: PathBuf::from_iter(["FATE", "AAAAA.mp4"]),
-                ..Default::default()
-            },
+            source_file: SourceFile { path: PathBuf::from_iter(["FATE", "AAAAA.mp4"]),
+            ..Default::default() },
             save_path_pattern: &PathPattern::new_cel("{Title}".to_string()),
             filename_pattern: &PathPattern::new_cel("S{Season}E{Episod}".to_string()),
             variables: &hashmap! {
@@ -953,11 +967,9 @@ mod tests {
             save_path_pattern: &PathPattern::new_cel("{item.attrs.creatorId}/{date}".to_owned()),
             filename_pattern: &PathPattern::new_cel("{file.attrs.seq}".to_owned()),
             // 假设 attrs 在 RawFileContent 中被放入了 file.attrs
-            source_file: &SourceFile {
-                path: PathBuf::from("2.txt"),
-                attrs: serde_json::from_str(r#"{"seq": "2"}"#).unwrap(),
-                ..Default::default()
-            },
+            source_file: SourceFile { path: PathBuf::from("2.txt"),
+            attrs: serde_json::from_str(r#"{"seq": "2"}"#).unwrap(),
+            ..Default::default() },
             ..Default::default()
         };
 
@@ -976,10 +988,8 @@ mod tests {
         //     ..renamer().clone()
         // };
         let raw = RawFileContent {
-            source_file: &SourceFile {
-                path: PathBuf::from_iter(["wp", "mp3", "origin", "1.mp3"]),
-                ..Default::default()
-            },
+            source_file: SourceFile { path: PathBuf::from_iter(["wp", "mp3", "origin", "1.mp3"]),
+            ..Default::default() },
             save_path_pattern: &PathPattern::new_cel("wp-test/{file.originalLayout}".to_owned()),
             ..Default::default()
         };
@@ -999,14 +1009,12 @@ mod tests {
     #[test]
     fn given_dot_filename_should_no_extension() {
         let raw = RawFileContent {
-            source_file: &SourceFile {
-                path: PathBuf::from_iter([
-                    "downloads",
-                    "xxx",
-                    "_____padding_file_0_如果您看到此文件，请升级到BitComet(比特彗星)0.85或以上版本____",
-                ]),
-                ..Default::default()
-            },
+            source_file: SourceFile { path: PathBuf::from_iter([
+                "downloads",
+                "xxx",
+                "_____padding_file_0_如果您看到此文件，请升级到BitComet(比特彗星)0.85或以上版本____",
+            ]),
+            ..Default::default() },
             filename_pattern: &PathPattern::new_cel("test".to_owned()),
             ..Default::default()
         };

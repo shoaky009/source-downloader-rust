@@ -1437,7 +1437,7 @@ trait Process {
                 variables: var,
                 save_path_pattern: &file_save_path_pattern,
                 filename_pattern: &file_filename_pattern,
-                source_file: &x,
+                source_file: x,
             };
             let content = p.renamer.create_file_content(source_item, raw, &item_var);
 
