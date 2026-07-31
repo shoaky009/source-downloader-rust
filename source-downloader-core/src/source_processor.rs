@@ -23,10 +23,11 @@ use source_downloader_sdk::component::{FileTagger, ProcessTask, SourceFile};
 use source_downloader_sdk::component::{ItemFileResolver, ItemPointer, SourcePointer};
 use source_downloader_sdk::component::{PatternVariables, VariableProvider};
 use source_downloader_sdk::storage::{
-    ItemContentLite, ProcessingContent, ProcessingStatus, ProcessingStorage, ProcessorSourceState,
+    ItemContentLite, ProcessingContent, ProcessingStatus, ProcessingStorage,
+    ProcessorSourceState,
 };
 use source_downloader_sdk::time::OffsetDateTime;
-use std::any::{TypeId};
+use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -36,7 +37,7 @@ use std::time::{Duration, Instant};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 static INSTANCE_ID_GENERATOR: AtomicI64 = AtomicI64::new(0);
 static PROCESS_ID_GENERATOR: AtomicI64 = AtomicI64::new(i64::MIN);
@@ -134,7 +135,7 @@ struct ProcessRuntime {
     pub trace_id: String,
     pub mutex: Mutex<()>,
     source_state: ProcessorSourceState,
-    source_pointer: Arc<dyn SourcePointer>,
+    source_pointer: Box<dyn SourcePointer>,
     process_submitted_items: RwLock<HashSet<String>>,
     processed_count: AtomicU32,
     filter_count: AtomicU32,
@@ -146,8 +147,10 @@ struct ProcessRuntime {
 }
 
 enum ItemAction {
-    // Item被过滤(不存储Item信息), message为过滤原因
+    // Source重复返回的Item
     Skip(String),
+    // Item被过滤(不存储Item信息), message为过滤原因
+    Filtered(String),
     // 处理成功
     Success {
         content: ProcessingContent,
@@ -171,15 +174,18 @@ impl ProcessRuntime {
             self.processed_count.load(Ordering::Acquire),
             self.filter_count.load(Ordering::Acquire),
             match (self.process_start_at, self.process_end_at) {
-                (Some(start), Some(end)) => Self::format_duration(end.duration_since(start)),
+                (Some(start), Some(end)) =>
+                    Self::format_duration(end.duration_since(start)),
                 _ => "N/A".to_string(),
             },
             match (self.fetch_start_at, self.fetch_end_at) {
-                (Some(start), Some(end)) => Self::format_duration(end.duration_since(start)),
+                (Some(start), Some(end)) =>
+                    Self::format_duration(end.duration_since(start)),
                 _ => "N/A".to_string(),
             },
             match (self.fetch_end_at, self.process_end_at) {
-                (Some(start), Some(end)) => Self::format_duration(end.duration_since(start)),
+                (Some(start), Some(end)) =>
+                    Self::format_duration(end.duration_since(start)),
                 _ => "N/A".to_string(),
             }
         )
@@ -188,7 +194,11 @@ impl ProcessRuntime {
     fn format_duration(dur: Duration) -> String {
         let secs = dur.as_secs();
         let millis = dur.subsec_millis();
-        if secs > 0 { format!("{}.{:03}s", secs, millis) } else { format!("{}ms", millis) }
+        if secs > 0 {
+            format!("{}.{:03}s", secs, millis)
+        } else {
+            format!("{}ms", millis)
+        }
     }
 }
 
@@ -252,7 +262,10 @@ impl SourceProcessor {
 
     pub async fn reprocess(&self) {}
 
-    async fn save_source_state(&self, state: &ProcessorSourceState) -> Result<(), String> {
+    async fn save_source_state(
+        &self,
+        state: &ProcessorSourceState,
+    ) -> Result<(), String> {
         self.processing_storage
             .save_processor_source_state(state)
             .await
@@ -260,7 +273,28 @@ impl SourceProcessor {
             .map(|_| ())
     }
 
-    pub async fn apply_retry<T, Fut, F>(mut f: F, stage: &str) -> Result<T, ProcessingError>
+    async fn advance_source_pointer(
+        &self,
+        ctx: &mut ProcessRuntime,
+        source_item: &SourceItem,
+        item_pointer: &dyn ItemPointer,
+    ) -> Result<(), ProcessingError> {
+        ctx.source_pointer.update(source_item, item_pointer);
+        if !self.options.pointer_batch_mode {
+            self.save_source_state(&ProcessorSourceState {
+                last_pointer: ctx.source_pointer.dump(),
+                ..ctx.source_state.clone()
+            })
+            .await
+            .map_err(ProcessingError::non_retryable)?;
+        }
+        Ok(())
+    }
+
+    pub async fn apply_retry<T, Fut, F>(
+        mut f: F,
+        stage: &str,
+    ) -> Result<T, ProcessingError>
     where
         F: FnMut() -> Fut,
         Fut: Future<Output = Result<T, ProcessingError>>,
@@ -274,7 +308,12 @@ impl SourceProcessor {
             )
             .when(|e| matches!(e, ProcessingError::Retryable { .. }))
             .notify(|err, dur| {
-                warn!("Retrying {} delay {} cause={} ", stage, format_duration(dur), err.message());
+                warn!(
+                    "Retrying {} delay {} cause={} ",
+                    stage,
+                    format_duration(dur),
+                    err.message()
+                );
             })
             .await
     }
@@ -288,14 +327,16 @@ impl Drop for SourceProcessor {
 
 #[allow(dead_code)]
 trait Process {
-    fn select_item_filter<'a>(&self, p: &'a SourceProcessor) -> &'a Vec<Arc<dyn SourceItemFilter>>;
+    fn select_item_filter<'a>(
+        &self,
+        p: &'a SourceProcessor,
+    ) -> &'a Vec<Arc<dyn SourceItemFilter>>;
 
     async fn on_process_complete(
         &self,
         p: &SourceProcessor,
         ctx: &ProcessRuntime,
-        pointer: Arc<dyn SourcePointer>,
-    );
+    ) -> Result<(), ProcessingError>;
 
     async fn on_item_process_complete(
         &self,
@@ -314,15 +355,25 @@ trait Process {
         // TODO invoke hooks
     }
 
+    async fn on_item_filtered(
+        &self,
+        _p: &SourceProcessor,
+        _ctx: &mut ProcessRuntime,
+        _source_item: &SourceItem,
+        _item_pointer: &dyn ItemPointer,
+    ) -> Result<(), ProcessingError> {
+        Ok(())
+    }
+
     #[allow(unused)]
     async fn on_item_success(
         &self,
-        p: &SourceProcessor,
-        ctx: &ProcessRuntime,
-        source_item: &SourceItem,
-        item_pointer: &Arc<dyn ItemPointer>,
-        source_pointer: &Arc<dyn SourcePointer>,
-    ) {
+        _p: &SourceProcessor,
+        _ctx: &mut ProcessRuntime,
+        _source_item: &SourceItem,
+        _item_pointer: &dyn ItemPointer,
+    ) -> Result<(), ProcessingError> {
+        Ok(())
     }
 
     async fn execute(&self, p: &SourceProcessor) -> Result<(), ProcessingError> {
@@ -336,11 +387,12 @@ trait Process {
         }
         let _processing_guard = ProcessingGuard::new(&p.processing);
         let mut p_rt = self.init_process_context(p, start_time).await?;
-        let source_pointer = p_rt.source_pointer.clone();
         debug!("Fetch with pointer: {}", p_rt.source_pointer.dump());
         p_rt.fetch_start_at = Some(Instant::now());
         let items = SourceProcessor::apply_retry(
-            || async { p.source.fetch(source_pointer.clone(), p.options.fetch_limit).await },
+            || async {
+                p.source.fetch(p_rt.source_pointer.as_ref(), p.options.fetch_limit).await
+            },
             "fetch-source-items",
         )
         .await?;
@@ -353,6 +405,17 @@ trait Process {
             match &item_action {
                 ItemAction::Skip(reason) => {
                     debug!("[item-skip] {} {:?} ", reason, source_item);
+                    continue;
+                }
+                ItemAction::Filtered(reason) => {
+                    debug!("[item-filtered] {} {:?} ", reason, source_item);
+                    self.on_item_filtered(
+                        p,
+                        &mut p_rt,
+                        &source_item,
+                        item_pointer.as_ref(),
+                    )
+                    .await?;
                     continue;
                 }
                 ItemAction::Error(err) => {
@@ -372,14 +435,19 @@ trait Process {
                     );
                     break;
                 }
-                ItemAction::Success { content, files } => {
+                ItemAction::Success { content: _content, files: _files } => {
                     p_rt.processed_inc();
-                    self.on_item_success(p, &p_rt, &source_item, &item_pointer, &source_pointer)
-                        .await;
+                    self.on_item_success(
+                        p,
+                        &mut p_rt,
+                        &source_item,
+                        item_pointer.as_ref(),
+                    )
+                    .await?;
                 }
             }
         }
-        self.on_process_complete(p, &p_rt, source_pointer.clone()).await;
+        self.on_process_complete(p, &p_rt).await?;
         p_rt.process_end_at = Some(Instant::now());
         info!("[run-done] {} {}", p.name, p_rt.summary());
         Ok(())
@@ -405,8 +473,9 @@ trait Process {
         &self,
         p: &SourceProcessor,
         source_state: &ProcessorSourceState,
-    ) -> Result<Arc<dyn SourcePointer>, ProcessingError> {
-        let source_pointer = p.source.parse_raw_pointer(source_state.last_pointer.to_owned());
+    ) -> Result<Box<dyn SourcePointer>, ProcessingError> {
+        let source_pointer =
+            p.source.parse_raw_pointer(source_state.last_pointer.to_owned());
         Ok(source_pointer)
     }
 
@@ -418,7 +487,9 @@ trait Process {
         let source_state = self.get_source_state(p).await?;
         let source_pointer = self.get_source_pointer(p, &source_state).await?;
         let p_ctx = ProcessRuntime {
-            trace_id: PROCESS_ID_GENERATOR.fetch_add(i64::MIN, Ordering::Relaxed).to_string(),
+            trace_id: PROCESS_ID_GENERATOR
+                .fetch_add(i64::MIN, Ordering::Relaxed)
+                .to_string(),
             mutex: Mutex::new(()),
             source_state,
             source_pointer,
@@ -452,14 +523,16 @@ trait Process {
         let opt = &p.options;
         let item_rule = opt.item_rules.iter().find(|x| x.matcher.matches(source_item));
         let item_strategy = item_rule.map(|x| &x.strategy);
-        let item_filters =
-            item_strategy.map(|x| x.item_filters.as_ref()).flatten().unwrap_or(&opt.item_filters);
+        let item_filters = item_strategy
+            .map(|x| x.item_filters.as_ref())
+            .flatten()
+            .unwrap_or(&opt.item_filters);
         for filter in item_filters {
             let filtered = !filter.filter(source_item).await;
             if filtered {
                 debug!("[item-filtered] {}", source_item);
                 rt.filter_inc();
-                return Ok(ItemAction::Skip(format!("Filtered by: {}", filter)));
+                return Ok(ItemAction::Filtered(format!("Filtered by: {}", filter)));
             }
         }
 
@@ -475,7 +548,13 @@ trait Process {
 
         let resolved_files = self.resolve_files(source_item, p).await?;
         let mut file_contents = self
-            .process_source_files(p, source_item, &item_variables, resolved_files, item_strategy)
+            .process_source_files(
+                p,
+                source_item,
+                &item_variables,
+                resolved_files,
+                item_strategy,
+            )
             .await?;
 
         let mut content_status = ProcessingStatus::WaitingToRename;
@@ -514,10 +593,12 @@ trait Process {
             self.do_download(p, source_item, &file_contents, &replace_files).await?;
             let is_sync = !p.downloader.clone().as_async_downloader().is_ok();
             if is_sync {
-                let movement_res =
-                    self.do_movement(p, source_item, &file_contents, &replace_files).await;
-                let replacement_res =
-                    self.do_replacement(p, source_item, &file_contents, &replace_files).await;
+                let movement_res = self
+                    .do_movement(p, source_item, &file_contents, &replace_files)
+                    .await;
+                let replacement_res = self
+                    .do_replacement(p, source_item, &file_contents, &replace_files)
+                    .await;
                 // 有点歧义后面重新定义
                 if movement_res.is_ok() || replacement_res.is_ok() {
                     content_status = ProcessingStatus::Renamed;
@@ -533,7 +614,10 @@ trait Process {
             processor_name: p.name.clone(),
             item_hash: source_item.hashing(),
             item_identity: source_item.identity.clone(),
-            item_content: ItemContentLite { source_item: source_item.clone(), item_variables },
+            item_content: ItemContentLite {
+                source_item: source_item.clone(),
+                item_variables,
+            },
             rename_times,
             status: content_status,
             failure_reason,
@@ -573,8 +657,11 @@ trait Process {
         file_contents: &Vec<FileContent>,
         replace_files: &Vec<FileContent>,
     ) -> Result<(), ProcessingError> {
-        let all_files: Vec<SourceFileRef> =
-            file_contents.iter().chain(replace_files.iter()).map(Into::into).collect_vec();
+        let all_files: Vec<SourceFileRef> = file_contents
+            .iter()
+            .chain(replace_files.iter())
+            .map(Into::into)
+            .collect_vec();
 
         let (direct_files, download_files): (Vec<_>, Vec<_>) =
             all_files.into_iter().partition(|f| f.data.is_some());
@@ -596,23 +683,24 @@ trait Process {
 
         let source_headers = p.source.headers(source_item);
         let options = &p.options.download_options;
-        let headers: Option<HashMap<&String, &String>> = match (&options.headers, &source_headers) {
-            (None, None) => None,
-            (h1, h2) => {
-                let mut merged = HashMap::new();
-                if let Some(map1) = h1 {
-                    for (k, v) in map1 {
-                        merged.insert(k, v);
+        let headers: Option<HashMap<&String, &String>> =
+            match (&options.headers, &source_headers) {
+                (None, None) => None,
+                (h1, h2) => {
+                    let mut merged = HashMap::new();
+                    if let Some(map1) = h1 {
+                        for (k, v) in map1 {
+                            merged.insert(k, v);
+                        }
                     }
-                }
-                if let Some(map2) = h2 {
-                    for (k, v) in map2 {
-                        merged.insert(k, v);
+                    if let Some(map2) = h2 {
+                        for (k, v) in map2 {
+                            merged.insert(k, v);
+                        }
                     }
+                    Some(merged)
                 }
-                Some(merged)
-            }
-        };
+            };
 
         let opt = DownloadTask {
             source_item,
@@ -635,12 +723,17 @@ trait Process {
         let conflict_indices: HashSet<usize> = {
             let mut path_to_indices: HashMap<&Path, Vec<usize>> = HashMap::new();
 
-            for (idx, f) in file_contents.iter().enumerate().filter(|(_, f)| f.status == Undetected)
+            for (idx, f) in
+                file_contents.iter().enumerate().filter(|(_, f)| f.status == Undetected)
             {
                 path_to_indices.entry(f.target_path()).or_default().push(idx);
             }
 
-            path_to_indices.into_values().filter(|indices| indices.len() > 1).flatten().collect()
+            path_to_indices
+                .into_values()
+                .filter(|indices| indices.len() > 1)
+                .flatten()
+                .collect()
         };
 
         for (idx, x) in file_contents.iter_mut().enumerate() {
@@ -706,7 +799,9 @@ trait Process {
             .collect();
 
         // 如果开启了高级检测器，再进行覆写合并
-        if (*p.options.file_exists_detector).type_id() != TypeId::of::<SimpleFileExistsDetector>() {
+        if (*p.options.file_exists_detector).type_id()
+            != TypeId::of::<SimpleFileExistsDetector>()
+        {
             let detector_results = p.options.file_exists_detector.exists(
                 p.file_mover.as_ref(),
                 source_item,
@@ -714,11 +809,8 @@ trait Process {
             );
 
             // 仅在此时建立一个局部反查表
-            let path_to_local_idx: HashMap<&PathBuf, usize> = target_paths
-                .iter()
-                .enumerate()
-                .map(|(i, &path)| (path, i))
-                .collect();
+            let path_to_local_idx: HashMap<&PathBuf, usize> =
+                target_paths.iter().enumerate().map(|(i, &path)| (path, i)).collect();
 
             for (path, exists_path) in detector_results {
                 if let Some(&local_idx) = path_to_local_idx.get(path) {
@@ -765,7 +857,8 @@ trait Process {
             return (false, ProcessingStatus::TargetAlreadyExists);
         }
 
-        let file_download_paths = files.iter().map(|f| &f.file_download_path).collect_vec();
+        let file_download_paths =
+            files.iter().map(|f| &f.file_download_path).collect_vec();
         let all_exists = p.file_mover.exists(&file_download_paths).into_iter().all(|x| x);
         if all_exists {
             let is_async = p.downloader.clone().as_async_downloader().is_ok();
@@ -839,11 +932,11 @@ trait Process {
         // <editor-fold desc="Stage using VariableProviders for file">
         let mut file_raw_vars = vec![];
         for idx in 0..opt.variable_providers.len() {
-            let v = opt
-                .variable_providers
-                .get(idx)
-                .expect("Failed to get variable provider by index, this should not happen");
-            let vars = v.file_variables(source_item, item_variables, &relative_files).await;
+            let v = opt.variable_providers.get(idx).expect(
+                "Failed to get variable provider by index, this should not happen",
+            );
+            let vars =
+                v.file_variables(source_item, item_variables, &relative_files).await;
             if vars.len() != relative_files.len() {
                 return Err(ProcessingError::non_retryable(format!(
                     "Resolved files:{} and file variables:{} size not match, variable provider at {} implementation error",
@@ -858,25 +951,31 @@ trait Process {
         // </editor-fold>
         let mut result: Vec<FileContent> = vec![];
 
-        let item_var = p.renamer.item_rename_variables(source_item, item_variables.clone());
+        let item_var =
+            p.renamer.item_rename_variables(source_item, item_variables.clone());
 
         let empty_vars = &PatternVariables::new();
         let file_count = relative_files.len();
         for (idx, x) in relative_files.into_iter().enumerate() {
             let var = file_vars.get(idx).unwrap_or_else(|| empty_vars);
-            let file_rule = opt.file_rules.iter().find(|rule| rule.matcher.matches(&x, file_count));
+            let file_rule =
+                opt.file_rules.iter().find(|rule| rule.matcher.matches(&x, file_count));
             let file_strategy = file_rule.map(|r| &r.strategy);
 
             // Determine save_path_pattern and filename_pattern for this file
             let file_save_path_pattern = file_strategy
                 .map(|s| s.save_path_pattern.clone())
                 .flatten()
-                .or_else(|| item_group_options.map(|s| s.save_path_pattern.clone()).flatten())
+                .or_else(|| {
+                    item_group_options.map(|s| s.save_path_pattern.clone()).flatten()
+                })
                 .unwrap_or(opt.save_path_pattern.clone());
             let file_filename_pattern = file_strategy
                 .map(|s| s.filename_pattern.clone())
                 .flatten()
-                .or_else(|| item_group_options.map(|s| s.filename_pattern.clone()).flatten())
+                .or_else(|| {
+                    item_group_options.map(|s| s.filename_pattern.clone()).flatten()
+                })
                 .unwrap_or(opt.filename_pattern.clone());
 
             let raw = RawFileContent {
@@ -917,7 +1016,10 @@ trait Process {
 struct NormalProcess {}
 
 impl Process for NormalProcess {
-    fn select_item_filter<'a>(&self, p: &'a SourceProcessor) -> &'a Vec<Arc<dyn SourceItemFilter>> {
+    fn select_item_filter<'a>(
+        &self,
+        p: &'a SourceProcessor,
+    ) -> &'a Vec<Arc<dyn SourceItemFilter>> {
         &p.options.item_filters
     }
 
@@ -925,21 +1027,19 @@ impl Process for NormalProcess {
         &self,
         p: &SourceProcessor,
         ctx: &ProcessRuntime,
-        pointer: Arc<dyn SourcePointer>,
-    ) {
+    ) -> Result<(), ProcessingError> {
         // TODO invoke hooks
-        // 第二个条件待定
-        if p.options.pointer_batch_mode || ctx.processed_count.load(Ordering::Acquire) == 0 {
+        if p.options.pointer_batch_mode
+            || ctx.processed_count.load(Ordering::Acquire) == 0
+        {
             p.save_source_state(&ProcessorSourceState {
-                last_pointer: pointer.dump(),
+                last_pointer: ctx.source_pointer.dump(),
                 ..ctx.source_state.clone()
             })
             .await
-            .inspect_err(|e| {
-                error!("Failed to save source state: {:?}", e);
-            })
-            .unwrap();
+            .map_err(ProcessingError::non_retryable)?;
         }
+        Ok(())
     }
 
     async fn on_item_process_complete(
@@ -958,46 +1058,59 @@ impl Process for NormalProcess {
             .save_processing_content(processing_content)
             .await
             .map_err(|x| {
-                ProcessingError::non_retryable(format!("Failed to save item content {}", x.message))
+                ProcessingError::non_retryable(format!(
+                    "Failed to save item content {}",
+                    x.message
+                ))
             })?;
 
         let bytes = encode_files_and_compress(&files)?;
-        p.processing_storage.save_file_contents(content_id, bytes).await.map_err(|x| {
-            ProcessingError::non_retryable(format!("Failed to save file contents {}", x.message))
-        })?;
+        p.processing_storage.save_file_contents(content_id, bytes).await.map_err(
+            |x| {
+                ProcessingError::non_retryable(format!(
+                    "Failed to save file contents {}",
+                    x.message
+                ))
+            },
+        )?;
         Ok(())
+    }
+
+    async fn on_item_filtered(
+        &self,
+        p: &SourceProcessor,
+        ctx: &mut ProcessRuntime,
+        source_item: &SourceItem,
+        item_pointer: &dyn ItemPointer,
+    ) -> Result<(), ProcessingError> {
+        p.advance_source_pointer(ctx, source_item, item_pointer).await
     }
 
     async fn on_item_success(
         &self,
         p: &SourceProcessor,
-        ctx: &ProcessRuntime,
+        ctx: &mut ProcessRuntime,
         source_item: &SourceItem,
-        item_pointer: &Arc<dyn ItemPointer>,
-        source_pointer: &Arc<dyn SourcePointer>,
-    ) {
+        item_pointer: &dyn ItemPointer,
+    ) -> Result<(), ProcessingError> {
         // TODO invoke hooks
-        source_pointer.update(source_item, item_pointer);
-        if !p.options.pointer_batch_mode {
-            let new_pointer = source_pointer.dump();
-            p.save_source_state(&ProcessorSourceState {
-                last_pointer: new_pointer,
-                ..ctx.source_state.clone()
-            })
-            .await
-            .unwrap()
-        }
+        p.advance_source_pointer(ctx, source_item, item_pointer).await
     }
 }
 
 impl NormalProcess {}
 
-pub fn encode_files_and_compress(files: &Vec<FileContent>) -> Result<Vec<u8>, ProcessingError> {
+pub fn encode_files_and_compress(
+    files: &Vec<FileContent>,
+) -> Result<Vec<u8>, ProcessingError> {
     let bytes = if files.is_empty() {
         vec![]
     } else {
         let bytes = postcard::to_stdvec(&files).map_err(|x| {
-            ProcessingError::non_retryable(format!("Failed to desc file content {}", x.to_string()))
+            ProcessingError::non_retryable(format!(
+                "Failed to desc file content {}",
+                x.to_string()
+            ))
         })?;
         // 压缩比待定
         let level = 6;
@@ -1012,7 +1125,9 @@ pub fn encode_files_and_compress(files: &Vec<FileContent>) -> Result<Vec<u8>, Pr
 }
 
 #[allow(dead_code)]
-pub fn decode_files_from_compressed(bytes: &[u8]) -> Result<Vec<FileContent>, ProcessingError> {
+pub fn decode_files_from_compressed(
+    bytes: &[u8],
+) -> Result<Vec<FileContent>, ProcessingError> {
     if bytes.is_empty() {
         return Ok(vec![]);
     }
@@ -1040,10 +1155,343 @@ struct FixedItemProcess {}
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use crate::config::ConfigOperator;
+    use crate::process::variable::SmartStrategy;
     use crate::processor_test_support::test_support::*;
     use jsonpath_rust::JsonPath;
-    use source_downloader_sdk::component::ProcessTask;
+    use parking_lot::Mutex as ParkingMutex;
+    use source_downloader_sdk::component::PointedItem;
+    use source_downloader_sdk::http::Uri;
+    use source_downloader_sdk::serde_json::{Value, json};
+    use source_downloader_sdk::storage::{
+        Error as StorageError, ProcessingContentQuery, ProcessingTargetPath,
+    };
+    use std::any::Any;
+    use std::fmt::{Display, Formatter};
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+    #[derive(Debug)]
+    struct PointerItem(usize);
+
+    impl ItemPointer for PointerItem {
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    #[derive(Default)]
+    struct TestSourcePointer(usize);
+
+    impl SourcePointer for TestSourcePointer {
+        fn dump(&self) -> Value {
+            json!(self.0)
+        }
+
+        fn update(&mut self, _: &SourceItem, item_pointer: &dyn ItemPointer) {
+            let item_pointer = item_pointer
+                .as_any()
+                .downcast_ref::<PointerItem>()
+                .expect("pointer test item type");
+            self.0 = item_pointer.0;
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    #[derive(Debug)]
+    struct PointerTestComponent {
+        item_count: usize,
+    }
+
+    impl Display for PointerTestComponent {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "pointer-test")
+        }
+    }
+
+    impl source_downloader_sdk::component::SdComponent for PointerTestComponent {}
+
+    #[async_trait]
+    impl Source for PointerTestComponent {
+        async fn fetch<'pointer>(
+            &self,
+            _: &'pointer dyn SourcePointer,
+            _: u32,
+        ) -> Result<Vec<PointedItem>, ProcessingError> {
+            Ok((1..=self.item_count)
+                .map(|sequence| PointedItem {
+                    source_item: SourceItem {
+                        title: format!("item-{sequence}"),
+                        link: Uri::from_static("http://localhost/item"),
+                        datetime: OffsetDateTime::UNIX_EPOCH,
+                        content_type: "test".to_string(),
+                        download_uri: Uri::from_static("http://localhost/download"),
+                        attrs: Default::default(),
+                        tags: Vec::new(),
+                        identity: None,
+                    },
+                    item_pointer: Arc::new(PointerItem(sequence)),
+                })
+                .collect())
+        }
+
+        fn default_pointer(&self) -> Box<dyn SourcePointer> {
+            Box::new(TestSourcePointer::default())
+        }
+
+        fn parse_raw_pointer(&self, value: Value) -> Box<dyn SourcePointer> {
+            Box::new(TestSourcePointer(value.as_u64().unwrap_or_default() as usize))
+        }
+    }
+
+    #[async_trait]
+    impl ItemFileResolver for PointerTestComponent {
+        async fn resolve_files(&self, _: &SourceItem) -> Vec<SourceFile> {
+            Vec::new()
+        }
+    }
+
+    #[async_trait]
+    impl Downloader for PointerTestComponent {
+        async fn submit(&self, _: &DownloadTask) -> Result<(), ProcessingError> {
+            Ok(())
+        }
+
+        fn default_download_path(&self) -> &str {
+            "/tmp/source-downloader-pointer-test"
+        }
+
+        async fn cancel(
+            &self,
+            _: &SourceItem,
+            _: &[SourceFile],
+        ) -> Result<(), ProcessingError> {
+            Ok(())
+        }
+    }
+
+    impl FileMover for PointerTestComponent {
+        fn move_file(&self, _: &SourceFile, _: &str) -> Result<(), ProcessingError> {
+            Ok(())
+        }
+
+        fn exists(&self, paths: &[&PathBuf]) -> Vec<bool> {
+            vec![false; paths.len()]
+        }
+
+        fn create_directories(&self, _: &str) -> Result<(), ProcessingError> {
+            Ok(())
+        }
+
+        fn replace(&self, _: &ItemContent<'_>) -> Result<(), ProcessingError> {
+            Ok(())
+        }
+
+        fn list_files(&self, _: &str) -> Vec<String> {
+            Vec::new()
+        }
+
+        fn path_metadata(&self, _: &str) -> SourceFile {
+            SourceFile::new(PathBuf::new())
+        }
+    }
+
+    #[derive(Debug)]
+    struct RejectAllItems;
+
+    impl Display for RejectAllItems {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "reject-all-items")
+        }
+    }
+
+    impl source_downloader_sdk::component::SdComponent for RejectAllItems {}
+
+    #[async_trait]
+    impl SourceItemFilter for RejectAllItems {
+        async fn filter(&self, _: &SourceItem) -> bool {
+            false
+        }
+    }
+
+    #[derive(Default)]
+    struct PointerStorage {
+        states: ParkingMutex<Vec<ProcessorSourceState>>,
+        next_content_id: AtomicUsize,
+    }
+
+    impl PointerStorage {
+        fn saved_pointers(&self) -> Vec<Value> {
+            self.states.lock().iter().map(|state| state.last_pointer.clone()).collect()
+        }
+    }
+
+    #[async_trait]
+    impl ProcessingStorage for PointerStorage {
+        async fn save_processing_content(
+            &self,
+            _: &ProcessingContent,
+        ) -> Result<i64, StorageError> {
+            Ok(self.next_content_id.fetch_add(1, AtomicOrdering::Relaxed) as i64)
+        }
+
+        async fn processing_content_exists(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<bool, StorageError> {
+            Ok(false)
+        }
+
+        async fn delete_processing_content(&self, _: i64) -> Result<(), StorageError> {
+            Ok(())
+        }
+
+        async fn find_by_name_and_hash(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<Option<ProcessingContent>, StorageError> {
+            Ok(None)
+        }
+
+        async fn find_content_by_id(
+            &self,
+            _: i64,
+        ) -> Result<Option<ProcessingContent>, StorageError> {
+            Ok(None)
+        }
+
+        async fn query_processing_content(
+            &self,
+            _: &ProcessingContentQuery,
+        ) -> Result<Vec<ProcessingContent>, StorageError> {
+            Ok(Vec::new())
+        }
+
+        async fn save_file_contents(
+            &self,
+            _: i64,
+            _: Vec<u8>,
+        ) -> Result<(), StorageError> {
+            Ok(())
+        }
+
+        async fn find_file_contents(
+            &self,
+            _: i64,
+        ) -> Result<Option<Vec<u8>>, StorageError> {
+            Ok(None)
+        }
+
+        async fn find_processor_source_state(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<Option<ProcessorSourceState>, StorageError> {
+            Ok(None)
+        }
+
+        async fn save_processor_source_state(
+            &self,
+            state: &ProcessorSourceState,
+        ) -> Result<ProcessorSourceState, StorageError> {
+            self.states.lock().push(state.clone());
+            Ok(state.clone())
+        }
+
+        async fn save_paths(
+            &self,
+            _: Vec<ProcessingTargetPath>,
+        ) -> Result<(), StorageError> {
+            Ok(())
+        }
+    }
+
+    fn pointer_test_processor(
+        pointer_batch_mode: bool,
+        item_count: usize,
+        filter_items: bool,
+    ) -> (SourceProcessor, Arc<PointerStorage>) {
+        let component = Arc::new(PointerTestComponent { item_count });
+        let storage = Arc::new(PointerStorage::default());
+        let item_filters: Vec<Arc<dyn SourceItemFilter>> =
+            if filter_items { vec![Arc::new(RejectAllItems)] } else { Vec::new() };
+        let processor = SourceProcessor::new(
+            "pointer-test".to_string(),
+            "pointer-test-source".to_string(),
+            PathBuf::from("/tmp/source-downloader-pointer-test").into_boxed_path(),
+            component.clone(),
+            component.clone(),
+            component.clone(),
+            component,
+            storage.clone(),
+            None,
+            HashSet::new(),
+            ProcessorOptions {
+                save_path_pattern: Arc::new(PathPattern::new_cel(String::new())),
+                filename_pattern: Arc::new(PathPattern::new_cel(String::new())),
+                variable_providers: Vec::new(),
+                item_filters,
+                item_content_filters: Vec::new(),
+                source_file_filters: Vec::new(),
+                file_content_filters: Vec::new(),
+                file_taggers: Vec::new(),
+                variable_aggregation: VariableAggregation::new(
+                    Box::new(SmartStrategy),
+                    HashMap::new(),
+                ),
+                save_processing_content: false,
+                rename_task_interval: Duration::from_secs(300),
+                rename_times_threshold: 3,
+                parallelism: 1,
+                task_group: None,
+                fetch_limit: 50,
+                item_error_continue: false,
+                pointer_batch_mode,
+                item_rules: Vec::new(),
+                file_rules: Vec::new(),
+                process_listeners: Vec::new(),
+                file_exists_detector: Arc::new(SimpleFileExistsDetector {}),
+                download_options: DownloadOptions {
+                    category: None,
+                    tags: None,
+                    headers: None,
+                },
+            },
+        );
+        (processor, storage)
+    }
+
+    #[tokio::test]
+    async fn pointer_batch_mode_saves_once_after_fetch() {
+        let (processor, storage) = pointer_test_processor(true, 2, false);
+
+        processor.run().await.unwrap();
+
+        assert_eq!(storage.saved_pointers(), vec![json!(2)]);
+    }
+
+    #[tokio::test]
+    async fn non_batch_pointer_mode_saves_after_each_item() {
+        let (processor, storage) = pointer_test_processor(false, 2, false);
+
+        processor.run().await.unwrap();
+
+        assert_eq!(storage.saved_pointers(), vec![json!(1), json!(2)]);
+    }
+
+    #[tokio::test]
+    async fn filtered_item_advances_pointer() {
+        let (processor, storage) = pointer_test_processor(false, 1, true);
+
+        processor.run().await.unwrap();
+
+        assert_eq!(storage.saved_pointers(), vec![json!(1), json!(1)]);
+    }
 
     // <editor-fold desc="Sync item content tests">
     #[tokio::test]
@@ -1057,7 +1505,8 @@ mod test {
                 &cfg.get_processor_config(name).expect("Failed to get processor config"),
             );
             let p = assert_processor(name, pm);
-            let root_path = V_PATH.join(format!("/{}", name)).expect("Failed to join path");
+            let root_path =
+                V_PATH.join(format!("/{}", name)).expect("Failed to join path");
             apply_case_files(&root_path, &case.files);
 
             let result = p.run().await;
@@ -1067,10 +1516,11 @@ mod test {
             for (assert_idx, assertion) in case.assertions.iter().enumerate() {
                 let selection = content.query(&assertion.select).unwrap_or_default();
                 if !assertion.allow_empty && selection.is_empty() {
-                    let err = AssertionError::new("Selection result is empty".to_string())
-                        .with_context(format!("case: {}", name))
-                        .with_context(format!("assertion #{}", assert_idx))
-                        .with_context(format!("select: {}", assertion.select));
+                    let err =
+                        AssertionError::new("Selection result is empty".to_string())
+                            .with_context(format!("case: {}", name))
+                            .with_context(format!("assertion #{}", assert_idx))
+                            .with_context(format!("select: {}", assertion.select));
                     panic!("{}", err)
                 }
                 for (node_idx, node) in selection.iter().enumerate() {
@@ -1094,7 +1544,8 @@ mod test {
     #[tracing_test::traced_test]
     async fn flow_ctr_retry_then_ok() {
         let name = "flow_ctr_retry_then_ok";
-        let cfg = cfg().get_processor_config(name).expect("Failed to get processor config");
+        let cfg =
+            cfg().get_processor_config(name).expect("Failed to get processor config");
         let pm = processor_manager().await;
         pm.create_processor(&cfg);
         let p = assert_processor(name, pm);

@@ -1,4 +1,8 @@
-use source_downloader_sdk::component::{ComponentError, EmptyPointer, ComponentSupplier, ComponentType, PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourcePointer, EMPTY_POINTER};
+use source_downloader_sdk::component::{
+    ComponentError, ComponentSupplier, ComponentType, EMPTY_POINTER, EmptyPointer,
+    PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source,
+    SourcePointer,
+};
 
 use source_downloader_sdk::serde_json::{Map, Value};
 use source_downloader_sdk::time::OffsetDateTime;
@@ -15,7 +19,10 @@ impl ComponentSupplier for SystemFileSourceSupplier {
         vec![ComponentType::source("system-file".to_string())]
     }
 
-    fn apply(&self, props: &Map<String, Value>) -> Result<Arc<dyn SdComponent>, ComponentError> {
+    fn apply(
+        &self,
+        props: &Map<String, Value>,
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let path = props
             .get("path")
             .ok_or_else(|| ComponentError::from("Missing 'path' property"))?
@@ -46,9 +53,9 @@ impl Display for SystemFileSource {
 
 #[async_trait::async_trait]
 impl Source for SystemFileSource {
-    async fn fetch(
+    async fn fetch<'pointer>(
         &self,
-        _: Arc<dyn SourcePointer>,
+        _: &'pointer dyn SourcePointer,
         _: u32,
     ) -> Result<Vec<PointedItem>, ProcessingError> {
         match self.mode {
@@ -61,12 +68,12 @@ impl Source for SystemFileSource {
         }
     }
 
-    fn default_pointer(&self) -> Arc<dyn SourcePointer> {
-        Arc::new(EmptyPointer {})
+    fn default_pointer(&self) -> Box<dyn SourcePointer> {
+        Box::new(EmptyPointer {})
     }
 
-    fn parse_raw_pointer(&self, _: Value) -> Arc<dyn SourcePointer> {
-        Arc::new(EmptyPointer {})
+    fn parse_raw_pointer(&self, _: Value) -> Box<dyn SourcePointer> {
+        Box::new(EmptyPointer {})
     }
 }
 
@@ -101,9 +108,7 @@ impl SystemFileSource {
         let url = format!("file://{}", path.to_str().unwrap());
         let source_item = SourceItem {
             title: file_name.unwrap().to_string_lossy().to_string(),
-            link: url
-                .parse()
-                .unwrap_or_else(|_| "vfs://unknown".parse().unwrap()),
+            link: url.parse().unwrap_or_else(|_| "vfs://unknown".parse().unwrap()),
             datetime: OffsetDateTime::now_utc(),
             content_type: file_type.to_string(),
             download_uri: url
@@ -114,9 +119,6 @@ impl SystemFileSource {
             identity: None,
         };
 
-        Ok(PointedItem {
-            source_item,
-            item_pointer: EMPTY_POINTER.clone(),
-        })
+        Ok(PointedItem { source_item, item_pointer: EMPTY_POINTER.clone() })
     }
 }

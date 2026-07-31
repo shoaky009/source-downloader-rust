@@ -89,10 +89,7 @@ impl ComponentRootType {
         let type_name = source_id.first().unwrap().to_string();
         let name = source_id.last().unwrap();
         ComponentId::new(
-            ComponentType {
-                root_type: self.to_owned(),
-                name: type_name.to_owned(),
-            },
+            ComponentType { root_type: self.to_owned(), name: type_name.to_owned() },
             name.to_owned(),
         )
     }
@@ -118,10 +115,7 @@ pub struct ComponentId {
 
 impl ComponentId {
     pub fn new(component_type: ComponentType, name: &str) -> Self {
-        ComponentId {
-            component_type,
-            name: name.to_string(),
-        }
+        ComponentId { component_type, name: name.to_string() }
     }
 
     /// Legal format are `root_type:type_name:name` `root_type:type_name`
@@ -135,10 +129,7 @@ impl ComponentId {
         let root_type_str = split.first().unwrap();
         let root_type = ComponentRootType::parse(root_type_str)?;
         Ok(ComponentId {
-            component_type: ComponentType {
-                root_type,
-                name: split[1].to_string(),
-            },
+            component_type: ComponentType { root_type, name: split[1].to_string() },
             name: split.last().unwrap().to_string(),
         })
     }
@@ -158,100 +149,52 @@ impl ComponentId {
 impl ComponentType {
     /// name不能包含:目前没做校验
     pub fn trigger(name: String) -> ComponentType {
-        ComponentType {
-            root_type: ComponentRootType::Trigger,
-            name,
-        }
+        ComponentType { root_type: ComponentRootType::Trigger, name }
     }
     pub fn source(name: String) -> ComponentType {
-        ComponentType {
-            root_type: ComponentRootType::Source,
-            name,
-        }
+        ComponentType { root_type: ComponentRootType::Source, name }
     }
     pub fn downloader(name: String) -> ComponentType {
-        ComponentType {
-            root_type: ComponentRootType::Downloader,
-            name,
-        }
+        ComponentType { root_type: ComponentRootType::Downloader, name }
     }
     pub fn file_mover(name: String) -> ComponentType {
-        ComponentType {
-            root_type: ComponentRootType::FileMover,
-            name,
-        }
+        ComponentType { root_type: ComponentRootType::FileMover, name }
     }
     pub fn variable_provider(name: String) -> ComponentType {
-        ComponentType {
-            root_type: ComponentRootType::VariableProvider,
-            name,
-        }
+        ComponentType { root_type: ComponentRootType::VariableProvider, name }
     }
     pub fn file_resolver(name: String) -> ComponentType {
-        ComponentType {
-            root_type: ComponentRootType::ItemFileResolver,
-            name,
-        }
+        ComponentType { root_type: ComponentRootType::ItemFileResolver, name }
     }
     pub fn item_filter(name: String) -> ComponentType {
-        ComponentType {
-            root_type: ComponentRootType::SourceItemFilter,
-            name,
-        }
+        ComponentType { root_type: ComponentRootType::SourceItemFilter, name }
     }
     pub fn item_content_filter(name: String) -> ComponentType {
-        ComponentType {
-            root_type: ComponentRootType::ItemContentFilter,
-            name,
-        }
+        ComponentType { root_type: ComponentRootType::ItemContentFilter, name }
     }
     pub fn listener(name: String) -> ComponentType {
-        ComponentType {
-            root_type: ComponentRootType::ProcessListener,
-            name,
-        }
+        ComponentType { root_type: ComponentRootType::ProcessListener, name }
     }
     pub fn source_file_filter(name: String) -> ComponentType {
-        ComponentType {
-            root_type: ComponentRootType::SourceFileFilter,
-            name,
-        }
+        ComponentType { root_type: ComponentRootType::SourceFileFilter, name }
     }
     pub fn file_content_filter(name: String) -> ComponentType {
-        ComponentType {
-            root_type: ComponentRootType::FileContentFilter,
-            name,
-        }
+        ComponentType { root_type: ComponentRootType::FileContentFilter, name }
     }
     pub fn file_tagger(name: String) -> ComponentType {
-        ComponentType {
-            root_type: ComponentRootType::FileTagger,
-            name,
-        }
+        ComponentType { root_type: ComponentRootType::FileTagger, name }
     }
     pub fn file_replacement_decider(name: String) -> ComponentType {
-        ComponentType {
-            root_type: ComponentRootType::FileReplacementDecider,
-            name,
-        }
+        ComponentType { root_type: ComponentRootType::FileReplacementDecider, name }
     }
     pub fn file_exists_detector(name: String) -> ComponentType {
-        ComponentType {
-            root_type: ComponentRootType::FileExistsDetector,
-            name,
-        }
+        ComponentType { root_type: ComponentRootType::FileExistsDetector, name }
     }
     pub fn variable_replacer(name: String) -> ComponentType {
-        ComponentType {
-            root_type: ComponentRootType::VariableReplacer,
-            name,
-        }
+        ComponentType { root_type: ComponentRootType::VariableReplacer, name }
     }
     pub fn trimmer(name: String) -> ComponentType {
-        ComponentType {
-            root_type: ComponentRootType::Trimmer,
-            name,
-        }
+        ComponentType { root_type: ComponentRootType::Trimmer, name }
     }
 }
 
@@ -266,7 +209,10 @@ pub trait ComponentSupplier: Send + Sync {
     fn supply_types(&self) -> Vec<ComponentType>;
 
     /// 创建组件实例
-    fn apply(&self, props: &Map<String, Value>) -> Result<Arc<dyn SdComponent>, ComponentError>;
+    fn apply(
+        &self,
+        props: &Map<String, Value>,
+    ) -> Result<Arc<dyn SdComponent>, ComponentError>;
 
     /// 如果是true即便没有在配置中定义也会调用[`ComponentSupplier::apply`]
     fn is_support_no_props(&self) -> bool {
@@ -292,7 +238,9 @@ pub trait SdComponent: Any + Send + Sync + Debug + Display {
     fn as_source(self: Arc<Self>) -> Result<Arc<dyn Source>, ComponentError> {
         Err(ComponentError::from("Not a source component"))
     }
-    fn as_item_file_resolver(self: Arc<Self>) -> Result<Arc<dyn ItemFileResolver>, ComponentError> {
+    fn as_item_file_resolver(
+        self: Arc<Self>,
+    ) -> Result<Arc<dyn ItemFileResolver>, ComponentError> {
         Err(ComponentError::from("Not a item file resolver component"))
     }
     fn as_downloader(self: Arc<Self>) -> Result<Arc<dyn Downloader>, ComponentError> {
@@ -301,13 +249,19 @@ pub trait SdComponent: Any + Send + Sync + Debug + Display {
     fn as_file_mover(self: Arc<Self>) -> Result<Arc<dyn FileMover>, ComponentError> {
         Err(ComponentError::from("Not a file mover component"))
     }
-    fn as_process_listener(self: Arc<Self>) -> Result<Arc<dyn ProcessListener>, ComponentError> {
+    fn as_process_listener(
+        self: Arc<Self>,
+    ) -> Result<Arc<dyn ProcessListener>, ComponentError> {
         Err(ComponentError::from("Not a process listener component"))
     }
-    fn as_source_item_filter(self: Arc<Self>) -> Result<Arc<dyn SourceItemFilter>, ComponentError> {
+    fn as_source_item_filter(
+        self: Arc<Self>,
+    ) -> Result<Arc<dyn SourceItemFilter>, ComponentError> {
         Err(ComponentError::from("Not a source item filter component"))
     }
-    fn as_source_file_filter(self: Arc<Self>) -> Result<Arc<dyn SourceFileFilter>, ComponentError> {
+    fn as_source_file_filter(
+        self: Arc<Self>,
+    ) -> Result<Arc<dyn SourceFileFilter>, ComponentError> {
         Err(ComponentError::from("Not a source file filter component"))
     }
     fn as_item_content_filter(
@@ -326,25 +280,29 @@ pub trait SdComponent: Any + Send + Sync + Debug + Display {
     fn as_file_replacement_decider(
         self: Arc<Self>,
     ) -> Result<Arc<dyn FileReplacementDecider>, ComponentError> {
-        Err(ComponentError::from(
-            "Not a file replacement decider component",
-        ))
+        Err(ComponentError::from("Not a file replacement decider component"))
     }
     fn as_file_exists_detector(
         self: Arc<Self>,
     ) -> Result<Arc<dyn FileExistsDetector>, ComponentError> {
         Err(ComponentError::from("Not a file exists detector component"))
     }
-    fn as_variable_provider(self: Arc<Self>) -> Result<Arc<dyn VariableProvider>, ComponentError> {
+    fn as_variable_provider(
+        self: Arc<Self>,
+    ) -> Result<Arc<dyn VariableProvider>, ComponentError> {
         Err(ComponentError::from("Not a variable provider component"))
     }
-    fn as_variable_replacer(self: Arc<Self>) -> Result<Arc<dyn VariableReplacer>, ComponentError> {
+    fn as_variable_replacer(
+        self: Arc<Self>,
+    ) -> Result<Arc<dyn VariableReplacer>, ComponentError> {
         Err(ComponentError::from("Not a variable replacer component"))
     }
     fn as_trimmer(self: Arc<Self>) -> Result<Arc<dyn Trimmer>, ComponentError> {
         Err(ComponentError::from("Not a trimmer component"))
     }
-    fn as_async_downloader(self: Arc<Self>) -> Result<Arc<dyn AsyncDownloader>, ComponentError> {
+    fn as_async_downloader(
+        self: Arc<Self>,
+    ) -> Result<Arc<dyn AsyncDownloader>, ComponentError> {
         Err(ComponentError::from("Not a async downloader component"))
     }
     fn as_stateful(self: Arc<Self>) -> Option<Arc<dyn Stateful>> {
@@ -374,7 +332,11 @@ pub trait Trigger: SdComponent {
 pub trait Downloader: SdComponent {
     async fn submit(&self, task: &DownloadTask) -> Result<(), ProcessingError>;
     fn default_download_path(&self) -> &str;
-    async fn cancel(&self, item: &SourceItem, files: &[SourceFile]) -> Result<(), ProcessingError>;
+    async fn cancel(
+        &self,
+        item: &SourceItem,
+        files: &[SourceFile],
+    ) -> Result<(), ProcessingError>;
 }
 
 pub trait AsyncDownloader: Downloader {
@@ -383,13 +345,13 @@ pub trait AsyncDownloader: Downloader {
 
 #[async_trait]
 pub trait Source: SdComponent {
-    async fn fetch(
+    async fn fetch<'pointer>(
         &self,
-        source_pointer: Arc<dyn SourcePointer>,
+        source_pointer: &'pointer dyn SourcePointer,
         limit: u32,
     ) -> Result<Vec<PointedItem>, ProcessingError>;
-    fn default_pointer(&self) -> Arc<dyn SourcePointer>;
-    fn parse_raw_pointer(&self, value: Value) -> Arc<dyn SourcePointer>;
+    fn default_pointer(&self) -> Box<dyn SourcePointer>;
+    fn parse_raw_pointer(&self, value: Value) -> Box<dyn SourcePointer>;
     fn headers(&self, _: &SourceItem) -> Option<HashMap<String, String>> {
         None
     }
@@ -418,9 +380,7 @@ pub trait FileMover: SdComponent {
         false
     }
     fn batch_move(&self, _: &ItemContent) -> Result<(), ProcessingError> {
-        Err(ProcessingError::non_retryable(
-            "Batch move is not supported",
-        ))
+        Err(ProcessingError::non_retryable("Batch move is not supported"))
     }
 }
 
@@ -428,7 +388,12 @@ pub trait ProcessListener: SdComponent {
     /// When item rename is successful
     fn on_item_success(&self, ctx: &dyn ProcessContext, item_content: &ItemContent);
     /// When item processing is failed
-    fn on_item_error(&self, ctx: &dyn ProcessContext, item: &SourceItem, error: &ProcessingError);
+    fn on_item_error(
+        &self,
+        ctx: &dyn ProcessContext,
+        item: &SourceItem,
+        error: &ProcessingError,
+    );
     /// When processing is completed
     fn on_process_completed(&self, ctx: &dyn ProcessContext);
 }
@@ -486,7 +451,11 @@ pub trait VariableProvider: SdComponent {
         item_variables: &PatternVariables,
         files: &[SourceFile],
     ) -> Vec<PatternVariables>;
-    async fn extract_from(&self, item: &SourceItem, value: &str) -> Option<HashMap<String, Value>>;
+    async fn extract_from(
+        &self,
+        item: &SourceItem,
+        value: &str,
+    ) -> Option<HashMap<String, Value>>;
     fn primary_variable_name(&self) -> Option<String>;
 }
 
@@ -513,12 +482,13 @@ impl ItemPointer for EmptyPointer {
     }
 }
 
-pub static EMPTY_POINTER: LazyLock<Arc<EmptyPointer>> = LazyLock::new(|| Arc::new(EmptyPointer {}));
+pub static EMPTY_POINTER: LazyLock<Arc<EmptyPointer>> =
+    LazyLock::new(|| Arc::new(EmptyPointer {}));
 
-pub trait SourcePointer: Send + Sync {
+pub trait SourcePointer: Any + Send + Sync {
     fn dump(&self) -> Value;
-    fn update(&self, item: &SourceItem, item_pointer: &Arc<dyn ItemPointer>);
-    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
+    fn update(&mut self, item: &SourceItem, item_pointer: &dyn ItemPointer);
+    fn as_any(&self) -> &dyn Any;
 }
 
 impl SourcePointer for EmptyPointer {
@@ -526,9 +496,9 @@ impl SourcePointer for EmptyPointer {
         Value::Object(Map::new())
     }
 
-    fn update(&self, _: &SourceItem, _: &Arc<dyn ItemPointer>) {}
+    fn update(&mut self, _: &SourceItem, _: &dyn ItemPointer) {}
 
-    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }
@@ -546,9 +516,7 @@ pub struct ComponentError {
 
 impl ComponentError {
     pub fn new<S: Into<String>>(message: S) -> Self {
-        ComponentError {
-            message: message.into(),
-        }
+        ComponentError { message: message.into() }
     }
 }
 
@@ -586,23 +554,15 @@ pub enum ProcessingError {
 
 impl ProcessingError {
     pub fn retryable<S: Into<String>>(message: S) -> Self {
-        Self::Retryable {
-            message: message.into(),
-        }
+        Self::Retryable { message: message.into() }
     }
 
     pub fn non_retryable<S: Into<String>>(message: S) -> Self {
-        Self::NonRetryable {
-            message: message.into(),
-            skip: false,
-        }
+        Self::NonRetryable { message: message.into(), skip: false }
     }
 
     pub fn skip<S: Into<String>>(message: S) -> Self {
-        Self::NonRetryable {
-            message: message.into(),
-            skip: true,
-        }
+        Self::NonRetryable { message: message.into(), skip: true }
     }
 
     pub fn message(&self) -> &str {
@@ -747,8 +707,7 @@ impl Debug for FileContent {
 
 impl FileContent {
     pub fn target_path(&self) -> &PathBuf {
-        self.target_path
-            .get_or_init(|| self.target_save_path.join(&self.target_filename))
+        self.target_path.get_or_init(|| self.target_save_path.join(&self.target_filename))
     }
     pub fn file_save_root_dir(&self) -> Option<PathBuf> {
         if self.source_save_path == self.target_save_path {
@@ -858,9 +817,7 @@ pub struct TaskRegistry {
 
 impl TaskRegistry {
     pub fn new() -> Self {
-        TaskRegistry {
-            tasks: Arc::new(RwLock::new(vec![])),
-        }
+        TaskRegistry { tasks: Arc::new(RwLock::new(vec![])) }
     }
 
     pub fn add(&self, task: Arc<dyn ProcessTask>) {
@@ -874,25 +831,21 @@ impl TaskRegistry {
 
 #[cfg(test)]
 mod test {
-    use crate::component::{ComponentId, ComponentRootType, FileContent, FileContentStatus};
+    use crate::component::{
+        ComponentId, ComponentRootType, FileContent, FileContentStatus,
+    };
     use std::path::PathBuf;
     use std::sync::OnceLock;
 
     #[test]
     fn parse_component_id_given_raw_string() {
         let component_id = ComponentId::parse("source:test").unwrap();
-        assert_eq!(
-            ComponentRootType::Source,
-            component_id.component_type.root_type
-        );
+        assert_eq!(ComponentRootType::Source, component_id.component_type.root_type);
         assert_eq!("test", component_id.component_type.name);
         assert_eq!("test", component_id.name);
 
         let component_id = ComponentId::parse("source:system:test").unwrap();
-        assert_eq!(
-            ComponentRootType::Source,
-            component_id.component_type.root_type
-        );
+        assert_eq!(ComponentRootType::Source, component_id.component_type.root_type);
         assert_eq!("system", component_id.component_type.name);
         assert_eq!("test", component_id.name);
 

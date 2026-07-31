@@ -5,7 +5,7 @@ pub mod test_support {
     use crate::source_processor::{SourceProcessor, decode_files_from_compressed};
     use async_trait::async_trait;
     use mockall::mock;
-    use mockall::predicate::always;
+    use parking_lot::Mutex;
     use serde::Deserialize;
     use serde_json::json;
     use source_downloader_sdk::component::*;
@@ -14,7 +14,8 @@ pub mod test_support {
     use source_downloader_sdk::time::OffsetDateTime;
     use source_downloader_sdk::{SdComponent, SourceItem, http};
     use std::any::Any;
-    use std::fmt::{Display, Formatter};
+    use std::collections::VecDeque;
+    use std::fmt::{Debug, Display, Formatter};
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, LazyLock, OnceLock};
     use storage_sqlite::SeaProcessingStorage;
@@ -30,7 +31,8 @@ pub mod test_support {
     use vfs::MemoryFS;
 
     static _CM: OnceLock<Arc<ComponentManager>> = OnceLock::new();
-    static _PM: tokio::sync::OnceCell<ProcessorManager> = tokio::sync::OnceCell::const_new();
+    static _PM: tokio::sync::OnceCell<ProcessorManager> =
+        tokio::sync::OnceCell::const_new();
     static _S: tokio::sync::OnceCell<Arc<SeaProcessingStorage>> =
         tokio::sync::OnceCell::const_new();
     static _C: OnceLock<Arc<YamlConfigOperator>> = OnceLock::new();
@@ -44,7 +46,9 @@ pub mod test_support {
         serde_yaml::from_slice(&content).expect("Failed to de processor cases")
     });
     pub fn cfg() -> &'static Arc<YamlConfigOperator> {
-        _C.get_or_init(|| Arc::new(YamlConfigOperator::new("./tests/resources/config.yaml")))
+        _C.get_or_init(|| {
+            Arc::new(YamlConfigOperator::new("./tests/resources/config.yaml"))
+        })
     }
     pub async fn storage() -> &'static Arc<SeaProcessingStorage> {
         _S.get_or_init(|| async {
@@ -59,12 +63,9 @@ pub mod test_support {
     fn component_manager() -> &'static Arc<ComponentManager> {
         _CM.get_or_init(|| {
             let m = Arc::new(ComponentManager::new(cfg().clone()));
-            m.register_suppliers(get_build_in_component_supplier())
-                .unwrap();
-            m.register_suppliers(get_mock_component_suppliers())
-                .unwrap();
-            m.register_supplier(Arc::new(VFS_RESOLVER_SUPPLIER))
-                .unwrap();
+            m.register_suppliers(get_build_in_component_supplier()).unwrap();
+            m.register_suppliers(get_mock_component_suppliers()).unwrap();
+            m.register_supplier(Arc::new(VFS_RESOLVER_SUPPLIER)).unwrap();
             m
         })
     }
@@ -81,14 +82,18 @@ pub mod test_support {
     }
 
     pub struct CustomVfsFileResolverSupplier;
-    const VFS_RESOLVER_SUPPLIER: CustomVfsFileResolverSupplier = CustomVfsFileResolverSupplier {};
+    const VFS_RESOLVER_SUPPLIER: CustomVfsFileResolverSupplier =
+        CustomVfsFileResolverSupplier {};
 
     impl ComponentSupplier for CustomVfsFileResolverSupplier {
         fn supply_types(&self) -> Vec<ComponentType> {
             vec![ComponentType::file_resolver("vfs".to_owned())]
         }
 
-        fn apply(&self, _: &Map<String, Value>) -> Result<Arc<dyn SdComponent>, ComponentError> {
+        fn apply(
+            &self,
+            _: &Map<String, Value>,
+        ) -> Result<Arc<dyn SdComponent>, ComponentError> {
             Ok(Arc::new(HardCodeVfsFileResolver {}))
         }
 
@@ -221,9 +226,7 @@ pub mod test_support {
     }
     impl Default for MockSourcePointer {
         fn default() -> Self {
-            MockSourcePointer {
-                value: Value::Object(Map::new()),
-            }
+            MockSourcePointer { value: Value::Object(Map::new()) }
         }
     }
     impl SourcePointer for MockSourcePointer {
@@ -231,9 +234,14 @@ pub mod test_support {
             self.value.clone()
         }
 
-        fn update(&self, _: &SourceItem, _: &Arc<dyn ItemPointer>) {}
+        fn update(&mut self, _: &SourceItem, item_pointer: &dyn ItemPointer) {
+            if let Some(pointer) = item_pointer.as_any().downcast_ref::<MockItemPointer>()
+            {
+                self.value = pointer.value.clone();
+            }
+        }
 
-        fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
+        fn as_any(&self) -> &dyn Any {
             self
         }
     }
@@ -265,12 +273,127 @@ pub mod test_support {
         fetch: Vec<ComponentFunctionMockConfig>,
     }
 
+    struct FetchBehavior {
+        result: Result<Vec<PointedItem>, ProcessingError>,
+        consume: bool,
+    }
+
+    struct MockSource {
+        fetches: Mutex<VecDeque<FetchBehavior>>,
+    }
+
+    impl Debug for MockSource {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("MockSource").finish()
+        }
+    }
+
+    impl Display for MockSource {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "mock-source")
+        }
+    }
+
+    impl SdComponent for MockSource {
+        fn as_source(self: Arc<Self>) -> Result<Arc<dyn Source>, ComponentError> {
+            Ok(self)
+        }
+    }
+
+    #[async_trait]
+    impl Source for MockSource {
+        async fn fetch<'pointer>(
+            &self,
+            _: &'pointer dyn SourcePointer,
+            _: u32,
+        ) -> Result<Vec<PointedItem>, ProcessingError> {
+            let mut fetches = self.fetches.lock();
+            let Some(fetch) = fetches.front() else {
+                return Ok(Vec::new());
+            };
+            let result = fetch.result.clone();
+            if fetch.consume {
+                fetches.pop_front();
+            }
+            result
+        }
+
+        fn default_pointer(&self) -> Box<dyn SourcePointer> {
+            Box::new(MockSourcePointer::default())
+        }
+
+        fn parse_raw_pointer(&self, value: Value) -> Box<dyn SourcePointer> {
+            Box::new(MockSourcePointer { value })
+        }
+    }
+
+    struct MockSourceSupplier {}
+
+    impl ComponentSupplier for MockSourceSupplier {
+        fn supply_types(&self) -> Vec<ComponentType> {
+            vec![ComponentType::source("mock".to_owned())]
+        }
+
+        fn apply(
+            &self,
+            props: &Map<String, Value>,
+        ) -> Result<Arc<dyn SdComponent>, ComponentError> {
+            let cfg = serde_json::from_value::<ComponentMockConfig>(Value::Object(
+                props.clone(),
+            ))
+            .map_err(|error| ComponentError::new(error.to_string()))?;
+            let fetches = cfg
+                .fetch
+                .into_iter()
+                .map(Self::build_fetch_behavior)
+                .collect::<Result<VecDeque<_>, _>>()?;
+            Ok(Arc::new(MockSource { fetches: Mutex::new(fetches) }))
+        }
+
+        fn is_support_no_props(&self) -> bool {
+            true
+        }
+
+        fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
+            None
+        }
+    }
+
+    impl MockSourceSupplier {
+        fn build_fetch_behavior(
+            fetch: ComponentFunctionMockConfig,
+        ) -> Result<FetchBehavior, ComponentError> {
+            let option = fetch.opt.unwrap_or_default();
+            let result = match fetch.returning {
+                ReturningKind::Ok => {
+                    Ok(Self::build_pointed_items(fetch.value.unwrap_or_default())?)
+                }
+                ReturningKind::Err if option.retryable => {
+                    Err(ProcessingError::retryable("Mock retryable"))
+                }
+                ReturningKind::Err => {
+                    Err(ProcessingError::non_retryable("Mock non-retryable"))
+                }
+                ReturningKind::Some | ReturningKind::None => {
+                    return Err(ComponentError::new("Returning type not match"));
+                }
+            };
+            Ok(FetchBehavior { result, consume: option.once || option.return_once })
+        }
+
+        fn build_pointed_items(value: Value) -> Result<Vec<PointedItem>, ComponentError> {
+            let items: Vec<PointedItemConfig> =
+                serde_json::from_value(value).map_err(|error| error.to_string())?;
+            Ok(items.into_iter().map(Into::into).collect())
+        }
+    }
+
     struct MockComponentSupplier {}
+
     impl ComponentSupplier for MockComponentSupplier {
         fn supply_types(&self) -> Vec<ComponentType> {
             let name = "mock";
             vec![
-                ComponentType::source(name.to_owned()),
                 ComponentType::file_resolver(name.to_owned()),
                 ComponentType::variable_provider(name.to_owned()),
                 ComponentType::downloader(name.to_owned()),
@@ -280,26 +403,10 @@ pub mod test_support {
 
         fn apply(
             &self,
-            props: &Map<String, Value>,
+            _: &Map<String, Value>,
         ) -> Result<Arc<dyn SdComponent>, ComponentError> {
             let mut mock = MockComponent::new();
-            let cfg = serde_json::from_value::<ComponentMockConfig>(Value::Object(props.clone()))
-                .expect("Failed to deserialize ComponentMockConfig");
-            Self::apply_source_fetch(&mut mock, cfg.fetch)?;
             Self::apply_file_mover(&mut mock)?;
-
-            // 配置 default_pointer 方法
-            mock.expect_default_pointer()
-                .returning(|| Arc::new(MockSourcePointer::default()));
-
-            // 配置 parse_raw_pointer 方法
-            if let Some(_) = props.get("parse_raw_pointer") {
-                mock.expect_parse_raw_pointer()
-                    .returning(|value| Arc::new(MockSourcePointer { value }));
-            } else {
-                mock.expect_parse_raw_pointer()
-                    .returning(|_| Arc::new(MockSourcePointer::default()));
-            }
             Ok(Arc::new(mock))
         }
 
@@ -313,68 +420,14 @@ pub mod test_support {
     }
 
     impl MockComponentSupplier {
-        fn build_pointed_items(value: Value) -> Result<Vec<PointedItem>, ComponentError> {
-            let items: Vec<PointedItemConfig> =
-                serde_json::from_value(value).map_err(|e| ComponentError::from(e.to_string()))?;
-            let result = items
-                .into_iter()
-                .filter_map(|config| Some(config.into()))
-                .collect();
-            Ok(result)
-        }
-
         fn apply_file_mover(mock: &mut MockComponent) -> Result<(), ComponentError> {
             mock.expect_exists()
-                .returning(|f| f.iter().map(|x| false).collect_vec());
-            Ok(())
-        }
-
-        fn apply_source_fetch(
-            mock: &mut MockComponent,
-            fetches: Vec<ComponentFunctionMockConfig>,
-        ) -> Result<(), ComponentError> {
-            if fetches.is_empty() {
-                mock.expect_fetch()
-                    .with(always(), always())
-                    .returning(|_, _| Ok(Vec::new()));
-            }
-            for fetch in fetches {
-                let mut mock = mock.expect_fetch().with(always(), always());
-                let option = fetch.opt.unwrap_or_default();
-                if option.once {
-                    mock.once();
-                }
-                let return_value: Result<Vec<PointedItem>, ProcessingError> = match fetch.returning
-                {
-                    ReturningKind::Ok => {
-                        Ok(Self::build_pointed_items(fetch.value.unwrap_or_default())?)
-                    }
-                    ReturningKind::Err => {
-                        if option.retryable {
-                            Err(ProcessingError::retryable("Mock retryable"))
-                        } else {
-                            Err(ProcessingError::non_retryable("Mock non-retryable"))
-                        }
-                    }
-                    ReturningKind::Some | ReturningKind::None => {
-                        panic!("Returning type not match")
-                    }
-                };
-
-                if option.return_once {
-                    mock.return_once(move |_, _| return_value);
-                } else {
-                    mock.returning(move |_, _| return_value.clone());
-                }
-            }
+                .returning(|files| files.iter().map(|_| false).collect_vec());
             Ok(())
         }
     }
 
     impl SdComponent for MockComponent {
-        fn as_source(self: Arc<Self>) -> Result<Arc<dyn Source>, ComponentError> {
-            Ok(self)
-        }
         fn as_item_file_resolver(
             self: Arc<Self>,
         ) -> Result<Arc<dyn ItemFileResolver>, ComponentError> {
@@ -401,16 +454,6 @@ pub mod test_support {
     mock! {
         #[derive(Debug)]
         pub Component {}
-        #[async_trait]
-        impl Source for Component {
-            async fn fetch(
-                &self,
-                pointer: Arc<dyn SourcePointer>,
-                limit: u32,
-            ) -> Result<Vec<PointedItem>, ProcessingError>;
-            fn default_pointer(&self) -> Arc<dyn SourcePointer>;
-            fn parse_raw_pointer(&self, value: Value) -> Arc<dyn SourcePointer>;
-        }
         #[async_trait]
         impl ItemFileResolver for Component {
             async fn resolve_files(&self, item: &SourceItem) -> Vec<SourceFile>;
@@ -462,7 +505,7 @@ pub mod test_support {
 
     #[allow(dead_code)]
     pub fn get_mock_component_suppliers() -> Vec<Arc<dyn ComponentSupplier>> {
-        vec![Arc::new(MockComponentSupplier {})]
+        vec![Arc::new(MockSourceSupplier {}), Arc::new(MockComponentSupplier {})]
     }
     //     ==========
 
@@ -510,10 +553,7 @@ pub mod test_support {
 
     impl AssertionError {
         pub fn new(msg: impl Into<String>) -> Self {
-            Self {
-                message: msg.into(),
-                context: Vec::new(),
-            }
+            Self { message: msg.into(), context: Vec::new() }
         }
 
         pub fn with_context(mut self, ctx: impl Into<String>) -> Self {
@@ -546,7 +586,10 @@ pub mod test_support {
         }
     }
 
-    pub fn apply_assertion(node: &Value, asserts: &Vec<AssertExpr>) -> Result<(), AssertionError> {
+    pub fn apply_assertion(
+        node: &Value,
+        asserts: &Vec<AssertExpr>,
+    ) -> Result<(), AssertionError> {
         for assert in asserts {
             let target = if let Some(pointer) = &assert.pointer {
                 node.pointer(pointer).ok_or_else(|| {
@@ -599,7 +642,10 @@ pub mod test_support {
         Ok(())
     }
 
-    pub async fn build_result_json(storage: &Arc<SeaProcessingStorage>, name: &str) -> Value {
+    pub async fn build_result_json(
+        storage: &Arc<SeaProcessingStorage>,
+        name: &str,
+    ) -> Value {
         let contents = storage
             .query_processing_content(&ProcessingContentQuery {
                 processor_name: Some(vec![name.to_string()]),

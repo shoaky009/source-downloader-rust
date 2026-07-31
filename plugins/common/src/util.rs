@@ -1,8 +1,8 @@
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::ProcessingError;
 use source_downloader_sdk::http::Uri;
-use source_downloader_sdk::time::format_description::well_known;
 use source_downloader_sdk::time::OffsetDateTime;
+use source_downloader_sdk::time::format_description::well_known;
 use std::collections::HashMap;
 
 /// 异步展开处理器 trait，用于定义如何异步展开一个 Item
@@ -16,15 +16,15 @@ pub trait ExpandHandler<T, U>: Send + Sync {
 /// AsyncExpandIterator - 支持异步 trait 实现的展开迭代器
 /// 用于展开迭代中需要执行异步操作（如网络请求）的场景
 #[allow(dead_code)]
-pub struct AsyncExpandIterator<T, U> {
+pub struct AsyncExpandIterator<'a, T, U> {
     items: Vec<T>,
     limit: usize,
     current_index: usize,
     current_expanded: Vec<U>,
-    expander: Box<dyn ExpandHandler<T, U>>,
+    expander: Box<dyn ExpandHandler<T, U> + 'a>,
 }
 
-impl<T: Send + 'static, U: Send + 'static> AsyncExpandIterator<T, U> {
+impl<'a, T: Send + 'a, U: Send + 'a> AsyncExpandIterator<'a, T, U> {
     /// 创建新的 AsyncExpandIterator，接受实现 ExpandHandler trait 的对象
     ///
     /// # 使用示例
@@ -46,14 +46,14 @@ impl<T: Send + 'static, U: Send + 'static> AsyncExpandIterator<T, U> {
     /// let expanded_items = expand_iter.collect_all().await;
     /// ```
     #[allow(dead_code)]
-    pub fn new(items: Vec<T>, limit: u32, expander: Box<dyn ExpandHandler<T, U>>) -> Self {
+    pub fn new(
+        items: Vec<T>,
+        limit: u32,
+        expander: Box<dyn ExpandHandler<T, U> + 'a>,
+    ) -> Self {
         Self {
             items,
-            limit: if limit == 0 {
-                usize::MAX
-            } else {
-                limit as usize
-            },
+            limit: if limit == 0 { usize::MAX } else { limit as usize },
             current_index: 0,
             current_expanded: Vec::new(),
             expander,

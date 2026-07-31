@@ -1,12 +1,15 @@
 use crate::instance::mikan::MikanClient;
 use crate::util;
 use crate::util::{AsyncExpandIterator, ExpandHandler, IterationResult};
-use parking_lot::RwLock;
 use reqwest::StatusCode;
 use rss_for_mikan::{Channel, Item};
 use serde::{Deserialize, Serialize};
 use source_downloader_sdk::async_trait::async_trait;
-use source_downloader_sdk::component::{ComponentError, ComponentSupplier, ComponentType, ItemPointer, PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourcePointer, EMPTY_POINTER};
+use source_downloader_sdk::component::{
+    ComponentError, ComponentSupplier, ComponentType, EMPTY_POINTER, ItemPointer,
+    PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source,
+    SourcePointer,
+};
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{Map, Value};
 use source_downloader_sdk::time::format_description::BorrowedFormatItem;
@@ -22,8 +25,9 @@ pub struct MikanSourceSupplier {}
 
 pub const SUPPLIER: MikanSourceSupplier = MikanSourceSupplier {};
 
-static DATETIME_FORMAT: &[BorrowedFormatItem] =
-    time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond]");
+static DATETIME_FORMAT: &[BorrowedFormatItem] = time::macros::format_description!(
+    "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond]"
+);
 static TIME_OFFSET: UtcOffset = time::macros::offset!(+8);
 
 impl ComponentSupplier for MikanSourceSupplier {
@@ -31,7 +35,10 @@ impl ComponentSupplier for MikanSourceSupplier {
         vec![ComponentType::source("mikan".to_string())]
     }
 
-    fn apply(&self, props: &Map<String, Value>) -> Result<Arc<dyn SdComponent>, ComponentError> {
+    fn apply(
+        &self,
+        props: &Map<String, Value>,
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let url = props
             .get("url")
             .ok_or_else(|| ComponentError::from("Missing 'url' property"))?
@@ -40,11 +47,8 @@ impl ComponentSupplier for MikanSourceSupplier {
             return Err(ComponentError::from("Invalid 'url' property"));
         }
         let url = url.unwrap().to_string();
-        let all_episode = props
-            .get("all-episode")
-            .map(|v| v.as_bool())
-            .flatten()
-            .unwrap_or(false);
+        let all_episode =
+            props.get("all-episode").map(|v| v.as_bool()).flatten().unwrap_or(false);
         Ok(Arc::new(MikanSource {
             url,
             all_episode,
@@ -87,9 +91,9 @@ impl Display for MikanSource {
 
 #[async_trait]
 impl Source for MikanSource {
-    async fn fetch(
+    async fn fetch<'pointer>(
         &self,
-        source_pointer: Arc<dyn SourcePointer>,
+        source_pointer: &'pointer dyn SourcePointer,
         limit: u32,
     ) -> Result<Vec<PointedItem>, ProcessingError> {
         let content = self
@@ -102,14 +106,12 @@ impl Source for MikanSource {
             .await
             .map_err(|e| reqwest_error(&e, "Failed to read bytes"))?;
 
-        let channel = Channel::read_from(&content[..])
-            .map_err(|e| ProcessingError::non_retryable(format!("Failed to parse RSS, {}", e)))?;
+        let channel = Channel::read_from(&content[..]).map_err(|e| {
+            ProcessingError::non_retryable(format!("Failed to parse RSS, {}", e))
+        })?;
 
-        let items: Vec<SourceItem> = channel
-            .items
-            .iter()
-            .filter_map(|i| Self::convert_item(i))
-            .collect();
+        let items: Vec<SourceItem> =
+            channel.items.iter().filter_map(|i| Self::convert_item(i)).collect();
 
         if !self.all_episode {
             let result = items
@@ -122,14 +124,12 @@ impl Source for MikanSource {
             return Ok(result);
         }
 
-        let mp = source_pointer
-            .into_any()
-            .downcast::<MikanSourcePointer>()
-            .unwrap();
-        let handler = MikanItemExpandHandler {
-            client: self.mikan_client.clone(),
-            pointer: mp,
-        };
+        let pointer =
+            source_pointer.as_any().downcast_ref::<MikanSourcePointer>().ok_or_else(
+                || ProcessingError::non_retryable("Invalid Mikan source pointer"),
+            )?;
+        let handler =
+            MikanItemExpandHandler { client: self.mikan_client.clone(), pointer };
         let expanded_items = AsyncExpandIterator::new(items, limit, Box::new(handler))
             .collect_all()
             .await?;
@@ -137,15 +137,15 @@ impl Source for MikanSource {
         Ok(expanded_items)
     }
 
-    fn default_pointer(&self) -> Arc<dyn SourcePointer> {
-        Arc::new(MikanSourcePointer {
-            latest: RwLock::new(OffsetDateTime::now_utc()),
-            shows: RwLock::new(HashMap::new()),
+    fn default_pointer(&self) -> Box<dyn SourcePointer> {
+        Box::new(MikanSourcePointer {
+            latest: OffsetDateTime::now_utc(),
+            shows: HashMap::new(),
         })
     }
 
-    fn parse_raw_pointer(&self, value: Value) -> Arc<dyn SourcePointer> {
-        Arc::new(serde_json::from_value::<MikanSourcePointer>(value).unwrap_or_default())
+    fn parse_raw_pointer(&self, value: Value) -> Box<dyn SourcePointer> {
+        Box::new(serde_json::from_value::<MikanSourcePointer>(value).unwrap_or_default())
     }
 }
 
@@ -157,11 +157,7 @@ impl MikanSource {
         let link = Uri::from_str(link_str).ok()?;
         let enclosure = item.enclosure.as_ref()?;
         let download_uri = Uri::from_str(&enclosure.url).ok()?;
-        let pub_date = item
-            .torrent
-            .as_ref()
-            .map(|x| x.pub_date.to_owned())
-            .flatten()?;
+        let pub_date = item.torrent.as_ref().map(|x| x.pub_date.to_owned()).flatten()?;
         let datetime = PrimitiveDateTime::parse(&pub_date, DATETIME_FORMAT)
             .ok()?
             .assume_offset(TIME_OFFSET);
@@ -178,13 +174,13 @@ impl MikanSource {
     }
 }
 
-struct MikanItemExpandHandler {
+struct MikanItemExpandHandler<'a> {
     client: Arc<MikanClient>,
-    pointer: Arc<MikanSourcePointer>,
+    pointer: &'a MikanSourcePointer,
 }
 
 #[async_trait]
-impl ExpandHandler<SourceItem, PointedItem> for MikanItemExpandHandler {
+impl ExpandHandler<SourceItem, PointedItem> for MikanItemExpandHandler<'_> {
     async fn expand(
         &self,
         item: SourceItem,
@@ -196,27 +192,18 @@ impl ExpandHandler<SourceItem, PointedItem> for MikanItemExpandHandler {
             .map_err(|e| ProcessingError::retryable(e.to_string()))?
             .fansub_rss;
         if fansub_rss.is_none() {
-            return Ok(IterationResult {
-                items: vec![],
-                has_next: false,
-            });
+            return Ok(IterationResult { items: vec![], has_next: false });
         }
         let fansub_rss = fansub_rss.unwrap();
         let fansub_uri = Uri::from_str(&fansub_rss).unwrap();
         let fansub_query = util::query_map(&fansub_uri);
         let bangumi_id = fansub_query.get("bangumiId");
         if bangumi_id.is_none() {
-            return Ok(IterationResult {
-                items: vec![],
-                has_next: false,
-            });
+            return Ok(IterationResult { items: vec![], has_next: false });
         }
         let subgroup_id = fansub_query.get("subgroupid");
         if subgroup_id.is_none() {
-            return Ok(IterationResult {
-                items: vec![],
-                has_next: false,
-            });
+            return Ok(IterationResult { items: vec![], has_next: false });
         }
         let bangumi_id = bangumi_id.unwrap();
         let subgroup_id = subgroup_id.unwrap();
@@ -230,11 +217,8 @@ impl ExpandHandler<SourceItem, PointedItem> for MikanItemExpandHandler {
 
         let channel = Channel::read_from(&content[..])
             .map_err(|e| ProcessingError::non_retryable(e.to_string()))?;
-        let mut fansub_items: Vec<SourceItem> = channel
-            .items
-            .iter()
-            .filter_map(|i| MikanSource::convert_item(i))
-            .collect();
+        let mut fansub_items: Vec<SourceItem> =
+            channel.items.iter().filter_map(|i| MikanSource::convert_item(i)).collect();
         fansub_items.sort_by(|a, b| a.datetime.cmp(&b.datetime));
         if !fansub_items.contains(&item) {
             tracing::debug!("Item不在RSS列表中: {:?}", item);
@@ -245,7 +229,7 @@ impl ExpandHandler<SourceItem, PointedItem> for MikanItemExpandHandler {
         let result: Vec<PointedItem> = fansub_items
             .into_iter()
             .filter(|x| {
-                match self.pointer.shows.read().get(&key) {
+                match self.pointer.shows.get(&key) {
                     None => true,                     // 没有记录，保留
                     Some(date) => *date > x.datetime, // 必须比记录的时间晚
                 }
@@ -256,17 +240,11 @@ impl ExpandHandler<SourceItem, PointedItem> for MikanItemExpandHandler {
                     sub_group_id: subgroup_id.to_string(),
                     date: it.datetime,
                 };
-                PointedItem {
-                    source_item: it,
-                    item_pointer: Arc::new(ptr),
-                }
+                PointedItem { source_item: it, item_pointer: Arc::new(ptr) }
             })
             .collect();
 
-        Ok(IterationResult {
-            items: result,
-            has_next: false,
-        })
+        Ok(IterationResult { items: result, has_next: false })
     }
 }
 
@@ -313,16 +291,13 @@ impl ItemPointer for FansubPointer {
 
 #[derive(Serialize, Deserialize)]
 struct MikanSourcePointer {
-    latest: RwLock<OffsetDateTime>,
-    shows: RwLock<HashMap<String, OffsetDateTime>>,
+    latest: OffsetDateTime,
+    shows: HashMap<String, OffsetDateTime>,
 }
 
 impl Default for MikanSourcePointer {
     fn default() -> Self {
-        Self {
-            latest: RwLock::new(OffsetDateTime::UNIX_EPOCH),
-            shows: Default::default(),
-        }
+        Self { latest: OffsetDateTime::UNIX_EPOCH, shows: HashMap::new() }
     }
 }
 
@@ -331,15 +306,17 @@ impl SourcePointer for MikanSourcePointer {
         serde_json::to_value(self).unwrap()
     }
 
-    fn update(&self, _: &SourceItem, item_pointer: &Arc<dyn ItemPointer>) {
-        if let Some(p) = item_pointer.as_any().downcast_ref::<FansubPointer>() {
-            self.shows.write().insert(p.key(), p.date);
-            let mut g = self.latest.write();
-            *g = (*g).max(p.date);
+    fn update(&mut self, _: &SourceItem, item_pointer: &dyn ItemPointer) {
+        if let Some(pointer) = item_pointer.as_any().downcast_ref::<FansubPointer>() {
+            self.shows
+                .entry(pointer.key())
+                .and_modify(|date| *date = (*date).max(pointer.date))
+                .or_insert(pointer.date);
+            self.latest = self.latest.max(pointer.date);
         }
     }
 
-    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }
