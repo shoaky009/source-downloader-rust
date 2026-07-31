@@ -79,9 +79,9 @@ pub struct SourceProcessor {
 
 pub struct ProcessorOptions {
     // ok
-    pub save_path_pattern: Arc<PathPattern>,
+    pub save_path_pattern: PathPattern,
     // ok
-    pub filename_pattern: Arc<PathPattern>,
+    pub filename_pattern: PathPattern,
     // ok
     pub variable_providers: Vec<Arc<dyn VariableProvider>>,
     // ok
@@ -1142,11 +1142,12 @@ trait Process {
             .iter()
             .filter(|file| file.status != TargetExists && file.status != Downloaded)
             .collect();
-        let all_files: Vec<SourceFileRef> =
-            downloadable_files.iter().map(|file| (*file).into()).collect();
-
-        let (direct_files, download_files): (Vec<_>, Vec<_>) =
-            all_files.into_iter().partition(|f| f.data.is_some());
+        let (direct_files, download_files): (Vec<SourceFileRef>, Vec<SourceFileRef>) =
+            downloadable_files
+                .iter()
+                .copied()
+                .map(SourceFileRef::from)
+                .partition(|file| file.data.is_some());
         for direct_file in direct_files {
             if let Some(data) = direct_file.data {
                 if let Some(parent) = direct_file.path.parent() {
@@ -1462,26 +1463,26 @@ trait Process {
 
             // Determine save_path_pattern and filename_pattern for this file
             let file_save_path_pattern = file_strategy
-                .map(|s| s.save_path_pattern.clone())
-                .flatten()
+                .and_then(|strategy| strategy.save_path_pattern.as_ref())
                 .or_else(|| {
-                    item_group_options.map(|s| s.save_path_pattern.clone()).flatten()
+                    item_group_options
+                        .and_then(|strategy| strategy.save_path_pattern.as_ref())
                 })
-                .unwrap_or(opt.save_path_pattern.clone());
+                .unwrap_or(&opt.save_path_pattern);
             let file_filename_pattern = file_strategy
-                .map(|s| s.filename_pattern.clone())
-                .flatten()
+                .and_then(|strategy| strategy.filename_pattern.as_ref())
                 .or_else(|| {
-                    item_group_options.map(|s| s.filename_pattern.clone()).flatten()
+                    item_group_options
+                        .and_then(|strategy| strategy.filename_pattern.as_ref())
                 })
-                .unwrap_or(opt.filename_pattern.clone());
+                .unwrap_or(&opt.filename_pattern);
 
             let raw = RawFileContent {
                 save_path: &p.save_path,
                 download_path: &p.download_path,
                 variables: var,
-                save_path_pattern: &file_save_path_pattern,
-                filename_pattern: &file_filename_pattern,
+                save_path_pattern: file_save_path_pattern,
+                filename_pattern: file_filename_pattern,
                 source_file: x,
             };
             let content = p.renamer.create_file_content(source_item, raw, &item_var);
@@ -1955,8 +1956,8 @@ mod test {
             None,
             HashSet::new(),
             ProcessorOptions {
-                save_path_pattern: Arc::new(PathPattern::new_cel(String::new())),
-                filename_pattern: Arc::new(PathPattern::new_cel(String::new())),
+                save_path_pattern: PathPattern::new_cel(String::new()),
+                filename_pattern: PathPattern::new_cel(String::new()),
                 variable_providers: Vec::new(),
                 item_filters,
                 item_content_filters: Vec::new(),

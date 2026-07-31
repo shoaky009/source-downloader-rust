@@ -210,9 +210,8 @@ impl Renamer {
         let mut dir_result = self.save_directory_path(&file, &variables);
         let mut filename_result = self.target_filename(&file, &variables);
 
-        let mut errors = Vec::new();
-        errors.extend(dir_result.failed_expressions.clone());
-        errors.extend(filename_result.failed_expressions.clone());
+        let mut errors = std::mem::take(&mut dir_result.failed_expressions);
+        errors.append(&mut filename_result.failed_expressions);
 
         // 处理 STAY 策略
         if !filename_result.success
@@ -615,8 +614,8 @@ mod tests {
         LazyLock::new(|| Path::new("src/test/resources/target"));
     static DOWNLOAD_PATH: LazyLock<&Path> =
         LazyLock::new(|| Path::new("src/test/resources/download"));
-    static PATH_PATTERN: LazyLock<Arc<PathPattern>> =
-        LazyLock::new(|| Arc::new(PathPattern::new_cel("".to_owned())));
+    static PATH_PATTERN: LazyLock<PathPattern> =
+        LazyLock::new(|| PathPattern::new_cel("".to_owned()));
     static SOURCE_FILE: LazyLock<SourceFile> = LazyLock::new(|| SourceFile {
         path: PathBuf::from_str("1.txt").unwrap(),
         attrs: Default::default(),

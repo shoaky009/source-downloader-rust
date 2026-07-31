@@ -38,8 +38,8 @@ impl SourceItemMatcher for ExpressionAndTagMatcher {
 }
 
 pub struct ItemStrategy {
-    pub save_path_pattern: Option<Arc<PathPattern>>,
-    pub filename_pattern: Option<Arc<PathPattern>>,
+    pub save_path_pattern: Option<PathPattern>,
+    pub filename_pattern: Option<PathPattern>,
     pub item_filters: Option<Vec<Arc<dyn SourceItemFilter>>>,
     pub variable_providers: Option<Vec<Arc<dyn VariableProvider>>>,
 }
@@ -70,8 +70,8 @@ impl SourceFileMatcher for ExpressionAndTagMatcher {
 }
 
 pub struct FileStrategy {
-    pub save_path_pattern: Option<Arc<PathPattern>>,
-    pub filename_pattern: Option<Arc<PathPattern>>,
+    pub save_path_pattern: Option<PathPattern>,
+    pub filename_pattern: Option<PathPattern>,
     pub file_content_filters: Option<Vec<Arc<dyn FileContentFilter>>>,
 }
 

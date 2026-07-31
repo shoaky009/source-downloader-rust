@@ -296,12 +296,12 @@ impl ProcessorManager {
             .as_file_replacement_decider()?;
 
         Ok(ProcessorOptions {
-            save_path_pattern: Arc::new(PathPattern::new_cel(
+            save_path_pattern: PathPattern::new_cel(
                 config.options.save_path_pattern.to_owned(),
-            )),
-            filename_pattern: Arc::new(PathPattern::new_cel(
+            ),
+            filename_pattern: PathPattern::new_cel(
                 config.options.filename_pattern.to_owned(),
-            )),
+            ),
             variable_providers,
             item_filters,
             item_content_filters,
@@ -503,11 +503,11 @@ impl ProcessorManager {
                 save_path_pattern: item_opt_cfg
                     .save_path_pattern
                     .as_ref()
-                    .map(|x| Arc::new(PathPattern::new_cel(x.clone()))),
+                    .map(|x| PathPattern::new_cel(x.clone())),
                 filename_pattern: item_opt_cfg
                     .filename_pattern
                     .as_ref()
-                    .map(|x| Arc::new(PathPattern::new_cel(x.clone()))),
+                    .map(|x| PathPattern::new_cel(x.clone())),
                 item_filters,
                 variable_providers: providers,
             };
