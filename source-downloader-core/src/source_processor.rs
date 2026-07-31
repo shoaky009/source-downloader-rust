@@ -136,8 +136,8 @@ impl ProcessTask for SourceProcessor {
 
 struct ListenerContext {
     processor_info: ProcessorInfo,
-    processed_items: Vec<SourceItem>,
-    contents: HashMap<String, (ProcessingContent, Vec<FileContent>)>,
+    contents: Vec<(ProcessingContent, Vec<FileContent>)>,
+    content_indices: HashMap<String, usize>,
     has_error: bool,
 }
 
@@ -151,31 +151,25 @@ impl ListenerContext {
                 tags: processor.tags.to_owned(),
                 category: processor.category.to_owned(),
             },
-            processed_items: Vec::new(),
-            contents: HashMap::new(),
+            contents: Vec::new(),
+            content_indices: HashMap::new(),
             has_error: false,
         }
     }
 
     fn add(&mut self, content: ProcessingContent, files: Vec<FileContent>) {
-        self.processed_items
-            .push(content.item_content.source_item.clone());
-        self.contents
-            .insert(content.item_hash.to_owned(), (content, files));
-    }
-}
-
-impl ProcessContext for ListenerContext {
-    fn processor(&self) -> &ProcessorInfo {
-        &self.processor_info
+        let index = self.contents.len();
+        self.content_indices
+            .insert(content.item_hash.to_owned(), index);
+        self.contents.push((content, files));
     }
 
-    fn processed_items(&self) -> &Vec<SourceItem> {
-        &self.processed_items
-    }
-
-    fn get_item_content(&self, item: &SourceItem) -> Option<InProcessingItem<'_>> {
-        let (content, files) = self.contents.get(&item.hashing())?;
+    fn get_item_content_by_hash(
+        &self,
+        item_hash: &str,
+    ) -> Option<InProcessingItem<'_>> {
+        let index = *self.content_indices.get(item_hash)?;
+        let (content, files) = self.contents.get(index)?;
         Some(InProcessingItem {
             id: &content.id,
             processor_name: &content.processor_name,
@@ -188,6 +182,26 @@ impl ProcessContext for ListenerContext {
             status: &content.status,
             failure_reason: content.failure_reason.as_deref(),
         })
+    }
+}
+
+impl ProcessContext for ListenerContext {
+    fn processor(&self) -> &ProcessorInfo {
+        &self.processor_info
+    }
+
+    fn processed_items(
+        &self,
+    ) -> Box<dyn ExactSizeIterator<Item = &SourceItem> + '_> {
+        Box::new(
+            self.contents
+                .iter()
+                .map(|(content, _)| &content.item_content.source_item),
+        )
+    }
+
+    fn get_item_content(&self, item: &SourceItem) -> Option<InProcessingItem<'_>> {
+        self.get_item_content_by_hash(&item.hashing())
     }
 
     fn has_error(&self) -> bool {
@@ -409,13 +423,10 @@ impl SourceProcessor {
                     finished += 1;
                     match self.process_rename_content(&mut content).await {
                         Ok(files) => {
+                            let item_hash = content.item_hash.to_owned();
                             listener_context.add(content, files);
-                            let item = listener_context
-                                .processed_items
-                                .last()
-                                .expect("renamed item was just inserted");
                             let completed = listener_context
-                                .get_item_content(item)
+                                .get_item_content_by_hash(&item_hash)
                                 .expect("renamed item content was just inserted");
                             let item_content = ItemContent {
                                 source_item: completed.source_item,
@@ -1605,16 +1616,15 @@ impl Process for NormalProcess {
         .await?;
         let item_hash = content.item_hash.to_owned();
         ctx.listener_context.add(content, files);
-        let (content, files) = ctx
+        let completed = ctx
             .listener_context
-            .contents
-            .get(&item_hash)
+            .get_item_content_by_hash(&item_hash)
             .expect("completed item was just inserted");
         let item_content = ItemContent {
-            source_item: &content.item_content.source_item,
-            file_contents: files,
-            item_variables: &content.item_content.item_variables,
-            status: content.status,
+            source_item: completed.source_item,
+            file_contents: completed.file_contents,
+            item_variables: completed.item_variables,
+            status: *completed.status,
         };
         for listener in &p.options.process_listeners {
             listener.on_item_success(&ctx.listener_context, &item_content);
@@ -2067,6 +2077,7 @@ mod test {
         errors: AtomicUsize,
         completions: AtomicUsize,
         context_visible: AtomicBool,
+        completed_items: ParkingMutex<Vec<String>>,
     }
 
     impl Display for RecordingListener {
@@ -2078,7 +2089,11 @@ mod test {
     impl source_downloader_sdk::component::SdComponent for RecordingListener {}
 
     impl ProcessListener for RecordingListener {
-        fn on_item_success(&self, ctx: &dyn ProcessContext, item_content: &ItemContent) {
+        fn on_item_success(
+            &self,
+            ctx: &dyn ProcessContext,
+            item_content: &ItemContent,
+        ) {
             self.successes.fetch_add(1, AtomicOrdering::Relaxed);
             self.context_visible.store(
                 ctx.get_item_content(item_content.source_item).is_some(),
@@ -2096,7 +2111,10 @@ mod test {
         }
 
         fn on_process_completed(&self, ctx: &dyn ProcessContext) {
-            assert_eq!(ctx.processed_items().len(), 1);
+            self.completed_items.lock().extend(
+                ctx.processed_items()
+                    .map(|item| item.title.to_owned()),
+            );
             self.completions.fetch_add(1, AtomicOrdering::Relaxed);
         }
     }
@@ -2113,6 +2131,24 @@ mod test {
         assert_eq!(listener.errors.load(AtomicOrdering::Relaxed), 0);
         assert_eq!(listener.completions.load(AtomicOrdering::Relaxed), 1);
         assert!(listener.context_visible.load(AtomicOrdering::Relaxed));
+        assert_eq!(
+            *listener.completed_items.lock(),
+            vec!["item-1".to_owned()]
+        );
+    }
+
+    #[tokio::test]
+    async fn process_context_preserves_completed_item_order() {
+        let (mut processor, _) = pointer_test_processor(false, 2, false);
+        let listener = Arc::new(RecordingListener::default());
+        processor.options.process_listeners = vec![listener.clone()];
+
+        processor.run().await.unwrap();
+
+        assert_eq!(
+            *listener.completed_items.lock(),
+            vec!["item-1".to_owned(), "item-2".to_owned()]
+        );
     }
 
     // <editor-fold desc="Flow control tests">
