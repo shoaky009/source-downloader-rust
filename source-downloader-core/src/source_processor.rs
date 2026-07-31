@@ -1117,6 +1117,7 @@ trait Process {
                 p,
                 source_item,
                 &item_variables,
+                variable_providers,
                 resolved_files,
                 item_strategy,
             )
@@ -1526,6 +1527,7 @@ trait Process {
         p: &SourceProcessor,
         source_item: &SourceItem,
         item_variables: &PatternVariables,
+        variable_providers: &[Arc<dyn VariableProvider>],
         source_files: Vec<SourceFile>,
         item_group_options: Option<&ItemStrategy>,
     ) -> Result<Vec<FileContent>, ProcessingError> {
@@ -1541,12 +1543,10 @@ trait Process {
 
         // <editor-fold desc="Stage using VariableProviders for file">
         let mut file_raw_vars = vec![];
-        for idx in 0..opt.variable_providers.len() {
-            let v = opt.variable_providers.get(idx).expect(
-                "Failed to get variable provider by index, this should not happen",
-            );
-            let vars =
-                v.file_variables(source_item, item_variables, &relative_files).await;
+        for (idx, provider) in variable_providers.iter().enumerate() {
+            let vars = provider
+                .file_variables(source_item, item_variables, &relative_files)
+                .await;
             if vars.len() != relative_files.len() {
                 return Err(ProcessingError::non_retryable(format!(
                     "Resolved files:{} and file variables:{} size not match, variable provider at {} implementation error",
@@ -1555,7 +1555,7 @@ trait Process {
                     idx
                 )));
             }
-            file_raw_vars.push((v.accuracy(), vars));
+            file_raw_vars.push((provider.accuracy(), vars));
         }
         let file_vars = opt.variable_aggregation.merge_files(&file_raw_vars);
         // </editor-fold>
@@ -2028,6 +2028,80 @@ mod test {
         }
     }
 
+    #[derive(Debug)]
+    struct StaticVariableProvider(&'static str);
+
+    impl Display for StaticVariableProvider {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "static-variable-provider")
+        }
+    }
+
+    impl source_downloader_sdk::component::SdComponent for StaticVariableProvider {}
+
+    #[async_trait]
+    impl VariableProvider for StaticVariableProvider {
+        async fn item_variables(&self, _: &SourceItem) -> HashMap<String, String> {
+            HashMap::new()
+        }
+
+        async fn file_variables(
+            &self,
+            _: &SourceItem,
+            _: &PatternVariables,
+            files: &[SourceFile],
+        ) -> Vec<PatternVariables> {
+            files
+                .iter()
+                .map(|_| HashMap::from([("fileProvider".to_owned(), self.0.to_owned())]))
+                .collect()
+        }
+
+        async fn extract_from(
+            &self,
+            _: &SourceItem,
+            _: &str,
+        ) -> Option<HashMap<String, Value>> {
+            None
+        }
+
+        fn primary_variable_name(&self) -> Option<String> {
+            None
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct TargetFilenameListener(ParkingMutex<Vec<String>>);
+
+    impl Display for TargetFilenameListener {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "target-filename-listener")
+        }
+    }
+
+    impl source_downloader_sdk::component::SdComponent for TargetFilenameListener {}
+
+    impl ProcessListener for TargetFilenameListener {
+        fn on_item_success(&self, _: &dyn ProcessContext, item_content: &ItemContent) {
+            self.0.lock().extend(
+                item_content
+                    .file_contents
+                    .iter()
+                    .map(|file| file.target_filename.clone()),
+            );
+        }
+
+        fn on_item_error(
+            &self,
+            _: &dyn ProcessContext,
+            _: &SourceItem,
+            _: &ProcessingError,
+        ) {
+        }
+
+        fn on_process_completed(&self, _: &dyn ProcessContext) {}
+    }
+
     #[derive(Default)]
     struct PointerStorage {
         states: ParkingMutex<Vec<ProcessorSourceState>>,
@@ -2249,6 +2323,43 @@ mod test {
         processor.options.task_group = Some("configured-group".to_owned());
 
         assert_eq!(processor.group().as_deref(), Some("configured-group"));
+    }
+
+    #[tokio::test]
+    async fn item_group_provider_is_used_for_file_variables() {
+        let (mut processor, _) = pointer_test_processor_with_settings(
+            false,
+            1,
+            false,
+            PointerTestSettings { unique_files: true, ..Default::default() },
+        );
+        processor.options.filename_pattern =
+            PathPattern::new_cel("{fileProvider}.txt".to_owned());
+        processor.options.variable_providers =
+            vec![Arc::new(StaticVariableProvider("global"))];
+        processor.options.item_rules = vec![ItemRule {
+            matcher: Box::new(crate::process::rule::ExpressionAndTagMatcher::new(
+                None,
+                Some(HashSet::new()),
+            )),
+            strategy: ItemStrategy {
+                save_path_pattern: None,
+                filename_pattern: None,
+                item_filters: None,
+                variable_providers: Some(vec![Arc::new(StaticVariableProvider(
+                    "item-group",
+                ))]),
+            },
+        }];
+        let listener = Arc::new(TargetFilenameListener::default());
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Each, vec![listener.clone()]);
+
+        processor.run().await.unwrap();
+
+        assert_eq!(*listener.0.lock(), vec!["item-group.txt".to_owned()]);
     }
 
     #[tokio::test]
