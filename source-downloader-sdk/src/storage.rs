@@ -9,23 +9,38 @@ use time::OffsetDateTime;
 #[async_trait]
 pub trait ProcessingStorage: Send + Sync {
     /// If [content.id] is None, required to return a new [ProcessingContent] with id.
-    async fn save_processing_content(&self, content: &ProcessingContent) -> Result<i64, Error>;
-    async fn processing_content_exists(&self, name: &str, hashing: &str) -> Result<bool, Error>;
+    async fn save_processing_content(
+        &self,
+        content: &ProcessingContent,
+    ) -> Result<i64, Error>;
+    async fn processing_content_exists(
+        &self,
+        name: &str,
+        hashing: &str,
+    ) -> Result<bool, Error>;
     async fn delete_processing_content(&self, id: i64) -> Result<(), Error>;
     async fn find_by_name_and_hash(
         &self,
         processor_name: &str,
         item_hash: &str,
     ) -> Result<Option<ProcessingContent>, Error>;
-    async fn find_content_by_id(&self, id: i64) -> Result<Option<ProcessingContent>, Error>;
+    async fn find_content_by_id(
+        &self,
+        id: i64,
+    ) -> Result<Option<ProcessingContent>, Error>;
     async fn query_processing_content(
         &self,
         query: &ProcessingContentQuery,
     ) -> Result<Vec<ProcessingContent>, Error>;
 
-    async fn save_file_contents(&self, content_id: i64, files: Vec<u8>) -> Result<(), Error>;
+    async fn save_file_contents(
+        &self,
+        content_id: i64,
+        files: Vec<u8>,
+    ) -> Result<(), Error>;
 
-    async fn find_file_contents(&self, content_id: i64) -> Result<Option<Vec<u8>>, Error>;
+    async fn find_file_contents(&self, content_id: i64)
+    -> Result<Option<Vec<u8>>, Error>;
 
     async fn find_processor_source_state(
         &self,
@@ -39,6 +54,21 @@ pub trait ProcessingStorage: Send + Sync {
     ) -> Result<ProcessorSourceState, Error>;
 
     async fn save_paths(&self, paths: Vec<ProcessingTargetPath>) -> Result<(), Error>;
+
+    async fn find_paths(
+        &self,
+        _paths: &[String],
+    ) -> Result<Vec<ProcessingTargetPath>, Error> {
+        Ok(Vec::new())
+    }
+
+    async fn delete_paths(
+        &self,
+        _paths: &[String],
+        _item_hash: Option<&str>,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

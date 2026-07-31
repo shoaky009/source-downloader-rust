@@ -1,14 +1,14 @@
 use crate::processing_record::Model;
 use async_trait::async_trait;
+use sea_orm::SqlxSqliteConnector;
 use sea_orm::entity::prelude::*;
 use sea_orm::sea_query::OnConflict;
 use sea_orm::sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sea_orm::SqlxSqliteConnector;
 use sea_orm::*;
 use serde_json::json;
 use source_downloader_sdk::storage::{
-    Error, ProcessingContent, ProcessingContentQuery, ProcessingStatus, ProcessingStorage,
-    ProcessingTargetPath, ProcessorSourceState,
+    Error, ProcessingContent, ProcessingContentQuery, ProcessingStatus,
+    ProcessingStorage, ProcessingTargetPath, ProcessorSourceState,
 };
 use std::str::FromStr;
 
@@ -21,28 +21,22 @@ impl SeaProcessingStorage {
     pub async fn new(database_url: &str) -> Result<Self, Error> {
         let db = if database_url.starts_with("sqlite") {
             let opts = SqliteConnectOptions::from_str(database_url)
-                .map_err(|x| Error {
-                    message: x.to_string(),
-                })?
+                .map_err(|x| Error { message: x.to_string() })?
                 .create_if_missing(true);
             let sqlx_pool = SqlitePoolOptions::new()
                 .connect_with(opts)
                 .await
-                .map_err(|x| Error {
-                    message: x.to_string(),
-                })?;
+                .map_err(|x| Error { message: x.to_string() })?;
 
             sqlx::migrate!("migrations/sqlite")
                 .run(&sqlx_pool)
                 .await
-                .map_err(|x| Error {
-                    message: x.to_string(),
-                })?;
+                .map_err(|x| Error { message: x.to_string() })?;
             SqlxSqliteConnector::from_sqlx_sqlite_pool(sqlx_pool)
         } else {
-            Database::connect(database_url).await.map_err(|x| Error {
-                message: x.to_string(),
-            })?
+            Database::connect(database_url)
+                .await
+                .map_err(|x| Error { message: x.to_string() })?
         };
         Ok(Self { db })
     }
@@ -53,9 +47,8 @@ impl SeaProcessingStorage {
             processor_name: saved.processor_name,
             item_hash: saved.item_hash,
             item_identity: saved.item_identity,
-            item_content: serde_json::from_value(saved.item_content).map_err(|e| Error {
-                message: e.to_string(),
-            })?,
+            item_content: serde_json::from_value(saved.item_content)
+                .map_err(|e| Error { message: e.to_string() })?,
             rename_times: saved.rename_times,
             status: ProcessingStatus::from(saved.status),
             failure_reason: saved.failure_reason,
@@ -79,13 +72,12 @@ impl SeaProcessingStorage {
 #[allow(dead_code, unused)]
 #[async_trait]
 impl ProcessingStorage for SeaProcessingStorage {
-    async fn save_processing_content(&self, content: &ProcessingContent) -> Result<i64, Error> {
+    async fn save_processing_content(
+        &self,
+        content: &ProcessingContent,
+    ) -> Result<i64, Error> {
         let model = processing_record::ActiveModel {
-            id: if let Some(id) = content.id {
-                Set(id)
-            } else {
-                NotSet
-            },
+            id: if let Some(id) = content.id { Set(id) } else { NotSet },
             processor_name: Set(content.processor_name.to_owned()),
             item_hash: Set(content.item_hash.to_owned()),
             item_identity: Set(content.item_identity.to_owned()),
@@ -100,13 +92,15 @@ impl ProcessingStorage for SeaProcessingStorage {
             .save(&self.db)
             .await
             .map(|x| x.id.unwrap())
-            .map_err(|x| Error {
-                message: x.to_string(),
-            })?;
+            .map_err(|x| Error { message: x.to_string() })?;
         Ok(id)
     }
 
-    async fn processing_content_exists(&self, name: &str, hashing: &str) -> Result<bool, Error> {
+    async fn processing_content_exists(
+        &self,
+        name: &str,
+        hashing: &str,
+    ) -> Result<bool, Error> {
         processing_record::Entity::find()
             .filter(
                 processing_record::Column::ProcessorName
@@ -115,18 +109,14 @@ impl ProcessingStorage for SeaProcessingStorage {
             )
             .exists(&self.db)
             .await
-            .map_err(|x| Error {
-                message: x.to_string(),
-            })
+            .map_err(|x| Error { message: x.to_string() })
     }
 
     async fn delete_processing_content(&self, id: i64) -> Result<(), Error> {
         processing_record::Entity::delete_by_id(id)
             .exec(&self.db)
             .await
-            .map_err(|e| Error {
-                message: e.to_string(),
-            })?;
+            .map_err(|e| Error { message: e.to_string() })?;
         Ok(())
     }
 
@@ -135,16 +125,27 @@ impl ProcessingStorage for SeaProcessingStorage {
         processor_name: &str,
         item_hash: &str,
     ) -> Result<Option<ProcessingContent>, Error> {
-        todo!()
+        processing_record::Entity::find()
+            .filter(
+                processing_record::Column::ProcessorName
+                    .eq(processor_name)
+                    .and(processing_record::Column::ItemHash.eq(item_hash)),
+            )
+            .one(&self.db)
+            .await
+            .map_err(|error| Error { message: error.to_string() })?
+            .map(Self::model_to_content)
+            .transpose()
     }
 
-    async fn find_content_by_id(&self, id: i64) -> Result<Option<ProcessingContent>, Error> {
+    async fn find_content_by_id(
+        &self,
+        id: i64,
+    ) -> Result<Option<ProcessingContent>, Error> {
         let model = processing_record::Entity::find_by_id(id)
             .one(&self.db)
             .await
-            .map_err(|e| Error {
-                message: e.to_string(),
-            })?;
+            .map_err(|e| Error { message: e.to_string() })?;
         match model {
             None => Ok(None),
             Some(model) => Ok(Some(Self::model_to_content(model)?)),
@@ -160,42 +161,49 @@ impl ProcessingStorage for SeaProcessingStorage {
         // 动态条件：processor_name
         if let Some(processor_names) = &query.processor_name {
             db_query = db_query.filter(
-                processing_record::Column::ProcessorName.is_in(processor_names.iter().cloned()),
+                processing_record::Column::ProcessorName
+                    .is_in(processor_names.iter().cloned()),
             );
         }
 
         // 动态条件：item_hash
         if let Some(item_hashes) = &query.item_hash {
-            db_query = db_query
-                .filter(processing_record::Column::ItemHash.is_in(item_hashes.iter().cloned()));
+            db_query = db_query.filter(
+                processing_record::Column::ItemHash.is_in(item_hashes.iter().cloned()),
+            );
         }
 
         // 动态条件：item_identity
         if let Some(item_identities) = &query.item_identity {
             db_query = db_query.filter(
-                processing_record::Column::ItemIdentity.is_in(item_identities.iter().cloned()),
+                processing_record::Column::ItemIdentity
+                    .is_in(item_identities.iter().cloned()),
             );
         }
 
         // 动态条件：status
         if let Some(statuses) = &query.status {
             let status_codes: Vec<i32> = statuses.iter().map(|s| *s as i32).collect();
-            db_query = db_query.filter(processing_record::Column::Status.is_in(status_codes));
+            db_query =
+                db_query.filter(processing_record::Column::Status.is_in(status_codes));
         }
 
         // 动态条件：rename_times_threshold
         if let Some(threshold) = query.rename_times_threshold {
-            db_query = db_query.filter(processing_record::Column::RenameTimes.gte(threshold));
+            db_query =
+                db_query.filter(processing_record::Column::RenameTimes.gte(threshold));
         }
 
         // 动态条件：created_at_start
         if let Some(start_time) = query.created_at_start {
-            db_query = db_query.filter(processing_record::Column::CreatedAt.gte(start_time));
+            db_query =
+                db_query.filter(processing_record::Column::CreatedAt.gte(start_time));
         }
 
         // 动态条件：created_at_end
         if let Some(end_time) = query.created_at_end {
-            db_query = db_query.filter(processing_record::Column::CreatedAt.lte(end_time));
+            db_query =
+                db_query.filter(processing_record::Column::CreatedAt.lte(end_time));
         }
 
         // 动态条件：max_id (用于分页)
@@ -210,17 +218,17 @@ impl ProcessingStorage for SeaProcessingStorage {
             db_query = db_query.limit(limit);
         }
 
-        let models = db_query.all(&self.db).await.map_err(|e| Error {
-            message: e.to_string(),
-        })?;
+        let models =
+            db_query.all(&self.db).await.map_err(|e| Error { message: e.to_string() })?;
 
-        models
-            .into_iter()
-            .map(|model| Self::model_to_content(model))
-            .collect()
+        models.into_iter().map(|model| Self::model_to_content(model)).collect()
     }
 
-    async fn save_file_contents(&self, content_id: i64, files: Vec<u8>) -> Result<(), Error> {
+    async fn save_file_contents(
+        &self,
+        content_id: i64,
+        files: Vec<u8>,
+    ) -> Result<(), Error> {
         let model = item_file_content::ActiveModel {
             id: Set(content_id),
             file_content: Set(files),
@@ -238,23 +246,18 @@ impl ProcessingStorage for SeaProcessingStorage {
             .exec(&self.db)
             .await
             .map(|_| ())
-            .map_err(|e| Error {
-                message: e.to_string(),
-            })
+            .map_err(|e| Error { message: e.to_string() })
     }
 
-    async fn find_file_contents(&self, content_id: i64) -> Result<Option<Vec<u8>>, Error> {
+    async fn find_file_contents(
+        &self,
+        content_id: i64,
+    ) -> Result<Option<Vec<u8>>, Error> {
         let model = item_file_content::Entity::find_by_id(content_id)
             .one(&self.db)
             .await
-            .map_err(|e| Error {
-                message: e.to_string(),
-            })?;
-        if let Some(model) = model {
-            Ok(Some(model.file_content))
-        } else {
-            Ok(None)
-        }
+            .map_err(|e| Error { message: e.to_string() })?;
+        if let Some(model) = model { Ok(Some(model.file_content)) } else { Ok(None) }
     }
 
     async fn find_processor_source_state(
@@ -276,9 +279,7 @@ impl ProcessingStorage for SeaProcessingStorage {
         if entity.is_none() {
             return Ok(None);
         }
-        Ok(Some(Self::model_to_processor_source_state(
-            entity.unwrap(),
-        )?))
+        Ok(Some(Self::model_to_processor_source_state(entity.unwrap())?))
     }
 
     async fn save_processor_source_state(
@@ -286,11 +287,7 @@ impl ProcessingStorage for SeaProcessingStorage {
         state: &ProcessorSourceState,
     ) -> Result<ProcessorSourceState, Error> {
         let model = processor_source_state::ActiveModel {
-            id: if let Some(id) = state.id {
-                Set(id)
-            } else {
-                NotSet
-            },
+            id: if let Some(id) = state.id { Set(id) } else { NotSet },
             processor_name: Set(state.processor_name.to_owned()),
             source_id: Set(state.source_id.to_owned()),
             last_pointer_json: Set(state.last_pointer.clone()),
@@ -303,22 +300,91 @@ impl ProcessingStorage for SeaProcessingStorage {
             .await
             .map(|x| x.try_into_model())
             .flatten()
-            .map_err(|x| Error {
-                message: x.to_string(),
-            })?;
+            .map_err(|x| Error { message: x.to_string() })?;
         Ok(Self::model_to_processor_source_state(saved)?)
     }
 
     async fn save_paths(&self, paths: Vec<ProcessingTargetPath>) -> Result<(), Error> {
-        todo!()
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let now = time::OffsetDateTime::now_utc();
+        let models = paths.into_iter().map(|path| target_path::ActiveModel {
+            id: Set(path.path),
+            processor_name: Set(path.processor_name),
+            item_hash: Set(path.item_hash),
+            created_at: Set(now),
+        });
+        target_path::Entity::insert_many(models)
+            .on_conflict(
+                OnConflict::column(target_path::Column::Id)
+                    .update_columns([
+                        target_path::Column::ProcessorName,
+                        target_path::Column::ItemHash,
+                        target_path::Column::CreatedAt,
+                    ])
+                    .to_owned(),
+            )
+            .exec(&self.db)
+            .await
+            .map_err(|error| Error { message: error.to_string() })?;
+        Ok(())
+    }
+
+    async fn find_paths(
+        &self,
+        paths: &[String],
+    ) -> Result<Vec<ProcessingTargetPath>, Error> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        target_path::Entity::find()
+            .filter(target_path::Column::Id.is_in(paths.iter().cloned()))
+            .all(&self.db)
+            .await
+            .map_err(|error| Error { message: error.to_string() })
+            .map(|models| {
+                models
+                    .into_iter()
+                    .map(|model| ProcessingTargetPath {
+                        path: model.id,
+                        processor_name: model.processor_name,
+                        item_hash: model.item_hash,
+                    })
+                    .collect()
+            })
+    }
+
+    async fn delete_paths(
+        &self,
+        paths: &[String],
+        item_hash: Option<&str>,
+    ) -> Result<(), Error> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let mut condition =
+            Condition::all().add(target_path::Column::Id.is_in(paths.iter().cloned()));
+        if let Some(item_hash) = item_hash {
+            condition = condition.add(target_path::Column::ItemHash.eq(item_hash));
+        }
+        target_path::Entity::delete_many()
+            .filter(condition)
+            .exec(&self.db)
+            .await
+            .map_err(|error| Error { message: error.to_string() })?;
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod test {
     use crate::SeaProcessingStorage;
-    use source_downloader_sdk::storage::{ItemContentLite, ProcessingContent, ProcessingStatus, ProcessingStorage};
     use source_downloader_sdk::SourceItem;
+    use source_downloader_sdk::storage::{
+        ItemContentLite, ProcessingContent, ProcessingStatus, ProcessingStorage,
+        ProcessingTargetPath,
+    };
     use std::collections::HashMap;
     use time::OffsetDateTime;
     use uuid::Uuid;
@@ -358,7 +424,8 @@ mod test {
         let db_url = "sqlite::memory:";
         let s = SeaProcessingStorage::new(db_url).await.unwrap();
 
-        let content = create_test_processing_content("test_processor", ProcessingStatus::Renamed);
+        let content =
+            create_test_processing_content("test_processor", ProcessingStatus::Renamed);
         let id = s.save_processing_content(&content).await.unwrap();
 
         let res = s.find_content_by_id(id).await.unwrap().unwrap();
@@ -374,8 +441,10 @@ mod test {
         let db_url = "sqlite::memory:";
         let s = SeaProcessingStorage::new(db_url).await.unwrap();
 
-        let mut content =
-            create_test_processing_content("test_processor_2", ProcessingStatus::WaitingToRename);
+        let mut content = create_test_processing_content(
+            "test_processor_2",
+            ProcessingStatus::WaitingToRename,
+        );
 
         // 第一次保存获取 ID
         let id = s.save_processing_content(&content).await.unwrap();
@@ -406,6 +475,40 @@ mod test {
         assert!(res.id.is_some());
         assert_eq!(res.failure_reason, Some("Download failed".to_string()));
         assert_eq!(res.status, ProcessingStatus::Failure);
+    }
+    #[tokio::test]
+    async fn test_target_path_lifecycle() {
+        let storage = SeaProcessingStorage::new("sqlite::memory:").await.unwrap();
+        let path = "/target/file.txt".to_owned();
+        storage
+            .save_paths(vec![ProcessingTargetPath {
+                path: path.clone(),
+                processor_name: "processor".to_owned(),
+                item_hash: "first".to_owned(),
+            }])
+            .await
+            .unwrap();
+
+        let saved = storage.find_paths(std::slice::from_ref(&path)).await.unwrap();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].item_hash, "first");
+
+        storage
+            .save_paths(vec![ProcessingTargetPath {
+                path: path.clone(),
+                processor_name: "processor".to_owned(),
+                item_hash: "second".to_owned(),
+            }])
+            .await
+            .unwrap();
+        storage.delete_paths(std::slice::from_ref(&path), Some("first")).await.unwrap();
+        assert_eq!(
+            storage.find_paths(std::slice::from_ref(&path)).await.unwrap()[0].item_hash,
+            "second"
+        );
+
+        storage.delete_paths(std::slice::from_ref(&path), Some("second")).await.unwrap();
+        assert!(storage.find_paths(&[path]).await.unwrap().is_empty());
     }
 }
 
@@ -462,6 +565,24 @@ mod item_file_content {
         #[sea_orm(primary_key)]
         pub id: i64,
         pub file_content: Vec<u8>,
+    }
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+mod target_path {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+
+    #[sea_orm::model]
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+    #[sea_orm(table_name = "target_path")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: String,
+        pub processor_name: String,
+        pub item_hash: String,
+        pub created_at: OffsetDateTime,
     }
 
     impl ActiveModelBehavior for ActiveModel {}

@@ -12,6 +12,7 @@ use std::cmp::PartialEq;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
+use std::fs;
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, OnceLock};
@@ -368,18 +369,93 @@ pub trait ItemFileResolver: SdComponent {
 pub trait FileMover: SdComponent {
     fn move_file(
         &self,
-        source_file: &SourceFile,
-        download_path: &str,
-    ) -> Result<(), ProcessingError>;
-    fn exists(&self, path: &[&PathBuf]) -> Vec<bool>;
-    fn create_directories(&self, path: &str) -> Result<(), ProcessingError>;
-    fn replace(&self, item_content: &ItemContent) -> Result<(), ProcessingError>;
-    fn list_files(&self, path: &str) -> Vec<String>;
-    fn path_metadata(&self, path: &str) -> SourceFile;
+        _source_item: &SourceItem,
+        file: &FileContent,
+    ) -> Result<(), ProcessingError> {
+        fs::rename(&file.file_download_path, file.target_path()).map_err(Into::into)
+    }
+
+    fn exists(&self, paths: &[&PathBuf]) -> Vec<bool> {
+        paths.iter().map(|path| path.exists()).collect()
+    }
+
+    fn create_directories(&self, path: &Path) -> Result<(), ProcessingError> {
+        fs::create_dir_all(path).map_err(Into::into)
+    }
+
+    fn replace(&self, item_content: &ItemContent) -> Result<(), ProcessingError> {
+        for file in item_content.file_contents {
+            let existing_path = file.exist_target_path.as_ref().ok_or_else(|| {
+                ProcessingError::non_retryable("exist_target_path is missing")
+            })?;
+            let mut backup_name = existing_path.as_os_str().to_os_string();
+            backup_name.push(".bak");
+            let backup_path = PathBuf::from(backup_name);
+
+            if existing_path.exists() {
+                fs::rename(existing_path, &backup_path)?;
+            }
+
+            if let Err(error) = fs::rename(&file.file_download_path, file.target_path()) {
+                if backup_path.exists() {
+                    fs::rename(&backup_path, existing_path)?;
+                }
+                return Err(error.into());
+            }
+            if backup_path.exists() {
+                fs::remove_file(&backup_path)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn list_files(&self, path: &Path) -> Result<Vec<PathBuf>, ProcessingError> {
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        fs::read_dir(path)?
+            .map(|entry| entry.map(|value| value.path()).map_err(Into::into))
+            .collect()
+    }
+
+    fn path_metadata(&self, path: &Path) -> Result<SourceFile, ProcessingError> {
+        let metadata = fs::symlink_metadata(path)?;
+        let mut file = SourceFile::new(path.to_path_buf());
+        file.attrs.insert("size".to_owned(), metadata.len().into());
+        file.attrs.insert(
+            "lastModifiedTime".to_owned(),
+            metadata
+                .modified()
+                .ok()
+                .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|value| Value::from(value.as_millis() as u64))
+                .unwrap_or(Value::Null),
+        );
+        file.attrs.insert(
+            "creationTime".to_owned(),
+            metadata
+                .created()
+                .ok()
+                .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|value| Value::from(value.as_millis() as u64))
+                .unwrap_or(Value::Null),
+        );
+        file.attrs.insert(
+            "isSymbolicLink".to_owned(),
+            metadata.file_type().is_symlink().into(),
+        );
+        Ok(file)
+    }
+
     fn is_supported_batch_move(&self) -> bool {
         false
     }
-    fn batch_move(&self, _: &ItemContent) -> Result<(), ProcessingError> {
+
+    fn batch_move(
+        &self,
+        _: &SourceItem,
+        _: &[&FileContent],
+    ) -> Result<(), ProcessingError> {
         Err(ProcessingError::non_retryable("Batch move is not supported"))
     }
 }

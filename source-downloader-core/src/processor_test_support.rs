@@ -473,14 +473,7 @@ pub mod test_support {
         }
         #[async_trait]
         impl FileMover for Component {
-            fn move_file(&self, source_file: &SourceFile,download_path: &str) -> Result<(), ProcessingError>;
             fn exists<'a>(&self, path: &'a [&'a PathBuf]) -> Vec<bool>;
-            fn create_directories(&self, path: &str) -> Result<(), ProcessingError>;
-            fn replace<'a>(&self, item_content: &ItemContent<'a>) -> Result<(), ProcessingError>;
-            fn list_files(&self, path: &str) -> Vec<String>;
-            fn path_metadata(&self, path: &str) -> SourceFile;
-            fn is_supported_batch_move(&self) -> bool;
-            fn batch_move<'a>(&self, item_content: &ItemContent<'a>) -> Result<(), ProcessingError>;
         }
     }
 

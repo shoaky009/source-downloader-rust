@@ -10,7 +10,7 @@ use itertools::Itertools;
 use parking_lot::RwLock;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::FileContentStatus::{
-    FileConflict, Normal, TargetExists, Undetected, VariableError,
+    Downloaded, FileConflict, Normal, TargetExists, Undetected, VariableError,
 };
 use source_downloader_sdk::component::{
     DownloadOptions, DownloadTask, Downloader, FileContentFilter, FileExistsDetector,
@@ -24,7 +24,7 @@ use source_downloader_sdk::component::{ItemFileResolver, ItemPointer, SourcePoin
 use source_downloader_sdk::component::{PatternVariables, VariableProvider};
 use source_downloader_sdk::storage::{
     ItemContentLite, ProcessingContent, ProcessingStatus, ProcessingStorage,
-    ProcessorSourceState,
+    ProcessingTargetPath, ProcessorSourceState,
 };
 use source_downloader_sdk::time::OffsetDateTime;
 use std::any::TypeId;
@@ -593,9 +593,7 @@ trait Process {
             self.do_download(p, source_item, &file_contents, &replace_files).await?;
             let is_sync = !p.downloader.clone().as_async_downloader().is_ok();
             if is_sync {
-                let movement_res = self
-                    .do_movement(p, source_item, &file_contents, &replace_files)
-                    .await;
+                let movement_res = self.do_movement(p, source_item, &file_contents).await;
                 let replacement_res = self
                     .do_replacement(p, source_item, &file_contents, &replace_files)
                     .await;
@@ -632,11 +630,33 @@ trait Process {
 
     async fn do_movement(
         &self,
-        _p: &SourceProcessor,
-        _source_item: &SourceItem,
-        _file_contents: &Vec<FileContent>,
-        _replace_files: &Vec<FileContent>,
+        p: &SourceProcessor,
+        source_item: &SourceItem,
+        file_contents: &[FileContent],
     ) -> Result<(), ProcessingError> {
+        let movable_files: Vec<&FileContent> = file_contents
+            .iter()
+            .filter(|file| {
+                file.status == Normal && file.file_download_path != *file.target_path()
+            })
+            .collect();
+        if movable_files.is_empty() {
+            return Ok(());
+        }
+
+        let mut directories = HashSet::new();
+        for file in &movable_files {
+            if directories.insert(file.target_save_path.as_path()) {
+                p.file_mover.create_directories(&file.target_save_path)?;
+            }
+        }
+
+        if p.file_mover.is_supported_batch_move() {
+            return p.file_mover.batch_move(source_item, &movable_files);
+        }
+        for file in movable_files {
+            p.file_mover.move_file(source_item, file)?;
+        }
         Ok(())
     }
 
@@ -657,11 +677,13 @@ trait Process {
         file_contents: &Vec<FileContent>,
         replace_files: &Vec<FileContent>,
     ) -> Result<(), ProcessingError> {
-        let all_files: Vec<SourceFileRef> = file_contents
+        let downloadable_files: Vec<&FileContent> = file_contents
             .iter()
+            .filter(|file| file.status != TargetExists && file.status != Downloaded)
             .chain(replace_files.iter())
-            .map(Into::into)
-            .collect_vec();
+            .collect();
+        let all_files: Vec<SourceFileRef> =
+            downloadable_files.iter().map(|file| (*file).into()).collect();
 
         let (direct_files, download_files): (Vec<_>, Vec<_>) =
             all_files.into_iter().partition(|f| f.data.is_some());
@@ -711,6 +733,23 @@ trait Process {
             headers,
         };
         p.downloader.submit(&opt).await?;
+        if p.options.save_processing_content {
+            let item_hash = source_item.hashing();
+            let paths = downloadable_files
+                .into_iter()
+                .map(|file| ProcessingTargetPath {
+                    path: file.target_path().to_string_lossy().into_owned(),
+                    processor_name: p.name.clone(),
+                    item_hash: item_hash.clone(),
+                })
+                .collect();
+            p.processing_storage.save_paths(paths).await.map_err(|error| {
+                ProcessingError::non_retryable(format!(
+                    "Failed to save target paths: {}",
+                    error.message
+                ))
+            })?;
+        }
         Ok(())
     }
 
@@ -1274,28 +1313,8 @@ mod test {
     }
 
     impl FileMover for PointerTestComponent {
-        fn move_file(&self, _: &SourceFile, _: &str) -> Result<(), ProcessingError> {
-            Ok(())
-        }
-
         fn exists(&self, paths: &[&PathBuf]) -> Vec<bool> {
             vec![false; paths.len()]
-        }
-
-        fn create_directories(&self, _: &str) -> Result<(), ProcessingError> {
-            Ok(())
-        }
-
-        fn replace(&self, _: &ItemContent<'_>) -> Result<(), ProcessingError> {
-            Ok(())
-        }
-
-        fn list_files(&self, _: &str) -> Vec<String> {
-            Vec::new()
-        }
-
-        fn path_metadata(&self, _: &str) -> SourceFile {
-            SourceFile::new(PathBuf::new())
         }
     }
 
