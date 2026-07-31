@@ -66,6 +66,8 @@ pub struct ProcessorOptionConfig {
     #[serde(skip_serializing_if = "is_default")]
     pub variable_providers: Vec<String>,
     #[serde(skip_serializing_if = "is_default")]
+    pub variable_replacers: Vec<VariableReplacerConfig>,
+    #[serde(skip_serializing_if = "is_default")]
     pub item_filters: Vec<String>,
     #[serde(skip_serializing_if = "is_default")]
     pub item_content_filters: Vec<String>,
@@ -163,6 +165,41 @@ impl Default for ListenerMode {
     }
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub struct VariableReplacerConfig {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keys: Option<HashSet<String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum VariableReplacerConfigWire {
+    Simple(String),
+    Full {
+        id: String,
+        #[serde(default)]
+        keys: Option<HashSet<String>>,
+    },
+}
+
+impl<'de> Deserialize<'de> for VariableReplacerConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match VariableReplacerConfigWire::deserialize(deserializer)? {
+            VariableReplacerConfigWire::Simple(id) => {
+                Ok(VariableReplacerConfig { id, keys: None })
+            }
+            VariableReplacerConfigWire::Full { id, keys } => {
+                Ok(VariableReplacerConfig { id, keys })
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ListenerConfig {
     pub id: String,
@@ -238,6 +275,7 @@ impl Default for ProcessorOptionConfig {
             save_path_pattern: "".to_string(),
             filename_pattern: "".to_string(),
             variable_providers: vec![],
+            variable_replacers: vec![],
             item_filters: vec![],
             item_content_filters: vec![],
             item_expression_exclusions: vec![],
@@ -577,6 +615,7 @@ mod test {
     use crate::process::file::VariableErrorStrategy;
     use source_downloader_sdk::component::ComponentRootType;
     use source_downloader_sdk::serde_json::Map;
+    use std::collections::HashSet;
     use std::fs;
     use std::path::Path;
     use tempfile::NamedTempFile;
@@ -706,6 +745,31 @@ mod test {
         let s = serde_json::to_string(&c).unwrap();
         assert!(!s.contains("\"rename-task-interval\":\"5m\""));
         assert!(s.contains("\"fetch-limit\":51"));
+    }
+
+    #[test]
+    fn variable_replacers_accept_kotlin_config_forms() {
+        let config = serde_json::from_str::<ProcessorOptionConfig>(
+            r#"{
+                "variable-replacers": [
+                    "replace-all",
+                    {
+                        "id": "replace-selected",
+                        "keys": ["item.title", "file.name"]
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(2, config.variable_replacers.len());
+        assert_eq!("replace-all", config.variable_replacers[0].id);
+        assert_eq!(None, config.variable_replacers[0].keys);
+        assert_eq!("replace-selected", config.variable_replacers[1].id);
+        assert_eq!(
+            HashSet::from(["item.title".to_owned(), "file.name".to_owned()]),
+            config.variable_replacers[1].keys.clone().unwrap()
+        );
     }
 
     #[test]

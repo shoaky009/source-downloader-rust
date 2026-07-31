@@ -512,12 +512,14 @@ impl Renamer {
             vars.insert(k.clone(), Value::String(v.clone()));
         }
 
+        let file_attrs = self.apply_replacers_to_attrs(&file.source_file.attrs);
+
         // 构建 file 对象变量
         let file_obj = json!({
             "name": self.apply_replacers("file.name", file.file_download_path().file_stem().unwrap().to_string_lossy().into_owned()),
-            "attrs": file.source_file.attrs,
+            "attrs": file_attrs,
             "tags": file.source_file.tags,
-            "vars": file_pattern_vars,
+            "vars": file.variables,
             "originalLayout": file.get_path_original_layout().into_iter()
                 .map(|s| self.apply_replacers("file.originalLayout", s))
                 .collect::<Vec<_>>()
@@ -552,6 +554,19 @@ impl Renamer {
         map.iter().map(|(k, v)| (k.clone(), self.apply_replacers(k, v.clone()))).collect()
     }
 
+    fn apply_replacers_to_attrs(&self, attrs: &Map<String, Value>) -> Map<String, Value> {
+        attrs
+            .iter()
+            .map(|(key, value)| {
+                let value = match value {
+                    Value::String(value) => value.clone(),
+                    value => value.to_string(),
+                };
+                (key.clone(), Value::String(self.apply_replacers(key, value)))
+            })
+            .collect()
+    }
+
     pub fn item_rename_variables(
         &self,
         item: &SourceItem,
@@ -563,14 +578,15 @@ impl Renamer {
             .map(|(name, value)| (name.clone(), Value::String(value.clone())))
             .collect();
         variables.insert("vars".to_owned(), json!(replaced_item_variables));
+        let item_attrs = self.apply_replacers_to_attrs(&item.attrs);
         let item_variables = json!({
             "title": self.apply_replacers("item.title", item.title.clone()),
             "datetime": item.datetime,
-            "date": item.datetime.date(),
-            "year": item.datetime.year(),
-            "month": item.datetime.month() as u8,
-            "contentType": item.content_type,
-            "attrs": item.attrs,
+            "date": self.apply_replacers("item.date", item.datetime.date().to_string()),
+            "year": self.apply_replacers("item.year", item.datetime.year().to_string()),
+            "month": self.apply_replacers("item.month", item.datetime.month().to_string()),
+            "contentType": self.apply_replacers("item.contentType", item.content_type.clone()),
+            "attrs": item_attrs,
         });
         variables.insert("item".to_owned(), item_variables);
 
@@ -588,8 +604,25 @@ mod tests {
     use super::*;
     use crate::process::file::VariableErrorStrategy::Pattern;
     use maplit::hashmap;
+    use std::fmt::{Display, Formatter};
     use std::str::FromStr;
     use std::sync::LazyLock;
+
+    #[derive(Debug, source_downloader_sdk::SdComponent)]
+    #[component(VariableReplacer)]
+    struct KeyEchoReplacer;
+
+    impl VariableReplacer for KeyEchoReplacer {
+        fn replace(&self, key: &str, value: String) -> String {
+            format!("{key}={value}")
+        }
+    }
+
+    impl Display for KeyEchoReplacer {
+        fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("key-echo")
+        }
+    }
 
     static DEFAULT_RENAMER: LazyLock<Renamer> = LazyLock::new(|| Renamer::default());
     static SOURCE_SAVE_PATH: LazyLock<&Path> =
@@ -619,6 +652,76 @@ mod tests {
                 source_file: SOURCE_FILE.clone(),
             }
         }
+    }
+
+    #[test]
+    fn variable_replacers_cover_kotlin_rename_inputs() {
+        let renamer = Renamer {
+            variable_replacers: vec![Arc::new(KeyEchoReplacer)],
+            ..DEFAULT_RENAMER.clone()
+        };
+        let mut item = SourceItem::default();
+        item.title = "Example".to_owned();
+        item.content_type = "video".to_owned();
+        item.attrs.insert("score".to_owned(), json!(10));
+        let expected_date = item.datetime.date().to_string();
+        let expected_year = item.datetime.year().to_string();
+        let expected_month = item.datetime.month().to_string();
+        let item_pattern_vars = hashmap! {
+            "series".to_owned() => "Show".to_owned(),
+        };
+
+        let item_variables = renamer.item_rename_variables(&item, &item_pattern_vars);
+        assert_eq!(json!("series=Show"), item_variables.variables["series"]);
+        assert_eq!(json!("series=Show"), item_variables.variables["vars"]["series"]);
+        assert_eq!(
+            json!("item.title=Example"),
+            item_variables.variables["item"]["title"]
+        );
+        assert_eq!(
+            json!(format!("item.date={expected_date}")),
+            item_variables.variables["item"]["date"]
+        );
+        assert_eq!(
+            json!(format!("item.year={expected_year}")),
+            item_variables.variables["item"]["year"]
+        );
+        assert_eq!(
+            json!(format!("item.month={expected_month}")),
+            item_variables.variables["item"]["month"]
+        );
+        assert_eq!(
+            json!("item.contentType=video"),
+            item_variables.variables["item"]["contentType"]
+        );
+        assert_eq!(json!("score=10"), item_variables.variables["item"]["attrs"]["score"]);
+
+        let file_pattern_vars = hashmap! {
+            "episode".to_owned() => "01".to_owned(),
+        };
+        let raw = RawFileContent {
+            variables: &file_pattern_vars,
+            source_file: SourceFile {
+                path: PathBuf::from("show/season/episode.mkv"),
+                attrs: Map::from_iter([("height".to_owned(), json!(1080))]),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let file_variables =
+            renamer.file_rename_variables(&item, &raw, &RenameVariables::default());
+        assert_eq!(json!("episode=01"), file_variables.variables["episode"]);
+        assert_eq!(json!("01"), file_variables.variables["file"]["vars"]["episode"]);
+        assert_eq!(json!("file.name=episode"), file_variables.variables["file"]["name"]);
+        assert_eq!(
+            json!("height=1080"),
+            file_variables.variables["file"]["attrs"]["height"]
+        );
+        assert_eq!(
+            json!("file.originalLayout=season"),
+            file_variables.variables["file"]["originalLayout"]
+        );
     }
 
     #[test]

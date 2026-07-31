@@ -18,10 +18,11 @@ use parking_lot::RwLock;
 use source_downloader_sdk::component::{
     ComponentError, ComponentId, ComponentRootType, FileContentFilter, FileTagger,
     ItemContentFilter, ProcessListener, SdComponent, SourceFileFilter, SourceItemFilter,
-    VariableProvider,
+    VariableProvider, VariableReplacer,
 };
 use source_downloader_sdk::storage::ProcessingStorage;
 use std::collections::{HashMap, HashSet};
+use std::fmt::{Display, Formatter};
 use std::ops::Not;
 use std::path::Path;
 use std::string::ToString;
@@ -32,6 +33,29 @@ pub struct ProcessorManager {
     component_manager: Arc<ComponentManager>,
     processing_storage: Arc<dyn ProcessingStorage>,
     processor_wrappers: RwLock<HashMap<String, Arc<ProcessorWrapper>>>,
+}
+
+#[derive(Debug, source_downloader_sdk::SdComponent)]
+#[component(VariableReplacer)]
+struct KeyFilterVariableReplacer {
+    replacer: Arc<dyn VariableReplacer>,
+    keys: Option<HashSet<String>>,
+}
+
+impl VariableReplacer for KeyFilterVariableReplacer {
+    fn replace(&self, key: &str, value: String) -> String {
+        if self.keys.as_ref().is_none_or(|keys| keys.contains(key)) {
+            self.replacer.replace(key, value)
+        } else {
+            value
+        }
+    }
+}
+
+impl Display for KeyFilterVariableReplacer {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "key-filter({})", self.replacer)
+    }
 }
 
 impl ProcessorManager {
@@ -153,10 +177,7 @@ impl ProcessorManager {
             self.processing_storage.to_owned(),
             config.category.to_owned(),
             config.tags.to_owned(),
-            Renamer {
-                variable_error_strategy: config.options.variable_error_strategy,
-                ..Renamer::default()
-            },
+            self.create_renamer(config)?,
             self.create_options(&config, task_group)?,
         ));
         let instance_id = processor.instance_id();
@@ -169,6 +190,31 @@ impl ProcessorManager {
         self.processor_wrappers.write().insert(config.name.to_owned(), wrapper.clone());
         info!("Processor[created] {}({:?})", config.name, instance_id);
         Ok(wrapper)
+    }
+
+    fn create_renamer(
+        &self,
+        config: &ProcessorConfig,
+    ) -> Result<Renamer, ComponentError> {
+        let mut variable_replacers: Vec<Arc<dyn VariableReplacer>> =
+            Vec::with_capacity(config.options.variable_replacers.len());
+        for replacer_config in &config.options.variable_replacers {
+            let component_id = ComponentRootType::VariableReplacer
+                .parse_component_id(&replacer_config.id);
+            let replacer = self
+                .get_component_for_processor(&component_id, &config.name)?
+                .as_variable_replacer()?;
+            variable_replacers.push(Arc::new(KeyFilterVariableReplacer {
+                replacer,
+                keys: replacer_config.keys.clone(),
+            }));
+        }
+
+        Ok(Renamer {
+            variable_error_strategy: config.options.variable_error_strategy,
+            variable_replacers,
+            ..Renamer::default()
+        })
     }
 
     fn create_options(
@@ -626,7 +672,8 @@ mod test {
     use crate::component_manager::ComponentManager;
     use crate::components::get_build_in_component_supplier;
     use crate::config::{
-        FileRuleConfig, ProcessorConfig, ProcessorOptionConfig, YamlConfigOperator,
+        FileRuleConfig, ProcessorConfig, ProcessorOptionConfig, VariableReplacerConfig,
+        YamlConfigOperator,
     };
     use crate::processor_manager::ProcessorManager;
     use source_downloader_sdk::component::ComponentRootType;
@@ -826,6 +873,59 @@ mod test {
         assert_eq!(
             strategy.filename_pattern.as_ref().map(|pattern| pattern.pattern.as_str()),
             Some("{title} - {episode}")
+        );
+    }
+
+    #[test]
+    fn variable_replacer_components_are_resolved_and_key_filtered() {
+        use source_downloader_sdk::SourceItem;
+        use std::collections::HashMap;
+
+        let component_manager = Arc::new(ComponentManager::new(Arc::new(
+            YamlConfigOperator::new("./tests/resources/config.yaml"),
+        )));
+        component_manager.register_suppliers(get_build_in_component_supplier()).unwrap();
+        let manager = ProcessorManager::new(
+            component_manager.clone(),
+            Arc::new(MemoryProcessingStorage::new()),
+        );
+        let name = "variable-replacer-wiring";
+        let config = ProcessorConfig {
+            name: name.to_owned(),
+            enabled: true,
+            save_path: String::new(),
+            triggers: Vec::new(),
+            source: String::new(),
+            item_file_resolver: String::new(),
+            downloader: String::new(),
+            file_mover: String::new(),
+            options: ProcessorOptionConfig {
+                variable_replacers: vec![VariableReplacerConfig {
+                    id: "windows-path".to_owned(),
+                    keys: Some(HashSet::from(["item.title".to_owned()])),
+                }],
+                ..Default::default()
+            },
+            category: None,
+            tags: HashSet::new(),
+        };
+
+        let renamer = manager.create_renamer(&config).unwrap();
+        let mut item = SourceItem::default();
+        item.title = "series:01".to_owned();
+        item.content_type = "video/mp4".to_owned();
+        let variables = renamer.item_rename_variables(&item, &HashMap::new());
+
+        assert_eq!("series：01", variables.variables["item"]["title"]);
+        assert_eq!("video/mp4", variables.variables["item"]["contentType"]);
+        let component_id =
+            ComponentRootType::VariableReplacer.parse_component_id("windows-path");
+        assert!(
+            component_manager
+                .get_component(&component_id)
+                .unwrap()
+                .get_refs()
+                .contains(name)
         );
     }
 }

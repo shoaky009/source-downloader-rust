@@ -74,10 +74,11 @@ Rules:
   - Stop constructing every processor with an opaque `Renamer::default()`.
   - Suggested commit: `feat: configure variable error strategy`
 
-- [ ] **Wire `VariableReplacer` components into Renamer**
+- [x] **Wire `VariableReplacer` components into Renamer**
   - SDK already has `ComponentRootType::VariableReplacer`, `as_variable_replacer()`, and `VariableReplacer`.
   - Add config, ProcessorManager resolution, and Renamer construction.
   - Apply replacers consistently to Item fields, attrs, provider variables, file attrs, and path layout values as Kotlin does.
+  - Rust had no `VariableReplacer` implementation, so add Kotlin-equivalent `full-width`, `regex`, and `windows-path` built-ins.
   - Suggested commit: `feat: wire variable replacers into renamer`
 
 - [ ] **Configure Trimmer components and path-name length**
