@@ -191,7 +191,7 @@ impl ProcessingStorage for SeaProcessingStorage {
         // 动态条件：rename_times_threshold
         if let Some(threshold) = query.rename_times_threshold {
             db_query =
-                db_query.filter(processing_record::Column::RenameTimes.gte(threshold));
+                db_query.filter(processing_record::Column::RenameTimes.lt(threshold));
         }
 
         // 动态条件：created_at_start

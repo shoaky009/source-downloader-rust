@@ -822,7 +822,7 @@ pub struct InProcessingItem<'a> {
     pub file_contents: &'a Vec<FileContent>,
     pub rename_times: &'a u32,
     pub status: &'a ProcessingStatus,
-    pub failure_reason: &'a Option<&'a str>,
+    pub failure_reason: Option<&'a str>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
