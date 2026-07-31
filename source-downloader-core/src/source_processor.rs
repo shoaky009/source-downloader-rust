@@ -6,7 +6,7 @@ use crate::process::rule::{FileRule, ItemRule, ItemStrategy};
 use crate::process::variable::VariableAggregation;
 use async_trait::async_trait;
 use backon::Retryable;
-use backon::{BackoffBuilder, ExponentialBuilder};
+use backon::{BackoffBuilder, ConstantBuilder};
 use futures_util::stream::{FuturesOrdered, StreamExt};
 use humantime::format_duration;
 use itertools::Itertools;
@@ -117,6 +117,8 @@ pub struct ProcessorOptions {
     pub rename_task_interval: Duration,
     pub rename_times_threshold: u32,
     pub parallelism: u32,
+    pub retry_attempts: usize,
+    pub retry_backoff: Duration,
     // ok
     pub task_group: Option<String>,
     // ok
@@ -720,6 +722,8 @@ impl SourceProcessor {
     pub async fn apply_retry<T, Fut, F>(
         mut f: F,
         stage: &str,
+        retry_attempts: usize,
+        retry_backoff: Duration,
     ) -> Result<T, ProcessingError>
     where
         F: FnMut() -> Fut,
@@ -727,9 +731,9 @@ impl SourceProcessor {
     {
         (|| f())
             .retry(
-                ExponentialBuilder::default()
-                    .with_max_times(3)
-                    .with_max_delay(Duration::from_secs(10))
+                ConstantBuilder::default()
+                    .with_max_times(retry_attempts)
+                    .with_delay(retry_backoff)
                     .build(),
             )
             .when(|e| matches!(e, ProcessingError::Retryable { .. }))
@@ -775,6 +779,8 @@ trait Process {
                     .await
             },
             "fetch-source-items",
+            processor.options.retry_attempts,
+            processor.options.retry_backoff,
         )
         .await
     }
@@ -1336,6 +1342,8 @@ trait Process {
                     .await
             },
             "process-item",
+            p.options.retry_attempts,
+            p.options.retry_backoff,
         )
         .await;
         if result.is_err() {
@@ -2874,6 +2882,8 @@ mod test {
                 ),
                 save_processing_content: false,
                 rename_task_interval: Duration::from_secs(300),
+                retry_attempts: 3,
+                retry_backoff: Duration::ZERO,
                 rename_times_threshold: 3,
                 parallelism: settings.parallelism,
                 task_group: None,
@@ -3263,6 +3273,24 @@ mod test {
         assert_eq!(retryable_failures.load(AtomicOrdering::Acquire), 0);
         assert_eq!(submit_count.load(AtomicOrdering::Acquire), 2);
         assert_eq!(storage.saved_pointers(), vec![json!(1)]);
+    }
+
+    #[tokio::test]
+    async fn apply_retry_honors_configured_attempts() {
+        let attempts = AtomicUsize::new(0);
+        let result = SourceProcessor::apply_retry(
+            || {
+                attempts.fetch_add(1, AtomicOrdering::Relaxed);
+                async { Err::<(), _>(ProcessingError::retryable("retry")) }
+            },
+            "test",
+            2,
+            Duration::ZERO,
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(3, attempts.load(AtomicOrdering::Relaxed));
     }
 
     #[tokio::test]

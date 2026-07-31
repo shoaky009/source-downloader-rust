@@ -111,6 +111,10 @@ pub struct ProcessorOptionConfig {
     pub rename_times_threshold: u32,
     #[serde(skip_serializing_if = "is_parallelism_default")]
     pub parallelism: u32,
+    #[serde(skip_serializing_if = "is_retry_attempts_default")]
+    pub retry_attempts: usize,
+    #[serde(skip_serializing_if = "is_retry_backoff_default")]
+    pub retry_backoff: String,
     #[serde(skip_serializing_if = "is_default")]
     pub task_group: Option<String>,
     #[serde(skip_serializing_if = "is_fetch_limit_default")]
@@ -291,6 +295,14 @@ fn is_parallelism_default(value: &u32) -> bool {
     *value == ProcessorOptionConfig::default().parallelism
 }
 
+fn is_retry_attempts_default(value: &usize) -> bool {
+    *value == ProcessorOptionConfig::default().retry_attempts
+}
+
+fn is_retry_backoff_default(value: &String) -> bool {
+    *value == ProcessorOptionConfig::default().retry_backoff
+}
+
 fn is_fetch_limit_default(value: &u32) -> bool {
     *value == ProcessorOptionConfig::default().fetch_limit
 }
@@ -332,6 +344,8 @@ impl Default for ProcessorOptionConfig {
             rename_task_interval: "5m".to_string(),
             rename_times_threshold: 3,
             parallelism: 1,
+            retry_attempts: 3,
+            retry_backoff: "5s".to_owned(),
             task_group: None,
             fetch_limit: 50,
             pointer_batch_mode: true,
@@ -782,6 +796,20 @@ mod test {
         let s = serde_json::to_string(&c).unwrap();
         assert!(!s.contains("\"rename-task-interval\":\"5m\""));
         assert!(s.contains("\"fetch-limit\":51"));
+    }
+
+    #[test]
+    fn retry_policy_matches_kotlin_defaults_and_config() {
+        let defaults = ProcessorOptionConfig::default();
+        assert_eq!(3, defaults.retry_attempts);
+        assert_eq!("5s", defaults.retry_backoff);
+
+        let config = serde_json::from_str::<ProcessorOptionConfig>(
+            r#"{"retry-attempts": 7, "retry-backoff": "250ms"}"#,
+        )
+        .unwrap();
+        assert_eq!(7, config.retry_attempts);
+        assert_eq!("250ms", config.retry_backoff);
     }
 
     #[test]

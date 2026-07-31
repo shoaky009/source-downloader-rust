@@ -96,7 +96,7 @@ Rules:
 
 ### Runtime options and lifecycle
 
-- [ ] **Configure retry policy**
+- [x] **Configure retry policy**
   - Rust currently hard-codes three exponential retries with a ten-second maximum delay.
   - Add explicit retry attempts and backoff configuration without duplicating retry logic at call sites.
   - Suggested commit: `feat: configure processor retry policy`

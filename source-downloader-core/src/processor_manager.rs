@@ -431,6 +431,9 @@ impl ProcessorManager {
             .map_err(|e| e.to_string())?,
             rename_times_threshold: config.options.rename_times_threshold,
             parallelism: config.options.parallelism,
+            retry_attempts: config.options.retry_attempts,
+            retry_backoff: humantime::parse_duration(&config.options.retry_backoff)
+                .map_err(|error| error.to_string())?,
             task_group: Some(group),
             fetch_limit: config.options.fetch_limit,
             item_error_continue: config.options.item_error_continue,
