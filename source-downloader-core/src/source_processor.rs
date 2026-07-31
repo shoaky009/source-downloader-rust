@@ -236,7 +236,13 @@ struct ItemProcessRuntime {
     processed_count: AtomicU32,
     filter_count: AtomicU32,
     reserved_target_paths: RwLock<HashMap<PathBuf, String>>,
-    cancel_items: Vec<SourceItem>,
+    in_flight_items: RwLock<HashMap<String, InFlightItem>>,
+    cancelled_items: RwLock<HashSet<String>>,
+}
+
+struct InFlightItem {
+    content: ProcessingContent,
+    files: Vec<FileContent>,
 }
 
 struct ProcessCoordinator {
@@ -292,6 +298,53 @@ impl ItemProcessRuntime {
 
     fn release_target_paths(&self, item_hash: &str) {
         self.reserved_target_paths.write().retain(|_, owner| owner != item_hash);
+    }
+
+    fn register_in_flight(
+        &self,
+        processor: &SourceProcessor,
+        source_item: &SourceItem,
+        item_variables: &PatternVariables,
+        files: &[FileContent],
+    ) {
+        let item_hash = source_item.hashing();
+        self.in_flight_items.write().insert(
+            item_hash.clone(),
+            InFlightItem {
+                content: ProcessingContent {
+                    id: None,
+                    processor_name: processor.name.clone(),
+                    item_hash,
+                    item_identity: source_item.identity.clone(),
+                    item_content: ItemContentLite {
+                        source_item: source_item.clone(),
+                        item_variables: item_variables.clone(),
+                    },
+                    rename_times: 0,
+                    status: ProcessingStatus::WaitingToRename,
+                    failure_reason: None,
+                    created_at: OffsetDateTime::now_utc(),
+                    updated_at: None,
+                },
+                files: files.to_vec(),
+            },
+        );
+    }
+
+    fn begin_cancel(&self, item_hash: &str) -> bool {
+        self.cancelled_items.write().insert(item_hash.to_owned())
+    }
+
+    fn undo_cancel(&self, item_hash: &str) {
+        self.cancelled_items.write().remove(item_hash);
+    }
+
+    fn complete_cancel(&self, item_hash: &str) {
+        self.release_target_paths(item_hash);
+    }
+
+    fn is_cancelled(&self, item_hash: &str) -> bool {
+        self.cancelled_items.read().contains(item_hash)
     }
 
     fn processed_inc(&self) {
@@ -705,6 +758,10 @@ trait Process {
         p: &'a SourceProcessor,
     ) -> &'a Vec<Arc<dyn SourceItemFilter>>;
 
+    fn allows_in_flight_cancellation(&self) -> bool {
+        true
+    }
+
     async fn fetch_items(
         &self,
         processor: &SourceProcessor,
@@ -862,13 +919,17 @@ trait Process {
                     files,
                     item_variables,
                     rename_times,
-                    status,
+                    mut status,
                     failure_reason,
                 } => {
+                    let item_hash = source_item.hashing();
+                    if item_runtime.is_cancelled(&item_hash) {
+                        status = ProcessingStatus::Cancelled;
+                    }
                     let content = ProcessingContent {
                         id: None,
                         processor_name: p.name.clone(),
-                        item_hash: source_item.hashing(),
+                        item_hash,
                         item_identity: source_item.identity.clone(),
                         item_content: ItemContentLite { source_item, item_variables },
                         rename_times,
@@ -939,6 +1000,11 @@ trait Process {
             }
         }
         drop(item_results);
+        for (content, _) in &mut p_rt.coordinator.listener_context.contents {
+            if item_runtime.is_cancelled(&content.item_hash) {
+                content.status = ProcessingStatus::Cancelled;
+            }
+        }
         self.on_process_complete(p, &p_rt).await?;
         p_rt.process_end_at = Some(Instant::now());
         info!("[run-done] {} {}", p.name, p_rt.summary());
@@ -988,7 +1054,8 @@ trait Process {
                 processed_count: AtomicU32::new(0),
                 filter_count: AtomicU32::new(0),
                 reserved_target_paths: RwLock::new(HashMap::new()),
-                cancel_items: vec![],
+                in_flight_items: RwLock::new(HashMap::new()),
+                cancelled_items: RwLock::new(HashSet::new()),
             },
             coordinator: ProcessCoordinator {
                 source_state,
@@ -1122,6 +1189,119 @@ trait Process {
         Ok(replacement_count)
     }
 
+    async fn identify_in_flight_replacements(
+        &self,
+        processor: &SourceProcessor,
+        runtime: &ItemProcessRuntime,
+        source_item: &SourceItem,
+        files: &mut [FileContent],
+    ) -> Result<usize, ProcessingError> {
+        let current_hash = source_item.hashing();
+        let mut cancellations: HashMap<String, (SourceItem, Vec<SourceFile>)> =
+            HashMap::new();
+        let mut replacement_count = 0;
+        {
+            let reserved_paths = runtime.reserved_target_paths.read();
+            let in_flight_items = runtime.in_flight_items.read();
+            for file in files.iter_mut() {
+                let target_path = file.target_path().clone();
+                let Some(owner_hash) = reserved_paths.get(&target_path) else {
+                    continue;
+                };
+                if owner_hash == &current_hash {
+                    continue;
+                }
+                let Some(before) = in_flight_items.get(owner_hash) else {
+                    continue;
+                };
+                let Some(existing_content) = before
+                    .files
+                    .iter()
+                    .find(|candidate| candidate.target_path() == &target_path)
+                else {
+                    continue;
+                };
+                let existing_file = SourceFile {
+                    path: existing_content.file_download_path.clone(),
+                    attrs: existing_content.attrs.clone(),
+                    download_uri: existing_content.file_uri.clone(),
+                    tags: existing_content.tags.clone(),
+                    data: existing_content.data.clone(),
+                };
+                let before_view = InProcessingItem {
+                    id: &before.content.id,
+                    processor_name: &before.content.processor_name,
+                    item_hash: &before.content.item_hash,
+                    item_identity: &before.content.item_identity,
+                    source_item: &before.content.item_content.source_item,
+                    item_variables: &before.content.item_content.item_variables,
+                    file_contents: &before.files,
+                    rename_times: &before.content.rename_times,
+                    status: &before.content.status,
+                    failure_reason: before.content.failure_reason.as_deref(),
+                };
+                if processor.options.file_replacement_decider.should_replace(
+                    source_item,
+                    file,
+                    Some(&before_view),
+                    &existing_file,
+                ) {
+                    file.status = ReadyReplace;
+                    replacement_count += 1;
+                    cancellations
+                        .entry(owner_hash.clone())
+                        .or_insert_with(|| {
+                            (before.content.item_content.source_item.clone(), Vec::new())
+                        })
+                        .1
+                        .push(existing_file);
+                }
+            }
+        }
+
+        for (item_hash, (item, files)) in cancellations {
+            if !runtime.begin_cancel(&item_hash) {
+                continue;
+            }
+            info!("[item-cancel-for-replacement] {}", item);
+            if let Err(error) = processor.downloader.cancel(&item, &files).await {
+                runtime.undo_cancel(&item_hash);
+                return Err(error);
+            }
+            runtime.complete_cancel(&item_hash);
+            if processor.options.save_processing_content {
+                match processor
+                    .processing_storage
+                    .find_by_name_and_hash(&processor.name, &item_hash)
+                    .await
+                {
+                    Ok(Some(mut content)) => {
+                        content.status = ProcessingStatus::Cancelled;
+                        content.updated_at = Some(OffsetDateTime::now_utc());
+                        if let Err(error) = processor
+                            .processing_storage
+                            .save_processing_content(&content)
+                            .await
+                        {
+                            warn!(
+                                "[item-cancel-status-save-error] {} {}",
+                                item, error.message
+                            );
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        warn!(
+                            "[item-cancel-status-load-error] {} {}",
+                            item, error.message
+                        );
+                    }
+                }
+            }
+        }
+        Ok(replacement_count)
+    }
+
     async fn process_item(
         &self,
         source_item: &SourceItem,
@@ -1225,9 +1405,19 @@ trait Process {
         let (should_download, mut content_status) = {
             let _guard = rt.mutex.lock().await;
             self.update_file_content_status(p, source_item, &mut file_contents).await;
+            self.identify_files_to_replace(p, source_item, &mut file_contents).await?;
+            if self.allows_in_flight_cancellation() && p.async_downloader.is_some() {
+                self.identify_in_flight_replacements(
+                    p,
+                    rt,
+                    source_item,
+                    &mut file_contents,
+                )
+                .await?;
+            }
             let has_reserved_target_conflict =
                 rt.reserve_target_paths(item_hash, &mut file_contents);
-            self.identify_files_to_replace(p, source_item, &mut file_contents).await?;
+            rt.register_in_flight(p, source_item, &item_variables, &file_contents);
             self.probe_content_status(
                 p,
                 rt,
@@ -1257,6 +1447,10 @@ trait Process {
                     content_status = ProcessingStatus::Failure;
                 }
             }
+        }
+
+        if rt.is_cancelled(item_hash) {
+            content_status = ProcessingStatus::Cancelled;
         }
 
         Ok(ItemAction::Success {
@@ -1526,7 +1720,7 @@ trait Process {
         if files.iter().any(|file| file.status == ReadyReplace) {
             return (true, ProcessingStatus::WaitingToRename);
         };
-        if rt.cancel_items.contains(source_item) {
+        if rt.is_cancelled(&source_item.hashing()) {
             return (false, ProcessingStatus::Cancelled);
         }
         // 预防这一批次的Item有相同的目标，并且是AsyncDownloader的情况下会重复下载
@@ -1906,6 +2100,10 @@ impl Process for DryRunProcess {
         &self.item_filters
     }
 
+    fn allows_in_flight_cancellation(&self) -> bool {
+        false
+    }
+
     async fn on_process_complete(
         &self,
         _: &SourceProcessor,
@@ -2167,6 +2365,13 @@ mod test {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct ReplacementProbe {
+        first_submitted: tokio::sync::Notify,
+        first_cancelled: tokio::sync::Notify,
+        cancelled_items: ParkingMutex<Vec<String>>,
+    }
+
     #[derive(Debug)]
     struct PointerTestComponent {
         item_count: usize,
@@ -2178,6 +2383,7 @@ mod test {
         skippable_download_item: Option<usize>,
         retryable_submit_failures: Option<Arc<AtomicUsize>>,
         submit_probe: Option<Arc<ParallelismProbe>>,
+        replacement_probe: Option<Arc<ReplacementProbe>>,
     }
 
     impl Display for PointerTestComponent {
@@ -2241,6 +2447,11 @@ mod test {
             if let Some(probe) = &self.probe {
                 probe.record(sequence).await;
             }
+            if sequence == 2
+                && let Some(probe) = &self.replacement_probe
+            {
+                probe.first_submitted.notified().await;
+            }
             if self.invalid_item == Some(sequence) {
                 let path = PathBuf::from(format!("{sequence}.txt"));
                 return vec![SourceFile::new(path.clone()), SourceFile::new(path)];
@@ -2281,6 +2492,12 @@ mod test {
             if let Some(probe) = &self.submit_probe {
                 probe.record(sequence).await;
             }
+            if sequence == 1
+                && let Some(probe) = &self.replacement_probe
+            {
+                probe.first_submitted.notify_one();
+                probe.first_cancelled.notified().await;
+            }
             if self.skippable_download_item == Some(sequence) {
                 return Err(ProcessingError::skip("skippable test error"));
             }
@@ -2293,9 +2510,13 @@ mod test {
 
         async fn cancel(
             &self,
-            _: &SourceItem,
+            item: &SourceItem,
             _: &[SourceFile],
         ) -> Result<(), ProcessingError> {
+            if let Some(probe) = &self.replacement_probe {
+                probe.cancelled_items.lock().push(item.title.clone());
+                probe.first_cancelled.notify_one();
+            }
             Ok(())
         }
     }
@@ -2327,6 +2548,29 @@ mod test {
     impl SourceItemFilter for RejectAllItems {
         async fn filter(&self, _: &SourceItem) -> bool {
             false
+        }
+    }
+
+    #[derive(Debug)]
+    struct ReplaceInFlight;
+
+    impl Display for ReplaceInFlight {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "replace-in-flight")
+        }
+    }
+
+    impl source_downloader_sdk::component::SdComponent for ReplaceInFlight {}
+
+    impl FileReplacementDecider for ReplaceInFlight {
+        fn should_replace(
+            &self,
+            _: &SourceItem,
+            _: &FileContent,
+            before: Option<&InProcessingItem>,
+            _: &SourceFile,
+        ) -> bool {
+            before.is_some()
         }
     }
 
@@ -2522,6 +2766,7 @@ mod test {
         retryable_submit_failures: Option<Arc<AtomicUsize>>,
         fail_next_state_save: bool,
         submit_probe: Option<Arc<ParallelismProbe>>,
+        replacement_probe: Option<Arc<ReplacementProbe>>,
     }
 
     impl Default for PointerTestSettings {
@@ -2538,6 +2783,7 @@ mod test {
                 retryable_submit_failures: None,
                 fail_next_state_save: false,
                 submit_probe: None,
+                replacement_probe: None,
             }
         }
     }
@@ -2571,6 +2817,7 @@ mod test {
             skippable_download_item: settings.skippable_download_item,
             retryable_submit_failures: settings.retryable_submit_failures,
             submit_probe: settings.submit_probe,
+            replacement_probe: settings.replacement_probe,
         });
         let storage = Arc::new(PointerStorage {
             fail_next_state_save: AtomicBool::new(settings.fail_next_state_save),
@@ -2883,6 +3130,46 @@ mod test {
 
         assert_eq!(submit_count.load(AtomicOrdering::Acquire), 1);
         assert_eq!(storage.saved_pointers(), vec![json!(1), json!(2)]);
+    }
+
+    #[tokio::test]
+    async fn later_item_replaces_and_cancels_in_flight_download() {
+        let submit_count = Arc::new(AtomicUsize::new(0));
+        let replacement_probe = Arc::new(ReplacementProbe::default());
+        let (mut processor, storage) = pointer_test_processor_with_settings(
+            false,
+            2,
+            false,
+            PointerTestSettings {
+                parallelism: 2,
+                resolved_file: Some(PathBuf::from("shared.txt")),
+                submit_count: Some(submit_count.clone()),
+                replacement_probe: Some(replacement_probe.clone()),
+                ..Default::default()
+            },
+        );
+        processor.options.file_replacement_decider = Arc::new(ReplaceInFlight);
+        processor.options.save_processing_content = true;
+
+        tokio::time::timeout(Duration::from_secs(1), processor.run())
+            .await
+            .expect("in-flight replacement timed out")
+            .unwrap();
+
+        assert_eq!(*replacement_probe.cancelled_items.lock(), vec!["item-1".to_owned()]);
+        assert_eq!(submit_count.load(AtomicOrdering::Acquire), 2);
+        assert_eq!(storage.saved_pointers(), vec![json!(1), json!(2)]);
+        let saved_contents = storage.saved_contents.lock();
+        let first = saved_contents
+            .iter()
+            .find(|content| content.item_content.source_item.title == "item-1")
+            .unwrap();
+        let second = saved_contents
+            .iter()
+            .find(|content| content.item_content.source_item.title == "item-2")
+            .unwrap();
+        assert_eq!(first.status, ProcessingStatus::Cancelled);
+        assert_eq!(second.status, ProcessingStatus::WaitingToRename);
     }
 
     #[tokio::test]

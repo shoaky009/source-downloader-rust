@@ -746,7 +746,7 @@ pub trait ProcessTask: Send + Sync {
     fn group(&self) -> Option<String>;
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct FileContent {
     /// /mnt/downloads
     pub download_path: PathBuf,
@@ -830,7 +830,7 @@ pub struct InProcessingItem<'a> {
     pub failure_reason: Option<&'a str>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub enum FileContentStatus {
     Undetected,
 
