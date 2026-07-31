@@ -36,7 +36,7 @@ Rules:
 
 ### Existing behavior bugs
 
-- [ ] **Defer async downloader listeners until rename**
+- [x] **Defer async downloader listeners until rename**
   - Problem: normal processing calls `ListenerMode::Each::on_item_success` even for an `AsyncDownloader`, then `run_rename()` calls it again.
   - Problem: `run_rename()` calls Batch listeners when the query returned waiting records even if none finished.
   - Kotlin reference: `SourceProcessor.kt:1028-1049`, `1069-1074`, `327-377`.

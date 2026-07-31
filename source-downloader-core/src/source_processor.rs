@@ -515,7 +515,6 @@ impl SourceProcessor {
             })
             .await
             .map_err(|error| ProcessingError::non_retryable(error.message))?;
-        let had_items = !contents.is_empty();
         let mut listener_context = ListenerContext::new(self);
         let mut finished = 0;
 
@@ -585,7 +584,7 @@ impl SourceProcessor {
                 }
             }
         }
-        if had_items {
+        if finished > 0 {
             for listener in self.process_listeners(ListenerMode::Batch) {
                 listener.on_process_completed(&listener_context);
             }
@@ -1994,8 +1993,10 @@ impl Process for NormalProcess {
             item_variables: completed.item_variables,
             status: *completed.status,
         };
-        for listener in p.process_listeners(ListenerMode::Each) {
-            listener.on_item_success(&ctx.listener_context, &item_content);
+        if p.async_downloader.is_none() {
+            for listener in p.process_listeners(ListenerMode::Each) {
+                listener.on_item_success(&ctx.listener_context, &item_content);
+            }
         }
         if advance_pointer
             && let Err(error) =
@@ -3368,6 +3369,41 @@ mod test {
 
     impl source_downloader_sdk::component::SdComponent for RecordingListener {}
 
+    #[derive(Debug)]
+    struct NeverFinishedDownloader;
+
+    impl Display for NeverFinishedDownloader {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "never-finished")
+        }
+    }
+
+    impl source_downloader_sdk::component::SdComponent for NeverFinishedDownloader {}
+
+    #[async_trait]
+    impl Downloader for NeverFinishedDownloader {
+        async fn submit(&self, _: &DownloadTask) -> Result<(), ProcessingError> {
+            Ok(())
+        }
+
+        fn default_download_path(&self) -> &str {
+            "/tmp/source-downloader-never-finished"
+        }
+
+        async fn cancel(
+            &self,
+            _: &SourceItem,
+            _: &[SourceFile],
+        ) -> Result<(), ProcessingError> {
+            Ok(())
+        }
+    }
+
+    impl AsyncDownloader for NeverFinishedDownloader {
+        fn is_finished(&self, _: &SourceItem) -> Option<bool> {
+            Some(false)
+        }
+    }
     impl ProcessListener for RecordingListener {
         fn on_item_success(&self, ctx: &dyn ProcessContext, item_content: &ItemContent) {
             self.successes.fetch_add(1, AtomicOrdering::Relaxed);
@@ -3421,9 +3457,14 @@ mod test {
     }
 
     #[tokio::test]
-    async fn async_process_defers_batch_listener_until_rename() {
+    async fn async_process_defers_listeners_until_rename() {
         let (mut processor, _) = pointer_test_processor(false, 1, false);
+        let each_listener = Arc::new(RecordingListener::default());
         let batch_listener = Arc::new(RecordingListener::default());
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Each, vec![each_listener.clone()]);
         processor
             .options
             .process_listeners
@@ -3431,6 +3472,45 @@ mod test {
 
         processor.run().await.unwrap();
 
+        assert_eq!(each_listener.successes.load(AtomicOrdering::Relaxed), 0);
+        assert_eq!(batch_listener.completions.load(AtomicOrdering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn async_rename_does_not_complete_batch_while_downloads_are_unfinished() {
+        let processor_name = "async-rename-unfinished";
+        let storage = storage().await.clone();
+        let source_item =
+            SourceItem { title: "unfinished-item".to_owned(), ..Default::default() };
+        storage
+            .save_processing_content(&ProcessingContent {
+                id: None,
+                processor_name: processor_name.to_owned(),
+                item_hash: source_item.hashing(),
+                item_identity: None,
+                item_content: ItemContentLite {
+                    source_item,
+                    item_variables: HashMap::new(),
+                },
+                rename_times: 0,
+                status: ProcessingStatus::WaitingToRename,
+                failure_reason: None,
+                created_at: OffsetDateTime::now_utc(),
+                updated_at: None,
+            })
+            .await
+            .unwrap();
+        let (mut processor, _) = pointer_test_processor(false, 0, false);
+        processor.name = processor_name.to_owned();
+        processor.processing_storage = storage;
+        processor.async_downloader = Some(Arc::new(NeverFinishedDownloader));
+        let batch_listener = Arc::new(RecordingListener::default());
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Batch, vec![batch_listener.clone()]);
+
+        assert_eq!(processor.run_rename().await.unwrap(), 0);
         assert_eq!(batch_listener.completions.load(AtomicOrdering::Relaxed), 0);
     }
 
