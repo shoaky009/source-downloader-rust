@@ -1,26 +1,36 @@
 use crate::expression::cel::FACTORY;
-use crate::expression::{CompiledExpression, CompiledExpressionFactory, item_content_variables};
+use crate::expression::{
+    CompiledExpression, CompiledExpressionFactory, item_content_variables,
+};
 use serde::Deserialize;
 use source_downloader_sdk::SdComponent;
-use source_downloader_sdk::component::{ComponentError, ComponentSupplier, ComponentType, ItemContent, ItemContentFilter, SdComponent, SdComponentMetadata};
+use source_downloader_sdk::component::{
+    ComponentError, ComponentSupplier, ComponentType, ItemContent, ItemContentFilter,
+    SdComponent, SdComponentMetadata,
+};
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use tracing::warn;
 
 pub struct ExpressionItemContentFilterSupplier;
-pub const SUPPLIER: ExpressionItemContentFilterSupplier = ExpressionItemContentFilterSupplier {};
+pub const SUPPLIER: ExpressionItemContentFilterSupplier =
+    ExpressionItemContentFilterSupplier {};
 
 impl ComponentSupplier for ExpressionItemContentFilterSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::item_content_filter("expression".to_string())]
     }
 
-    fn apply(&self, props: &Map<String, Value>) -> Result<Arc<dyn SdComponent>, ComponentError> {
+    fn apply(
+        &self,
+        props: &Map<String, Value>,
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let val = serde_json::to_value(props)
             .map_err(|e| ComponentError::new(format!("Failed to parse config: {}", e)))?;
-        let cfg = serde_json::from_value::<Cfg>(val)
-            .map_err(|e| ComponentError::new(format!("Failed to convert config: {}", e)))?;
+        let cfg = serde_json::from_value::<Cfg>(val).map_err(|e| {
+            ComponentError::new(format!("Failed to convert config: {}", e))
+        })?;
         let mut exclusions = Vec::new();
         for x in cfg.exclusions {
             exclusions.push(FACTORY.create(&x)?);
@@ -31,10 +41,7 @@ impl ComponentSupplier for ExpressionItemContentFilterSupplier {
             inclusions.push(FACTORY.create(&x)?);
         }
 
-        Ok(Arc::new(ExpressionItemContentFilter {
-            exclusions,
-            inclusions,
-        }))
+        Ok(Arc::new(ExpressionItemContentFilter { exclusions, inclusions }))
     }
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
@@ -54,10 +61,7 @@ impl ExpressionItemContentFilter {
         exclusions: Vec<Box<dyn CompiledExpression<bool>>>,
         inclusions: Vec<Box<dyn CompiledExpression<bool>>>,
     ) -> Self {
-        Self {
-            exclusions,
-            inclusions,
-        }
+        Self { exclusions, inclusions }
     }
 }
 
@@ -70,8 +74,11 @@ struct Cfg {
 }
 
 impl Debug for ExpressionItemContentFilter {
-    fn fmt(&self, _: &mut Formatter<'_>) -> std::fmt::Result {
-        todo!()
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExpressionItemContentFilter")
+            .field("exclusions", &self.exclusions.len())
+            .field("inclusions", &self.inclusions.len())
+            .finish()
     }
 }
 
@@ -92,7 +99,9 @@ impl ItemContentFilter for ExpressionItemContentFilter {
         if self.exclusions.iter().any(|expr| {
             expr.execute(&item_var)
                 .inspect_err(|e| {
-                    warn!("Exclusions expression execution error will be false, error: {e}")
+                    warn!(
+                        "Exclusions expression execution error will be false, error: {e}"
+                    )
                 })
                 .unwrap_or(false)
         }) {
@@ -104,7 +113,9 @@ impl ItemContentFilter for ExpressionItemContentFilter {
         self.inclusions.iter().any(|expr| {
             expr.execute(&item_var)
                 .inspect_err(|e| {
-                    warn!("Inclusions expression execution error will be false, error: {e}")
+                    warn!(
+                        "Inclusions expression execution error will be false, error: {e}"
+                    )
                 })
                 .unwrap_or(false)
         })
@@ -113,12 +124,14 @@ impl ItemContentFilter for ExpressionItemContentFilter {
 
 #[cfg(test)]
 mod test {
-    use crate::components::expression_item_filter::SUPPLIER;
+    use crate::components::expression_item_content_filter::SUPPLIER;
     use serde::Deserialize;
     use serde_json::{Map, Value};
     use serde_yaml::from_str;
     use source_downloader_sdk::SourceItem;
-    use source_downloader_sdk::component::ComponentSupplier;
+    use source_downloader_sdk::component::{ComponentSupplier, ItemContent};
+    use source_downloader_sdk::storage::ProcessingStatus;
+    use std::collections::HashMap;
     use std::fs::File;
     use std::path::Path;
 
@@ -133,14 +146,18 @@ mod test {
             let mut props = Map::new();
             props.insert("exclusions".into(), Value::from(data.exclusions.clone()));
             props.insert("inclusions".into(), Value::from(data.inclusions.clone()));
-            let filter = SUPPLIER
-                .apply(&props)
-                .unwrap()
-                .as_source_item_filter()
-                .unwrap();
+            let filter =
+                SUPPLIER.apply(&props).unwrap().as_item_content_filter().unwrap();
             let item = data.item.as_ref().unwrap_or(&default_item);
-            let p = item.clone();
-            let actual = filter.filter(&p).await;
+            let files = Vec::new();
+            let variables = HashMap::new();
+            let content = ItemContent {
+                source_item: item,
+                file_contents: &files,
+                item_variables: &variables,
+                status: ProcessingStatus::WaitingToRename,
+            };
+            let actual = filter.filter(&content).await;
             let expected = data.expected;
             assert_eq!(expected, actual, "{:#?}", data);
         }

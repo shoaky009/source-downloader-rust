@@ -17,6 +17,7 @@ pub fn get_build_in_component_supplier() -> Vec<Arc<dyn ComponentSupplier>> {
     vec![
         Arc::new(fixed_schedule_trigger::SUPPLIER),
         Arc::new(expression_item_filter::SUPPLIER),
+        Arc::new(expression_item_content_filter::SUPPLIER),
         Arc::new(expression_file_content_filter::SUPPLIER),
         Arc::new(system_file_source::SUPPLIER),
         Arc::new(system_file_resolver::SUPPLIER),

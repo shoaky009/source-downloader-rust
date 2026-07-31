@@ -1,5 +1,7 @@
 use crate::expression::cel::FACTORY;
-use crate::expression::{CompiledExpression, CompiledExpressionFactory, source_item_variables};
+use crate::expression::{
+    CompiledExpression, CompiledExpressionFactory, source_item_variables,
+};
 use serde::Deserialize;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, SdComponent, SdComponentMetadata,
@@ -19,11 +21,15 @@ impl ComponentSupplier for ExpressionItemFilterSupplier {
         vec![ComponentType::item_filter("expression".to_string())]
     }
 
-    fn apply(&self, props: &Map<String, Value>) -> Result<Arc<dyn SdComponent>, ComponentError> {
+    fn apply(
+        &self,
+        props: &Map<String, Value>,
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let val = serde_json::to_value(props)
             .map_err(|e| ComponentError::new(format!("Failed to parse config: {}", e)))?;
-        let cfg = serde_json::from_value::<Cfg>(val)
-            .map_err(|e| ComponentError::new(format!("Failed to convert config: {}", e)))?;
+        let cfg = serde_json::from_value::<Cfg>(val).map_err(|e| {
+            ComponentError::new(format!("Failed to convert config: {}", e))
+        })?;
         let mut exclusions = Vec::new();
         for x in cfg.exclusions {
             exclusions.push(FACTORY.create(&x)?);
@@ -34,10 +40,7 @@ impl ComponentSupplier for ExpressionItemFilterSupplier {
             inclusions.push(FACTORY.create(&x)?);
         }
 
-        Ok(Arc::new(ExpressionItemFilter {
-            exclusions,
-            inclusions,
-        }))
+        Ok(Arc::new(ExpressionItemFilter { exclusions, inclusions }))
     }
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
@@ -57,10 +60,7 @@ impl ExpressionItemFilter {
         exclusions: Vec<Box<dyn CompiledExpression<bool>>>,
         inclusions: Vec<Box<dyn CompiledExpression<bool>>>,
     ) -> Self {
-        Self {
-            exclusions,
-            inclusions,
-        }
+        Self { exclusions, inclusions }
     }
 }
 
@@ -73,8 +73,11 @@ struct Cfg {
 }
 
 impl Debug for ExpressionItemFilter {
-    fn fmt(&self, _: &mut Formatter<'_>) -> std::fmt::Result {
-        todo!()
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExpressionItemFilter")
+            .field("exclusions", &self.exclusions.len())
+            .field("inclusions", &self.inclusions.len())
+            .finish()
     }
 }
 
@@ -95,7 +98,9 @@ impl SourceItemFilter for ExpressionItemFilter {
         if self.exclusions.iter().any(|expr| {
             expr.execute(&item_var)
                 .inspect_err(|e| {
-                    warn!("Exclusions expression execution error will be false, error: {e}")
+                    warn!(
+                        "Exclusions expression execution error will be false, error: {e}"
+                    )
                 })
                 .unwrap_or(false)
         }) {
@@ -107,7 +112,9 @@ impl SourceItemFilter for ExpressionItemFilter {
         self.inclusions.iter().any(|expr| {
             expr.execute(&item_var)
                 .inspect_err(|e| {
-                    warn!("Inclusions expression execution error will be false, error: {e}")
+                    warn!(
+                        "Inclusions expression execution error will be false, error: {e}"
+                    )
                 })
                 .unwrap_or(false)
         })
@@ -136,11 +143,7 @@ mod test {
             let mut props = Map::new();
             props.insert("exclusions".into(), Value::from(data.exclusions.clone()));
             props.insert("inclusions".into(), Value::from(data.inclusions.clone()));
-            let filter = SUPPLIER
-                .apply(&props)
-                .unwrap()
-                .as_source_item_filter()
-                .unwrap();
+            let filter = SUPPLIER.apply(&props).unwrap().as_source_item_filter().unwrap();
             let item = data.item.as_ref().unwrap_or(&default_item);
             let p = item.clone();
             let actual = filter.filter(&p).await;

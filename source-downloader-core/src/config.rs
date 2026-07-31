@@ -67,6 +67,8 @@ pub struct ProcessorOptionConfig {
     #[serde(skip_serializing_if = "is_default")]
     pub item_filters: Vec<String>,
     #[serde(skip_serializing_if = "is_default")]
+    pub item_content_filters: Vec<String>,
+    #[serde(skip_serializing_if = "is_default")]
     pub item_expression_exclusions: Vec<String>,
     #[serde(skip_serializing_if = "is_default")]
     pub item_expression_inclusions: Vec<String>,
@@ -186,16 +188,14 @@ impl<'de> Deserialize<'de> for ListenerConfig {
         let wire = ListenerConfigWire::deserialize(deserializer)?;
         // 步骤 B: 根据匹配到的变体，手动构造 ListenerConfig
         let config = match wire {
-            ListenerConfigWire::Simple(id) => ListenerConfig {
-                id,
-                mode: ListenerMode::Each,
-            },
+            ListenerConfigWire::Simple(id) => {
+                ListenerConfig { id, mode: ListenerMode::Each }
+            }
             ListenerConfigWire::Full { id, mode } => ListenerConfig { id, mode },
             ListenerConfigWire::Map(map) => {
-                let (id, mode) = map
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| serde::de::Error::custom("Config map cannot be empty"))?;
+                let (id, mode) = map.into_iter().next().ok_or_else(|| {
+                    serde::de::Error::custom("Config map cannot be empty")
+                })?;
                 ListenerConfig { id, mode }
             }
         };
@@ -234,6 +234,7 @@ impl Default for ProcessorOptionConfig {
             filename_pattern: "".to_string(),
             variable_providers: vec![],
             item_filters: vec![],
+            item_content_filters: vec![],
             item_expression_exclusions: vec![],
             item_expression_inclusions: vec![],
             item_content_expression_exclusions: vec![],
@@ -317,7 +318,10 @@ pub trait ConfigOperator: Send + Sync {
         component_config: ComponentConfig,
     ) -> Result<(), ComponentError>;
 
-    fn save_processor(&self, processor_config: ProcessorConfig) -> Result<(), ComponentError>;
+    fn save_processor(
+        &self,
+        processor_config: ProcessorConfig,
+    ) -> Result<(), ComponentError>;
 
     fn delete_component(
         &self,
@@ -345,23 +349,15 @@ pub struct YamlConfigOperator {
 #[allow(dead_code, unused)]
 impl YamlConfigOperator {
     pub fn new(config_path: &str) -> Self {
-        let config_cache: Cache<String, Result<Config, ComponentError>> = Cache::builder()
-            .time_to_live(Duration::from_secs(5))
-            .build();
-        YamlConfigOperator {
-            config_path: Path::new(config_path).into(),
-            config_cache,
-        }
+        let config_cache: Cache<String, Result<Config, ComponentError>> =
+            Cache::builder().time_to_live(Duration::from_secs(5)).build();
+        YamlConfigOperator { config_path: Path::new(config_path).into(), config_cache }
     }
 
     pub fn new_path(config_path: &Path) -> Self {
-        let config_cache: Cache<String, Result<Config, ComponentError>> = Cache::builder()
-            .time_to_live(Duration::from_secs(5))
-            .build();
-        YamlConfigOperator {
-            config_path: Path::new(config_path).into(),
-            config_cache,
-        }
+        let config_cache: Cache<String, Result<Config, ComponentError>> =
+            Cache::builder().time_to_live(Duration::from_secs(5)).build();
+        YamlConfigOperator { config_path: Path::new(config_path).into(), config_cache }
     }
 
     pub fn init(&self) -> Result<(), ComponentError> {
@@ -372,8 +368,9 @@ impl YamlConfigOperator {
         };
         info!("Config file located at: {}", display_path.display());
         if let Some(parent) = self.config_path.parent().filter(|p| !p.exists()) {
-            fs::create_dir_all(parent)
-                .map_err(|e| ComponentError::new(format!("Failed to create directory: {}", e)))?;
+            fs::create_dir_all(parent).map_err(|e| {
+                ComponentError::new(format!("Failed to create directory: {}", e))
+            })?;
         }
 
         if !self.config_path.exists() {
@@ -382,36 +379,42 @@ impl YamlConfigOperator {
                 .append(true)
                 .create(true)
                 .open(&self.config_path)
-                .map_err(|e| ComponentError::new(format!("Failed to open config file: {}", e)))?;
-            file.write_all(b"instances: []\ncomponents: \nprocessors: []")
-                .map_err(|e| ComponentError::new(format!("Failed to write config file: {}", e)))?;
+                .map_err(|e| {
+                    ComponentError::new(format!("Failed to open config file: {}", e))
+                })?;
+            file.write_all(b"instances: []\ncomponents: \nprocessors: []").map_err(
+                |e| ComponentError::new(format!("Failed to write config file: {}", e)),
+            )?;
         }
         Ok(())
     }
 
     fn load_yaml(&self) -> Result<Config, ComponentError> {
-        let file = File::open(&self.config_path)
-            .map_err(|e| ComponentError::new(format!("Failed to open config file: {}", e)))?;
+        let file = File::open(&self.config_path).map_err(|e| {
+            ComponentError::new(format!("Failed to open config file: {}", e))
+        })?;
         let reader = std::io::BufReader::new(file);
-        let yaml: Config = serde_yaml::from_reader(reader)
-            .map_err(|e| ComponentError::new(format!("Failed to parse config cause: {}", e)))?;
+        let yaml: Config = serde_yaml::from_reader(reader).map_err(|e| {
+            ComponentError::new(format!("Failed to parse config cause: {}", e))
+        })?;
         Ok(yaml)
     }
 
     fn get_config(&self) -> Result<Config, ComponentError> {
         let path = self.config_path.to_str().unwrap().to_string();
         self.config_cache.get_with(path, move || {
-            self.load_yaml()
-                .map_err(|e| ComponentError::new(format!("Failed to get config cause: {}", e)))
+            self.load_yaml().map_err(|e| {
+                ComponentError::new(format!("Failed to get config cause: {}", e))
+            })
         })
     }
 
     fn write_config(&self, config: &Config) -> Result<(), ComponentError> {
         let file = File::create(&self.config_path).expect("File should exist");
-        serde_yaml::to_writer(file, config)
-            .map_err(|e| ComponentError::new(format!("Failed to write config file: {}", e)))?;
-        self.config_cache
-            .invalidate(self.config_path.to_str().unwrap());
+        serde_yaml::to_writer(file, config).map_err(|e| {
+            ComponentError::new(format!("Failed to write config file: {}", e))
+        })?;
+        self.config_cache.invalidate(self.config_path.to_str().unwrap());
         Ok(())
     }
 }
@@ -437,21 +440,17 @@ impl ConfigOperator for YamlConfigOperator {
     }
 
     fn get_all_processor_config(&self) -> Vec<ProcessorConfig> {
-        self.get_config()
-            .map(|config| config.processors.clone())
-            .unwrap_or_else(|e| {
-                tracing::warn!("{}", e);
-                vec![]
-            })
+        self.get_config().map(|config| config.processors.clone()).unwrap_or_else(|e| {
+            tracing::warn!("{}", e);
+            vec![]
+        })
     }
 
     fn get_all_component_config(&self) -> IndexMap<String, Vec<ComponentConfig>> {
-        self.get_config()
-            .map(|config| config.components.clone())
-            .unwrap_or_else(|e| {
-                tracing::warn!("Failed to get config: {}", e);
-                IndexMap::new()
-            })
+        self.get_config().map(|config| config.components.clone()).unwrap_or_else(|e| {
+            tracing::warn!("Failed to get config: {}", e);
+            IndexMap::new()
+        })
     }
 
     fn save_component(
@@ -463,10 +462,7 @@ impl ConfigOperator for YamlConfigOperator {
         let component_type = root_type.name().to_string();
 
         let components = config.components.entry(component_type).or_default();
-        match components
-            .iter_mut()
-            .find(|c| c.name == component_config.name)
-        {
+        match components.iter_mut().find(|c| c.name == component_config.name) {
             Some(existing) => {
                 *existing = component_config;
             }
@@ -479,13 +475,12 @@ impl ConfigOperator for YamlConfigOperator {
         Ok(())
     }
 
-    fn save_processor(&self, processor_config: ProcessorConfig) -> Result<(), ComponentError> {
+    fn save_processor(
+        &self,
+        processor_config: ProcessorConfig,
+    ) -> Result<(), ComponentError> {
         let mut config = self.get_config()?;
-        match config
-            .processors
-            .iter()
-            .position(|p| p.name == processor_config.name)
-        {
+        match config.processors.iter().position(|p| p.name == processor_config.name) {
             Some(index) => {
                 // 只更新 enabled 状态
                 config.processors[index].enabled = processor_config.enabled;
@@ -560,8 +555,7 @@ impl ConfigOperator for YamlConfigOperator {
             .components
             .get(root_name)
             .and_then(|list| {
-                list.iter()
-                    .find(|c| c.component_type == type_name && c.name == name)
+                list.iter().find(|c| c.component_type == type_name && c.name == name)
             })
             .cloned()
     }
@@ -570,7 +564,8 @@ impl ConfigOperator for YamlConfigOperator {
 #[cfg(test)]
 mod test {
     use crate::config::{
-        ComponentConfig, Config, ConfigOperator, ProcessorOptionConfig, YamlConfigOperator,
+        ComponentConfig, Config, ConfigOperator, ProcessorOptionConfig,
+        YamlConfigOperator,
     };
     use source_downloader_sdk::component::ComponentRootType;
     use source_downloader_sdk::serde_json::Map;
@@ -604,10 +599,7 @@ mod test {
             let temp_path = temp_file.path();
             fs::copy(config_path, temp_path).expect("无法复制配置文件到临时文件");
             let operator = YamlConfigOperator::new_path(temp_path);
-            TempFileOperator {
-                operator,
-                _temp_file: temp_file,
-            }
+            TempFileOperator { operator, _temp_file: temp_file }
         }
     }
 
@@ -652,9 +644,7 @@ mod test {
             component_type: "test".to_string(),
             props: Map::new(),
         };
-        operator
-            .save_component(&ComponentRootType::Source, component_config)
-            .unwrap();
+        operator.save_component(&ComponentRootType::Source, component_config).unwrap();
 
         let config = operator.get_config().expect("无法加载配置");
         let sources = config.components.get("source").expect("未找到 source 组件");
@@ -665,10 +655,7 @@ mod test {
         );
         // also check file content
         let cfg_from_file: Config = operator.load_yaml().unwrap();
-        let sources = cfg_from_file
-            .components
-            .get("source")
-            .expect("未找到 source 组件");
+        let sources = cfg_from_file.components.get("source").expect("未找到 source 组件");
         assert!(
             sources
                 .iter()
@@ -694,10 +681,7 @@ mod test {
         assert!(!sources.iter().any(|c| c.name == "system-file"));
         // also check file content
         let cfg_from_file: Config = operator.load_yaml().unwrap();
-        let sources = cfg_from_file
-            .components
-            .get("source")
-            .expect("未找到 source 组件");
+        let sources = cfg_from_file.components.get("source").expect("未找到 source 组件");
         assert!(!sources.iter().any(|c| c.name == "system-file"));
     }
     #[test]

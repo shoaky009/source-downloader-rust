@@ -1,29 +1,36 @@
 use crate::expression::cel::FACTORY;
-use crate::expression::{CompiledExpression, CompiledExpressionFactory, file_content_variables};
+use crate::expression::{
+    CompiledExpression, CompiledExpressionFactory, file_content_variables,
+};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use source_downloader_sdk::SdComponent;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, FileContent, FileContentFilter, SdComponent,
-    SdComponentMetadata,
+    ComponentError, ComponentSupplier, ComponentType, FileContent, FileContentFilter,
+    SdComponent, SdComponentMetadata,
 };
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use tracing::warn;
 
 pub struct ExpressionFileContentFilterSupplier;
-pub const SUPPLIER: ExpressionFileContentFilterSupplier = ExpressionFileContentFilterSupplier {};
+pub const SUPPLIER: ExpressionFileContentFilterSupplier =
+    ExpressionFileContentFilterSupplier {};
 
 impl ComponentSupplier for ExpressionFileContentFilterSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::file_content_filter("expression".to_string())]
     }
 
-    fn apply(&self, props: &Map<String, Value>) -> Result<Arc<dyn SdComponent>, ComponentError> {
+    fn apply(
+        &self,
+        props: &Map<String, Value>,
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let val = serde_json::to_value(props)
             .map_err(|e| ComponentError::new(format!("Failed to parse config: {}", e)))?;
-        let cfg = serde_json::from_value::<Cfg>(val)
-            .map_err(|e| ComponentError::new(format!("Failed to convert config: {}", e)))?;
+        let cfg = serde_json::from_value::<Cfg>(val).map_err(|e| {
+            ComponentError::new(format!("Failed to convert config: {}", e))
+        })?;
         let mut exclusions = Vec::new();
         for x in cfg.exclusions {
             exclusions.push(FACTORY.create(&x)?);
@@ -34,10 +41,7 @@ impl ComponentSupplier for ExpressionFileContentFilterSupplier {
             inclusions.push(FACTORY.create(&x)?);
         }
 
-        Ok(Arc::new(ExpressionFileContentFilter {
-            exclusions,
-            inclusions,
-        }))
+        Ok(Arc::new(ExpressionFileContentFilter { exclusions, inclusions }))
     }
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
@@ -57,10 +61,7 @@ impl ExpressionFileContentFilter {
         exclusions: Vec<Box<dyn CompiledExpression<bool>>>,
         inclusions: Vec<Box<dyn CompiledExpression<bool>>>,
     ) -> Self {
-        Self {
-            exclusions,
-            inclusions,
-        }
+        Self { exclusions, inclusions }
     }
 }
 
@@ -73,8 +74,11 @@ struct Cfg {
 }
 
 impl Debug for ExpressionFileContentFilter {
-    fn fmt(&self, _: &mut Formatter<'_>) -> std::fmt::Result {
-        todo!()
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExpressionFileContentFilter")
+            .field("exclusions", &self.exclusions.len())
+            .field("inclusions", &self.inclusions.len())
+            .finish()
     }
 }
 
@@ -94,7 +98,9 @@ impl FileContentFilter for ExpressionFileContentFilter {
         if self.exclusions.iter().any(|expr| {
             expr.execute(&file_vars)
                 .inspect_err(|e| {
-                    warn!("Exclusions expression execution error will be false, error: {e}")
+                    warn!(
+                        "Exclusions expression execution error will be false, error: {e}"
+                    )
                 })
                 .unwrap_or(false)
         }) {
@@ -106,7 +112,9 @@ impl FileContentFilter for ExpressionFileContentFilter {
         self.inclusions.iter().any(|expr| {
             expr.execute(&file_vars)
                 .inspect_err(|e| {
-                    warn!("Inclusions expression execution error will be false, error: {e}")
+                    warn!(
+                        "Inclusions expression execution error will be false, error: {e}"
+                    )
                 })
                 .unwrap_or(false)
         })
@@ -125,7 +133,10 @@ mod test {
 
     #[test]
     fn test_simple_exclusions() {
-        let filter = ExpressionFileContentFilter::expressions(vec!["file.name == '1.txt'"], vec![]);
+        let filter = ExpressionFileContentFilter::expressions(
+            vec!["file.name == '1.txt'"],
+            vec![],
+        );
 
         let test_file_content1 = FileContent {
             file_download_path: PathBuf::from("1.txt"),
@@ -142,7 +153,10 @@ mod test {
 
     #[test]
     fn test_simple_inclusions() {
-        let filter = ExpressionFileContentFilter::expressions(vec![], vec!["file.name == '1.txt'"]);
+        let filter = ExpressionFileContentFilter::expressions(
+            vec![],
+            vec!["file.name == '1.txt'"],
+        );
 
         let test_file_content1 = FileContent {
             file_download_path: PathBuf::from("1.txt"),
@@ -160,14 +174,8 @@ mod test {
     #[test]
     fn test_multiple() {
         let filter = ExpressionFileContentFilter::expressions(
-            vec![
-                "file.attrs.size > 1024*1024",
-                "file.name.matches('.*qaz.*')",
-            ],
-            vec![
-                "file.attrs.size < 1024*1024",
-                "file.name.matches('.*Test.*')",
-            ],
+            vec!["file.attrs.size > 1024*1024", "file.name.matches('.*qaz.*')"],
+            vec!["file.attrs.size < 1024*1024", "file.name.matches('.*Test.*')"],
         );
 
         let test_file_content1 = FileContent {
@@ -221,7 +229,8 @@ mod test {
             vec!["file.paths.containsAny(['SPs'], false)"],
             vec![],
         );
-        let download_path = PathBuf::from_iter(vec!["src", "test", "resources", "downloads"]);
+        let download_path =
+            PathBuf::from_iter(vec!["src", "test", "resources", "downloads"]);
         let test_file_content1 = FileContent {
             file_download_path: download_path.join("SPs").join("test.txt"),
             download_path: download_path.clone(),
@@ -251,18 +260,11 @@ mod test {
             exclusions: Vec<&str>,
             inclusions: Vec<&str>,
         ) -> ExpressionFileContentFilter {
-            let exclusions = exclusions
-                .iter()
-                .map(|x| FACTORY.create(x).unwrap())
-                .collect();
-            let inclusions = inclusions
-                .iter()
-                .map(|x| FACTORY.create(x).unwrap())
-                .collect();
-            ExpressionFileContentFilter {
-                exclusions,
-                inclusions,
-            }
+            let exclusions =
+                exclusions.iter().map(|x| FACTORY.create(x).unwrap()).collect();
+            let inclusions =
+                inclusions.iter().map(|x| FACTORY.create(x).unwrap()).collect();
+            ExpressionFileContentFilter { exclusions, inclusions }
         }
     }
 }

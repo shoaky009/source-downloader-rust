@@ -200,8 +200,7 @@ impl ProcessorManager {
                 self.component_manager
                     .get_component(&component_id)?
                     .require_component()?
-                    .as_source_item_filter()?
-                    .clone(),
+                    .as_source_item_filter()?,
             );
         }
 
@@ -213,8 +212,7 @@ impl ProcessorManager {
                 self.component_manager
                     .get_component(&component_id)?
                     .require_component()?
-                    .as_source_file_filter()?
-                    .clone(),
+                    .as_source_file_filter()?,
             );
         }
 
@@ -226,8 +224,7 @@ impl ProcessorManager {
                 self.component_manager
                     .get_component(&component_id)?
                     .require_component()?
-                    .as_variable_provider()?
-                    .clone(),
+                    .as_variable_provider()?,
             );
         }
 
@@ -247,18 +244,17 @@ impl ProcessorManager {
                 self.component_manager
                     .get_component(&component_id)?
                     .require_component()?
-                    .as_file_tagger()?
-                    .clone(),
+                    .as_file_tagger()?,
             );
         }
 
         // ===
         let mut file_content_filters: Vec<Arc<dyn FileContentFilter>> = vec![];
-        if !opt.file_content_expression_inclusions.is_empty()
+        if !opt.file_content_expression_exclusions.is_empty()
             || !opt.file_content_expression_inclusions.is_empty()
         {
             let filter = Self::apply_file_content_expression(
-                &opt.file_content_expression_inclusions,
+                &opt.file_content_expression_exclusions,
                 &opt.file_content_expression_inclusions,
             )?;
             file_content_filters.push(Arc::new(filter));
@@ -271,32 +267,30 @@ impl ProcessorManager {
                 self.component_manager
                     .get_component(&component_id)?
                     .require_component()?
-                    .as_file_content_filter()?
-                    .clone(),
+                    .as_file_content_filter()?,
             );
         }
         // ===
 
         let mut item_content_filters: Vec<Arc<dyn ItemContentFilter>> = vec![];
-        if !opt.item_content_expression_inclusions.is_empty()
+        if !opt.item_content_expression_exclusions.is_empty()
             || !opt.item_content_expression_inclusions.is_empty()
         {
             let filter = Self::apply_item_content_expression(
-                &opt.item_content_expression_inclusions,
+                &opt.item_content_expression_exclusions,
                 &opt.item_content_expression_inclusions,
             )?;
             item_content_filters.push(Arc::new(filter));
         }
 
-        for x in &opt.file_content_filters {
+        for x in &opt.item_content_filters {
             let component_id =
                 ComponentRootType::ItemContentFilter.parse_component_id(&x);
             item_content_filters.push(
                 self.component_manager
                     .get_component(&component_id)?
                     .require_component()?
-                    .as_item_content_filter()?
-                    .clone(),
+                    .as_item_content_filter()?,
             );
         }
         // ===
@@ -308,8 +302,7 @@ impl ProcessorManager {
                 .component_manager
                 .get_component(&component_id)?
                 .require_component()?
-                .as_process_listener()?
-                .clone();
+                .as_process_listener()?;
             process_listeners.push(listener);
         }
 
@@ -706,5 +699,62 @@ mod test {
         let processor_wp = manager.get_processor(name);
         assert!(processor_wp.is_some());
         assert!(processor_wp.unwrap().error_message.is_some());
+    }
+    #[tokio::test]
+    async fn content_filter_options_keep_exclusions_and_item_filter_references() {
+        use source_downloader_sdk::SourceItem;
+        use source_downloader_sdk::component::{FileContent, ItemContent};
+        use source_downloader_sdk::storage::ProcessingStatus;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+
+        let component_manager = ComponentManager::new(Arc::new(YamlConfigOperator::new(
+            "./tests/resources/config.yaml",
+        )));
+        component_manager.register_suppliers(get_build_in_component_supplier()).unwrap();
+        let manager = ProcessorManager::new(
+            Arc::new(component_manager),
+            Arc::new(MemoryProcessingStorage::new()),
+        );
+        let mut options = ProcessorOptionConfig::default();
+        options.file_content_expression_exclusions =
+            vec!["file.name == 'blocked.txt'".to_owned()];
+        options.item_content_expression_exclusions =
+            vec!["item.title == 'blocked'".to_owned()];
+        let config = ProcessorConfig {
+            name: "filter-options".to_owned(),
+            enabled: true,
+            triggers: Vec::new(),
+            source: "system-file:test".to_owned(),
+            item_file_resolver: "system-file:test".to_owned(),
+            downloader: "http".to_owned(),
+            file_mover: "system-file".to_owned(),
+            save_path: "./tests/resources/output".to_owned(),
+            options,
+            category: None,
+            tags: HashSet::new(),
+        };
+
+        let options =
+            manager.create_options(&config, "filter-options".to_owned()).unwrap();
+
+        assert_eq!(options.file_content_filters.len(), 1);
+        assert_eq!(options.item_content_filters.len(), 1);
+        let file = FileContent {
+            file_download_path: PathBuf::from("blocked.txt"),
+            ..Default::default()
+        };
+        assert!(!options.file_content_filters[0].filter(&file));
+        let source_item =
+            SourceItem { title: "blocked".to_owned(), ..Default::default() };
+        let files = Vec::new();
+        let variables = HashMap::new();
+        let item_content = ItemContent {
+            source_item: &source_item,
+            file_contents: &files,
+            item_variables: &variables,
+            status: ProcessingStatus::WaitingToRename,
+        };
+        assert!(!options.item_content_filters[0].filter(&item_content).await);
     }
 }
