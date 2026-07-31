@@ -488,7 +488,6 @@ impl SourceProcessor {
         let processor = Arc::downgrade(self);
         runtime.spawn(async move {
             loop {
-                tokio::time::sleep(interval).await;
                 let Some(processor) = processor.upgrade() else {
                     break;
                 };
@@ -499,6 +498,8 @@ impl SourceProcessor {
                         error.message()
                     );
                 }
+                drop(processor);
+                tokio::time::sleep(interval).await;
             }
         });
     }
@@ -2686,6 +2687,7 @@ mod test {
         next_content_id: AtomicUsize,
         content_exists: AtomicBool,
         fail_next_state_save: AtomicBool,
+        query_count: AtomicUsize,
     }
 
     impl PointerStorage {
@@ -2737,6 +2739,7 @@ mod test {
             &self,
             _: &ProcessingContentQuery,
         ) -> Result<Vec<ProcessingContent>, StorageError> {
+            self.query_count.fetch_add(1, AtomicOrdering::Release);
             Ok(Vec::new())
         }
 
@@ -3291,6 +3294,23 @@ mod test {
 
         assert!(result.is_err());
         assert_eq!(3, attempts.load(AtomicOrdering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn rename_task_checks_immediately() {
+        let (mut processor, storage) = pointer_test_processor(false, 0, false);
+        processor.options.rename_task_interval = Duration::from_secs(3600);
+        let processor = Arc::new(processor);
+
+        processor.start_rename_task();
+
+        tokio::time::timeout(Duration::from_millis(100), async {
+            while storage.query_count.load(AtomicOrdering::Acquire) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("rename task should check before its configured interval");
     }
 
     #[tokio::test]

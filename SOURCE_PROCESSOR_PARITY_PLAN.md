@@ -101,7 +101,7 @@ Rules:
   - Add explicit retry attempts and backoff configuration without duplicating retry logic at call sites.
   - Suggested commit: `feat: configure processor retry policy`
 
-- [ ] **Run the initial async rename check promptly**
+- [x] **Run the initial async rename check promptly**
   - Rust waits a full `rename_task_interval` before the first check; Kotlin starts checking after 30 seconds.
   - Prefer an immediate first check unless an explicit initial-delay option is justified.
   - Suggested commit: `fix: run initial async rename check promptly`
