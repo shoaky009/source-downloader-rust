@@ -546,36 +546,30 @@ impl Renamer {
         map.iter().map(|(k, v)| (k.clone(), self.apply_replacers(k, v.clone()))).collect()
     }
 
-    // TODO 未完成
     pub fn item_rename_variables(
         &self,
         item: &SourceItem,
-        _: &PatternVariables,
+        item_variables: &PatternVariables,
     ) -> RenameVariables {
-        // val vars = mutableMapOf<String, Any>()
-        // val replacedItemVars = itemVariables.variables().replaceVariables()
-        // vars.putAll(replacedItemVars)
-        // vars["item"] = buildSourceItemRenameVariables(sourceItem)
-        // val (variables, _) = processVariable(sourceItem, vars, false)
-        // return RenameVariables(vars, variables.replaceVariables(), replacedItemVars)
-        let mut vars: Map<String, Value> = Map::new();
-        vars.insert(
-            "title".to_owned(),
-            json!(self.apply_replacers("item.title", item.title.clone())),
-        );
-        vars.insert("datetime".to_owned(), json!(item.datetime));
-        vars.insert("date".to_owned(), json!(item.datetime.date()));
-        vars.insert("year".to_owned(), json!(item.datetime.year()));
-        vars.insert("month".to_owned(), json!(item.datetime.month() as u8));
-        vars.insert("contentType".to_owned(), json!(item.content_type));
-        vars.insert("attrs".to_owned(), json!(item.attrs));
-        let mut item: Map<String, Value> = Map::new();
-        item.insert("item".to_owned(), vars.into());
+        let replaced_item_variables = self.apply_replacers_to_map(item_variables);
+        let mut variables: Map<String, Value> = replaced_item_variables
+            .iter()
+            .map(|(name, value)| (name.clone(), Value::String(value.clone())))
+            .collect();
+        let item_variables = json!({
+            "title": self.apply_replacers("item.title", item.title.clone()),
+            "datetime": item.datetime,
+            "date": item.datetime.date(),
+            "year": item.datetime.year(),
+            "month": item.datetime.month() as u8,
+            "contentType": item.content_type,
+            "attrs": item.attrs,
+        });
+        variables.insert("item".to_owned(), item_variables);
+
         RenameVariables {
-            variables: item,
-            processed_variables: HashMap::new(),
-            pattern_variables: HashMap::new(),
-            trim_variables: HashMap::new(),
+            variables,
+            pattern_variables: replaced_item_variables,
             ..Default::default()
         }
     }
@@ -690,6 +684,26 @@ mod tests {
         let content =
             DEFAULT_RENAMER.create_file_content(&SourceItem::default(), raw, &extra);
         assert_eq!(SOURCE_SAVE_PATH.join("test").join("S01"), content.target_save_path)
+    }
+
+    #[test]
+    fn item_provider_variables_are_available_to_path_patterns() {
+        let filename_pattern = PathPattern::new_cel("{providerTitle}.txt".to_owned());
+        let raw =
+            RawFileContent { filename_pattern: &filename_pattern, ..Default::default() };
+        let provider_variables =
+            hashmap! { "providerTitle".to_owned() => "provider-value".to_owned() };
+        let item_variables = DEFAULT_RENAMER
+            .item_rename_variables(&SourceItem::default(), &provider_variables);
+
+        let content = DEFAULT_RENAMER.create_file_content(
+            &SourceItem::default(),
+            raw,
+            &item_variables,
+        );
+
+        assert_eq!("provider-value.txt", content.target_filename);
+        assert_eq!(item_variables.pattern_variables, provider_variables);
     }
 
     #[test]
