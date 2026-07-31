@@ -28,6 +28,7 @@ use source_downloader_sdk::storage::{
     ItemContentLite, ProcessingContent, ProcessingContentQuery, ProcessingStatus,
     ProcessingStorage, ProcessingTargetPath, ProcessorSourceState,
 };
+use source_downloader_sdk::serde_json::Value;
 use source_downloader_sdk::time::OffsetDateTime;
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
@@ -582,15 +583,11 @@ impl SourceProcessor {
         item_pointer: &dyn ItemPointer,
     ) -> Result<(), ProcessingError> {
         ctx.source_pointer.update(source_item, item_pointer);
+        ctx.source_state.last_pointer = ctx.source_pointer.dump();
         if !self.options.pointer_batch_mode {
-            self.save_source_state(&ProcessorSourceState {
-                id: ctx.source_state.id,
-                processor_name: ctx.source_state.processor_name.to_owned(),
-                source_id: ctx.source_state.source_id.to_owned(),
-                last_pointer: ctx.source_pointer.dump(),
-            })
-            .await
-            .map_err(ProcessingError::non_retryable)?;
+            self.save_source_state(&ctx.source_state)
+                .await
+                .map_err(ProcessingError::non_retryable)?;
         }
         Ok(())
     }
@@ -823,14 +820,12 @@ trait Process {
             }))
     }
 
-    async fn get_source_pointer(
+    fn get_source_pointer(
         &self,
         p: &SourceProcessor,
-        source_state: &ProcessorSourceState,
-    ) -> Result<Box<dyn SourcePointer>, ProcessingError> {
-        let source_pointer =
-            p.source.parse_raw_pointer(source_state.last_pointer.to_owned());
-        Ok(source_pointer)
+        raw_pointer: Value,
+    ) -> Box<dyn SourcePointer> {
+        p.source.parse_raw_pointer(raw_pointer)
     }
 
     async fn init_process_context(
@@ -838,8 +833,10 @@ trait Process {
         p: &SourceProcessor,
         start_time: Instant,
     ) -> Result<ProcessRuntime, ProcessingError> {
-        let source_state = self.get_source_state(p).await?;
-        let source_pointer = self.get_source_pointer(p, &source_state).await?;
+        let mut source_state = self.get_source_state(p).await?;
+        let raw_pointer = std::mem::take(&mut source_state.last_pointer);
+        let source_pointer = self.get_source_pointer(p, raw_pointer);
+        source_state.last_pointer = source_pointer.dump();
         let p_ctx = ProcessRuntime {
             trace_id: PROCESS_ID_GENERATOR
                 .fetch_add(i64::MIN, Ordering::Relaxed)
@@ -1532,14 +1529,9 @@ impl Process for NormalProcess {
         if p.options.pointer_batch_mode
             || ctx.processed_count.load(Ordering::Acquire) == 0
         {
-            p.save_source_state(&ProcessorSourceState {
-                id: ctx.source_state.id,
-                processor_name: ctx.source_state.processor_name.to_owned(),
-                source_id: ctx.source_state.source_id.to_owned(),
-                last_pointer: ctx.source_pointer.dump(),
-            })
-            .await
-            .map_err(ProcessingError::non_retryable)?;
+            p.save_source_state(&ctx.source_state)
+                .await
+                .map_err(ProcessingError::non_retryable)?;
         }
         for listener in &p.options.process_listeners {
             listener.on_process_completed(&ctx.listener_context);
@@ -1850,6 +1842,7 @@ mod test {
     #[derive(Default)]
     struct PointerStorage {
         states: ParkingMutex<Vec<ProcessorSourceState>>,
+        initial_state: ParkingMutex<Option<ProcessorSourceState>>,
         next_content_id: AtomicUsize,
     }
 
@@ -1922,7 +1915,7 @@ mod test {
             _: &str,
             _: &str,
         ) -> Result<Option<ProcessorSourceState>, StorageError> {
-            Ok(None)
+            Ok(self.initial_state.lock().clone())
         }
 
         async fn save_processor_source_state(
@@ -2024,6 +2017,21 @@ mod test {
         processor.run().await.unwrap();
 
         assert_eq!(storage.saved_pointers(), vec![json!(1), json!(1)]);
+    }
+
+    #[tokio::test]
+    async fn existing_pointer_is_preserved_when_no_items_are_fetched() {
+        let (processor, storage) = pointer_test_processor(true, 0, false);
+        *storage.initial_state.lock() = Some(ProcessorSourceState {
+            id: Some(7),
+            processor_name: processor.name.to_owned(),
+            source_id: processor.source_id.to_owned(),
+            last_pointer: json!(41),
+        });
+
+        processor.run().await.unwrap();
+
+        assert_eq!(storage.saved_pointers(), vec![json!(41)]);
     }
 
     // <editor-fold desc="Sync item content tests">
