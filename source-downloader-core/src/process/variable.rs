@@ -96,26 +96,37 @@ impl VariableAggregation {
     /// 合并单层变量 (如 itemVariables)
     /// inputs: [(accuracy, variables)]
     pub fn merge(&self, inputs: &[(i32, PatternVariables)]) -> PatternVariables {
-        let mut grouped: HashMap<String, Vec<Candidate>> = HashMap::new();
+        self.merge_borrowed(inputs.iter().map(|(accuracy, variables)| {
+            (*accuracy, variables)
+        }))
+    }
 
-        for (idx, (acc, vars)) in inputs.iter().enumerate() {
-            for (k, v) in vars {
+    fn merge_borrowed<'a>(
+        &self,
+        inputs: impl IntoIterator<Item = (i32, &'a PatternVariables)>,
+    ) -> PatternVariables {
+        let mut grouped: HashMap<String, Vec<Candidate>> = HashMap::new();
+        for (index, (accuracy, variables)) in inputs.into_iter().enumerate() {
+            for (key, value) in variables {
                 let final_key = self
                     .name_replace
-                    .get(k)
+                    .get(key)
                     .cloned()
-                    .unwrap_or_else(|| k.clone());
+                    .unwrap_or_else(|| key.clone());
                 grouped.entry(final_key).or_default().push(Candidate {
-                    value: v,
-                    accuracy: *acc,
-                    index: idx,
+                    value,
+                    accuracy,
+                    index,
                 });
             }
         }
 
         grouped
             .into_iter()
-            .map(|(k, candidates)| (k.clone(), self.strategy.resolve(&k, &candidates)))
+            .map(|(key, candidates)| {
+                let value = self.strategy.resolve(&key, &candidates);
+                (key, value)
+            })
             .collect()
     }
 
@@ -129,12 +140,14 @@ impl VariableAggregation {
         let file_count = inputs.iter().map(|i| i.1.len()).max().unwrap_or(0);
 
         (0..file_count)
-            .map(|f_idx| {
-                let slice: Vec<(i32, PatternVariables)> = inputs
-                    .iter()
-                    .map(|(acc, files)| (*acc, files.get(f_idx).cloned().unwrap_or_default()))
-                    .collect();
-                self.merge(&slice)
+            .map(|file_index| {
+                self.merge_borrowed(inputs.iter().filter_map(
+                    |(accuracy, files)| {
+                        files
+                            .get(file_index)
+                            .map(|variables| (*accuracy, variables))
+                    },
+                ))
             })
             .collect()
     }
