@@ -6,6 +6,7 @@ pub mod expression_item_content_filter;
 pub mod expression_item_filter;
 pub mod file_replacement_deciders;
 pub mod mapped_file_tagger;
+pub mod file_directory_exists_detector;
 pub mod fixed_schedule_trigger;
 pub mod holding_task_trigger;
 pub mod http_downloader;
@@ -33,6 +34,7 @@ pub fn get_build_in_component_supplier() -> Vec<Arc<dyn ComponentSupplier>> {
         Arc::new(http_downloader::SUPPLIER),
         Arc::new(system_file_mover::SUPPLIER),
         Arc::new(mapped_file_tagger::SUPPLIER),
+        Arc::new(file_directory_exists_detector::SUPPLIER),
         Arc::new(simple_file_exists_detector::SUPPLIER),
         Arc::new(trimmers::FORCE_SUPPLIER),
         Arc::new(trimmers::REGEX_SUPPLIER),
