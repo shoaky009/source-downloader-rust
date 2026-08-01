@@ -199,11 +199,11 @@ async fn dry_run_stream(
 
 #[axum::debug_handler]
 async fn trigger_rename(
-    State(_core): State<Arc<CoreApplication>>,
-    Path(_name): Path<String>,
-) -> () {
-    info!("trigger_rename name={}", _name);
-    todo!()
+    State(core): State<Arc<CoreApplication>>,
+    Path(name): Path<String>,
+) -> Result<(), AppError> {
+    require_processor(&core, &name)?.run_rename().await?;
+    Ok(())
 }
 
 #[axum::debug_handler]

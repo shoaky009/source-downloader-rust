@@ -213,7 +213,9 @@ one-item-per-commit and regression-test rules above.
   - Core emits each `DryRunResult` through a bounded stream and cancels the
     process when the receiver disconnects; Web exposes it as
     `application/x-ndjson`.
-- [ ] **Implement manual rename endpoint**
+- [x] **Implement manual rename endpoint**
+  - The Web endpoint resolves the running processor and delegates to
+    `SourceProcessor::run_rename()`.
 - [ ] **Implement submitted SourceItem endpoint**
 - [ ] **Implement processor state endpoint**
 - [ ] **Implement pointer update endpoint**
