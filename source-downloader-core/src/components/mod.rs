@@ -19,6 +19,7 @@ pub mod source_item_identity_filter;
 pub mod system_file_mover;
 pub mod sequence_variable_provider;
 pub mod system_file_resolver;
+pub mod regex_variable_provider;
 pub mod system_file_source;
 pub mod trimmers;
 pub mod variable_replacers;
@@ -43,6 +44,7 @@ pub fn get_build_in_component_supplier() -> Vec<Arc<dyn ComponentSupplier>> {
         Arc::new(file_directory_exists_detector::SUPPLIER),
         Arc::new(none_downloader::SUPPLIER),
         Arc::new(sequence_variable_provider::SUPPLIER),
+        Arc::new(regex_variable_provider::SUPPLIER),
         Arc::new(simple_file_exists_detector::SUPPLIER),
         Arc::new(trimmers::FORCE_SUPPLIER),
         Arc::new(trimmers::REGEX_SUPPLIER),
