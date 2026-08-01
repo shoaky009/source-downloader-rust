@@ -1,0 +1,204 @@
+use async_trait::async_trait;
+use serde::Deserialize;
+use source_downloader_sdk::SourceItem;
+use source_downloader_sdk::component::{
+    ComponentError, ComponentSupplier, ComponentType, EmptyPointer, ItemFileResolver,
+    PointedItem, SdComponent, SdComponentMetadata, Source, SourceFile, SourcePointer,
+};
+use source_downloader_sdk::serde_json::{Map, Value};
+use std::fmt::{Debug, Display, Formatter};
+use std::path::PathBuf;
+use std::sync::Arc;
+
+pub struct FixedSourceSupplier;
+pub const SUPPLIER: FixedSourceSupplier = FixedSourceSupplier;
+
+#[derive(Deserialize)]
+struct RawSourceItemContent {
+    item: SourceItem,
+    files: Vec<RawSourceFile>,
+}
+
+#[derive(Deserialize)]
+struct RawSourceFile {
+    path: PathBuf,
+    #[serde(default)]
+    attrs: Map<String, Value>,
+    #[serde(rename = "downloadUri", alias = "fileUri", default)]
+    download_uri: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+impl RawSourceFile {
+    fn into_source_file(self) -> Result<SourceFile, ComponentError> {
+        let download_uri = self
+            .download_uri
+            .map(|uri| {
+                uri.parse().map_err(|error| {
+                    ComponentError::new(format!(
+                        "Invalid fixed source file URI '{uri}': {error}"
+                    ))
+                })
+            })
+            .transpose()?;
+        Ok(SourceFile {
+            path: self.path,
+            attrs: self.attrs,
+            download_uri,
+            tags: self.tags,
+            data: None,
+        })
+    }
+}
+
+impl ComponentSupplier for FixedSourceSupplier {
+    fn supply_types(&self) -> Vec<ComponentType> {
+        vec![
+            ComponentType::source("fixed".to_owned()),
+            ComponentType::file_resolver("fixed".to_owned()),
+        ]
+    }
+
+    fn apply(
+        &self,
+        props: &Map<String, Value>,
+    ) -> Result<Arc<dyn source_downloader_sdk::component::SdComponent>, ComponentError>
+    {
+        let content = props
+            .get("content")
+            .ok_or_else(|| ComponentError::from("Missing 'content' property"))?;
+        let raw_content: Vec<RawSourceItemContent> =
+            serde_json::from_value(content.clone()).map_err(|error| {
+                ComponentError::new(format!("Invalid fixed source content: {error}"))
+            })?;
+        let mut converted = Vec::with_capacity(raw_content.len());
+        for item in raw_content {
+            converted.push(SourceItemContent {
+                item: item.item,
+                files: item
+                    .files
+                    .into_iter()
+                    .map(RawSourceFile::into_source_file)
+                    .collect::<Result<_, _>>()?,
+            });
+        }
+        let offset_mode = match props.get("offset-mode") {
+            None => false,
+            Some(Value::Bool(value)) => *value,
+            Some(_) => {
+                return Err(ComponentError::from("'offset-mode' must be a boolean"));
+            }
+        };
+        Ok(Arc::new(FixedSource { content: converted, offset_mode }))
+    }
+
+    fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
+        None
+    }
+}
+
+#[derive(source_downloader_sdk::SdComponent)]
+#[component(Source, ItemFileResolver)]
+pub struct FixedSource {
+    content: Vec<SourceItemContent>,
+    offset_mode: bool,
+}
+
+impl Debug for FixedSource {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FixedSource")
+            .field("content_count", &self.content.len())
+            .field("offset_mode", &self.offset_mode)
+            .finish()
+    }
+}
+impl Display for FixedSource {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str("fixed")
+    }
+}
+
+#[async_trait]
+impl Source for FixedSource {
+    async fn fetch<'pointer>(
+        &self,
+        source_pointer: &'pointer dyn SourcePointer,
+        limit: u32,
+    ) -> Result<Vec<PointedItem>, source_downloader_sdk::component::ProcessingError> {
+        let offset = source_pointer
+            .as_any()
+            .downcast_ref::<OffsetPointer>()
+            .map(|pointer| pointer.offset)
+            .unwrap_or(0);
+        let items = self.content.iter().map(|content| PointedItem {
+            source_item: content.item.clone(),
+            item_pointer: Arc::new(EmptyPointer),
+        });
+        let items = if self.offset_mode {
+            items.skip(offset).take(limit as usize).collect()
+        } else {
+            items.collect()
+        };
+        Ok(items)
+    }
+
+    fn default_pointer(&self) -> Box<dyn SourcePointer> {
+        Box::new(OffsetPointer { offset: 0 })
+    }
+
+    fn parse_raw_pointer(&self, value: Value) -> Box<dyn SourcePointer> {
+        serde_json::from_value::<OffsetPointer>(value)
+            .map(|pointer| Box::new(pointer) as Box<dyn SourcePointer>)
+            .unwrap_or_else(|_| Box::new(OffsetPointer { offset: 0 }))
+    }
+}
+
+#[async_trait]
+impl ItemFileResolver for FixedSource {
+    async fn resolve_files(&self, source_item: &SourceItem) -> Vec<SourceFile> {
+        self.content
+            .iter()
+            .find(|content| content.item == *source_item)
+            .map(|content| content.files.clone())
+            .unwrap_or_default()
+    }
+}
+
+#[derive(Clone)]
+pub struct SourceItemContent {
+    pub item: SourceItem,
+    pub files: Vec<SourceFile>,
+}
+
+impl Debug for SourceItemContent {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SourceItemContent")
+            .field("item", &self.item)
+            .field("file_count", &self.files.len())
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct OffsetPointer {
+    pub offset: usize,
+}
+
+impl SourcePointer for OffsetPointer {
+    fn dump(&self) -> Value {
+        serde_json::to_value(self).unwrap_or_else(|_| Value::Object(Map::new()))
+    }
+
+    fn update(
+        &mut self,
+        _: &SourceItem,
+        _: &dyn source_downloader_sdk::component::ItemPointer,
+    ) {
+        self.offset += 1;
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
