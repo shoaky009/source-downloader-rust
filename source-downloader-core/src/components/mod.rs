@@ -4,6 +4,7 @@ use std::sync::Arc;
 pub mod expression_file_content_filter;
 pub mod expression_item_content_filter;
 pub mod expression_item_filter;
+pub mod file_replacement_deciders;
 pub mod fixed_schedule_trigger;
 pub mod holding_task_trigger;
 pub mod http_downloader;
@@ -24,6 +25,8 @@ pub fn get_build_in_component_supplier() -> Vec<Arc<dyn ComponentSupplier>> {
         Arc::new(expression_item_content_filter::SUPPLIER),
         Arc::new(expression_file_content_filter::SUPPLIER),
         Arc::new(never_replace_decider::SUPPLIER),
+        Arc::new(file_replacement_deciders::ALWAYS_SUPPLIER),
+        Arc::new(file_replacement_deciders::SIZE_SUPPLIER),
         Arc::new(system_file_source::SUPPLIER),
         Arc::new(system_file_resolver::SUPPLIER),
         Arc::new(http_downloader::SUPPLIER),
