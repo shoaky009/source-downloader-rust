@@ -54,102 +54,175 @@ static PROCESS_ID_GENERATOR: AtomicI64 = AtomicI64::new(i64::MIN);
 // static EMPTY_FILES: Vec<FileContent> = vec![];
 // static EMPTY_PATTERN_VARIABLES: LazyLock<PatternVariables> = LazyLock::new(|| HashMap::new());
 
+/// 单个 item 处理后的文件、变量和状态；这里只承载结果，不负责执行处理、
+/// 持久化或通知监听器。
 #[derive(Debug)]
 pub struct ItemProcessResult {
     /// true 表示结束该 item 的流程处理（如被过滤）
     pub item_filtered: bool,
+    /// 处理过程中生成的文件内容。
     pub file_contents: Vec<FileContent>,
+    /// 处理该 item 时解析得到的变量。
     pub item_variables: PatternVariables,
+    /// 该 item 的最终处理状态。
     pub status: ProcessingStatus,
+    /// 处理过程中的附加信息或错误说明。
     pub message: Option<String>,
+    /// 该 item 完成处理的时间。
     pub finished_at: OffsetDateTime,
 }
 
+/// dry-run 的起始位置和过滤选项；不会改变正式处理器的持久化状态。
 #[derive(Debug, Default)]
 pub struct DryRunOptions {
+    /// dry-run 使用的起始 source pointer；为空时使用处理器当前 pointer。
     pub pointer: Option<Value>,
+    /// 是否应用已处理 item 过滤器。
     pub filter_processed: bool,
 }
 
+/// dry-run 生成的处理内容和文件结果；不代表正式处理已经持久化。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DryRunResult {
+    /// dry-run 生成的处理内容。
     pub processing_content: ProcessingContent,
+    /// dry-run 解析出的文件内容。
     pub file_contents: Vec<FileContent>,
 }
+/// 处理器运行状态的只读快照；通过快照只能观察状态，不能修改处理器。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessorRuntimeSnapshot {
+    /// 处理器实例创建时间。
     pub created_at: OffsetDateTime,
+    /// 最近一次处理失败的错误信息。
     pub last_process_failed_message: Option<String>,
+    /// 最近一次处理开始时间。
     pub last_start_process_time: Option<OffsetDateTime>,
+    /// 最近一次处理结束时间。
     pub last_end_process_time: Option<OffsetDateTime>,
+    /// 当前是否正在处理。
     pub processing: bool,
 }
+/// 处理器清理操作的结果统计；只报告删除数量，不执行删除或暴露存储细节。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProcessorContentDeletion {
+    /// 删除的处理内容数量。
     pub processing_content: u64,
+    /// 删除的目标路径数量。
     pub target_path: u64,
 }
 
+/// 处理器运行选项的对外摘要；只提供配置和统计信息，不持有运行时组件。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessorOptionInformation {
+    /// 文件保存路径模式。
     pub save_path_pattern: String,
+    /// 文件名生成模式。
     pub filename_pattern: String,
+    /// 变量解析失败时采用的处理策略。
     pub variable_error_strategy: VariableErrorStrategy,
+    /// 是否保存处理内容。
     pub save_processing_content: bool,
+    /// 重命名任务的执行间隔。
     pub rename_task_interval: Duration,
+    /// 触发重命名所需达到的次数阈值。
     pub rename_times_threshold: u32,
+    /// 同时处理 item 的最大并发数。
     pub parallelism: u32,
+    /// 单次操作允许的最大重试次数。
     pub retry_attempts: usize,
+    /// 重试之间使用的等待时长。
     pub retry_backoff: Duration,
+    /// 处理器加入的任务组。
     pub task_group: Option<String>,
+    /// 每次从 source 获取的最大 item 数量。
     pub fetch_limit: u32,
+    /// 单个 item 失败时是否继续处理后续 item。
     pub item_error_continue: bool,
+    /// 是否以批量模式推进 source pointer。
     pub pointer_batch_mode: bool,
+    /// 配置的 item 规则数量。
     pub item_rule_count: usize,
+    /// 配置的文件规则数量。
     pub file_rule_count: usize,
+    /// 下载内容所属的分类。
     pub download_category: Option<String>,
+    /// 下载内容使用的标签。
     pub download_tags: Option<Vec<String>>,
+    /// 下载请求使用的请求头。
     pub download_headers: Option<HashMap<String, String>>,
 }
 
+/// 变量处理链的输入、提供器和键筛选规则；只描述配置，不执行变量解析。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VariableProcessChainInformation {
+    /// 变量处理链的输入变量或表达式。
     pub input: String,
+    /// 处理链中使用的变量提供器名称。
     pub providers: Vec<String>,
+    /// 处理结果中的变量键映射。
     pub key_mapping: HashMap<String, String>,
+    /// 处理结果中排除的变量键。
     pub exclude_keys: HashSet<String>,
+    /// 处理结果中包含的变量键。
     pub include_keys: HashSet<String>,
+    /// 是否配置了条件表达式。
     pub conditional: bool,
 }
 
+/// 处理器的组件、路径、标签和选项摘要；作为查询结果对外提供，不暴露组件实例。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessorInformation {
+    /// 处理器名称。
     pub name: String,
+    /// source 组件的标识。
     pub source_id: String,
+    /// source 组件名称。
     pub source: String,
+    /// 变量提供器名称列表。
     pub variable_providers: Vec<String>,
+    /// item 文件解析器名称。
     pub item_file_resolver: String,
+    /// 下载器名称。
     pub downloader: String,
+    /// 文件移动器名称。
     pub file_mover: String,
+    /// item 过滤器名称列表。
     pub item_filters: Vec<String>,
+    /// item 内容过滤器名称列表。
     pub item_content_filters: Vec<String>,
+    /// source 文件过滤器名称列表。
     pub source_file_filters: Vec<String>,
+    /// 文件内容过滤器名称列表。
     pub file_content_filters: Vec<String>,
+    /// 文件标签器名称列表。
     pub file_taggers: Vec<String>,
+    /// 按监听模式分组的处理监听器名称列表。
     pub process_listeners: HashMap<ListenerMode, Vec<String>>,
+    /// 文件存在检测器名称。
     pub file_exists_detector: String,
+    /// 文件替换决策器名称。
     pub file_replacement_decider: String,
+    /// 变量替换器名称列表。
     pub variable_replacers: Vec<String>,
+    /// 变量处理链的配置详情。
     pub variable_process_chains: Vec<VariableProcessChainInformation>,
+    /// 按变量名分组的修剪器名称列表。
     pub trimming: HashMap<String, Vec<String>>,
+    /// 下载器默认下载目录。
     pub download_path: String,
+    /// 处理内容保存目录。
     pub source_save_path: String,
+    /// 处理器所属分类。
     pub category: Option<String>,
+    /// 处理器标签集合。
     pub tags: HashSet<String>,
+    /// 处理器运行选项及其摘要信息。
     pub options: ProcessorOptionInformation,
 }
 
+/// 处理器最近一次运行的可变状态；只在内部运行时使用，不负责持久化或调度。
 #[derive(Debug, Default)]
 struct ProcessorRuntimeState {
     last_process_failed_message: Option<String>,
@@ -158,6 +231,7 @@ struct ProcessorRuntimeState {
     processing: bool,
 }
 
+/// 处理器创建时间和受保护的运行状态；不负责启动、取消或执行处理流程。
 #[derive(Debug)]
 struct ProcessorRuntime {
     created_at: OffsetDateTime,
@@ -173,70 +247,100 @@ impl ProcessorRuntime {
     }
 }
 
+/// 处理器的运行入口，组合依赖并协调 source processing；具体抓取、解析、下载和存储由注入的组件完成。
 #[allow(dead_code, unused)]
 pub struct SourceProcessor {
+    /// 处理器名称。
     pub name: String,
+    /// source 组件的标识。
     pub source_id: String,
+    /// 处理器状态或内容的保存目录。
     save_path: Box<Path>,
+    /// 提供待处理 item 的 source 组件。
     source: Arc<dyn Source>,
+    /// 将 item 解析为文件内容的组件。
     item_file_resolver: Arc<dyn ItemFileResolver>,
+    /// 执行文件下载的组件。
     downloader: Arc<dyn Downloader>,
+    /// 下载器提供的可选异步下载接口。
     async_downloader: Option<Arc<dyn AsyncDownloader>>,
+    /// 执行文件移动的组件。
     file_mover: Arc<dyn FileMover>,
+    /// 持久化处理内容和处理器状态的存储组件。
     processing_storage: Arc<dyn ProcessingStorage>,
+    /// 处理器所属分类。
     category: Option<String>,
+    /// 处理器标签集合。
     tags: HashSet<String>,
+    /// 处理器运行配置。
     options: ProcessorOptions,
+    /// 处理器实例的唯一运行时标识。
     instance_id: i64,
+    /// 表示处理器当前是否正在处理的原子标志。
     processing: AtomicBool,
+    /// 表示处理器是否已关闭的原子标志。
     closed: AtomicBool,
+    /// 当前处理任务的取消句柄。
     active_process: SyncMutex<Option<AbortHandle>>,
+    /// 处理器运行时间和最近处理状态。
     runtime: ProcessorRuntime,
+    /// 负责生成文件目标路径和名称的重命名器。
     renamer: Renamer,
+    /// 下载器默认下载目录的绝对路径。
     download_path: Box<Path>,
 }
 
+/// 一次处理运行所需的规则、组件和并发选项；只保存配置，不创建组件或执行流程。
 pub struct ProcessorOptions {
-    // ok
+    /// 文件保存路径模式。
     pub save_path_pattern: PathPattern,
-    // ok
+    /// 文件名生成模式。
     pub filename_pattern: PathPattern,
-    // ok
+    /// 变量提供器列表。
     pub variable_providers: Vec<Arc<dyn VariableProvider>>,
-    // ok
+    /// item 过滤器列表。
     pub item_filters: Vec<Arc<dyn SourceItemFilter>>,
+    /// item 内容过滤器列表。
     pub item_content_filters: Vec<Arc<dyn ItemContentFilter>>,
-    // ok
+    /// source 文件过滤器列表。
     pub source_file_filters: Vec<Arc<dyn SourceFileFilter>>,
-    // ok
+    /// 文件内容过滤器列表。
     pub file_content_filters: Vec<Arc<dyn FileContentFilter>>,
-    // ok
+    /// 文件标签器列表。
     pub file_taggers: Vec<Arc<dyn FileTagger>>,
-    // ok
+    /// 变量聚合方式。
     pub variable_aggregation: VariableAggregation,
-    // ok
+    /// 是否保存处理内容。
     pub save_processing_content: bool,
+    /// 重命名任务的执行间隔。
     pub rename_task_interval: Duration,
+    /// 触发重命名所需达到的次数阈值。
     pub rename_times_threshold: u32,
+    /// 同时处理 item 的最大并发数。
     pub parallelism: u32,
+    /// 单次操作允许的最大重试次数。
     pub retry_attempts: usize,
+    /// 重试之间使用的等待时长。
     pub retry_backoff: Duration,
-    // ok
+    /// 处理器加入的任务组。
     pub task_group: Option<String>,
-    // ok
+    /// 每次从 source 获取的最大 item 数量。
     pub fetch_limit: u32,
-    // ok
+    /// 单个 item 失败时是否继续处理后续 item。
     pub item_error_continue: bool,
-    // ok
+    /// 是否以批量模式推进 source pointer。
     pub pointer_batch_mode: bool,
-    // ok
+    /// item 处理规则列表。
     pub item_rules: Vec<ItemRule>,
-    // ok
+    /// 文件处理规则列表。
     pub file_rules: Vec<FileRule>,
+    /// 按监听模式分组的处理监听器列表。
     pub process_listeners: HashMap<ListenerMode, Vec<Arc<dyn ProcessListener>>>,
+    /// 检测目标文件是否已存在的组件。
     pub file_exists_detector: Arc<dyn FileExistsDetector>,
+    /// 决定是否替换已有文件的组件。
     pub file_replacement_decider: Arc<dyn FileReplacementDecider>,
-    // ok
+    /// 下载请求选项。
     pub download_options: DownloadOptions,
 }
 
@@ -256,6 +360,7 @@ impl ProcessTask for SourceProcessor {
     }
 }
 
+/// 给监听器提供一次运行的上下文、处理内容和错误状态；不负责处理 item 或推进 source pointer。
 struct ListenerContext {
     processor_info: ProcessorInfo,
     contents: Vec<(ProcessingContent, Vec<FileContent>)>,
@@ -323,6 +428,7 @@ impl ProcessContext for ListenerContext {
     }
 }
 
+/// 一次处理运行的内存上下文，包含 trace、协调器、计时点和 item 状态；不跨运行复用或直接持久化。
 #[allow(dead_code, unused)]
 struct ProcessRuntime {
     trace_id: String,
@@ -334,6 +440,7 @@ struct ProcessRuntime {
     fetch_end_at: Option<Instant>,
 }
 
+/// 一次运行中 item 的计数、去重、取消和文件占用状态；只用于当前运行的并发协调。
 struct ItemProcessRuntime {
     mutex: Mutex<()>,
     process_submitted_items: RwLock<HashSet<String>>,
@@ -344,11 +451,13 @@ struct ItemProcessRuntime {
     cancelled_items: RwLock<HashSet<String>>,
 }
 
+/// 一个正在处理的 item 及其文件结果；只用于运行内跟踪，不是最终存储模型。
 struct InFlightItem {
     content: ProcessingContent,
     files: Vec<FileContent>,
 }
 
+/// 一次运行的 source 状态、当前 pointer 和监听器上下文；负责连接这些状态，不执行 item 逻辑。
 struct ProcessCoordinator {
     source_state: ProcessorSourceState,
     source_pointer: Box<dyn SourcePointer>,
@@ -491,6 +600,7 @@ impl ProcessRuntime {
     }
 }
 
+/// 处理器运行状态的 RAII 记录器，负责记录开始、结束和失败；不拥有处理任务，也不改变结果。
 struct ProcessingGuard<'a> {
     processor: &'a SourceProcessor,
 }
@@ -2414,6 +2524,7 @@ trait Process {
     }
 }
 
+/// 正式处理流程的 `Process` 实现，负责持久化、监听和 pointer 推进；不处理 dry-run 或重处理。
 #[allow(dead_code)]
 struct NormalProcess {}
 
@@ -2601,6 +2712,7 @@ enum DryRunOutput {
     Streamed(mpsc::Sender<Result<DryRunResult, ProcessingError>>),
 }
 
+/// dry-run 的 `Process` 实现，只收集或流式输出预览结果，不保存内容或下载文件。
 struct DryRunProcess {
     source_pointer: Option<Value>,
     item_filters: Vec<Arc<dyn SourceItemFilter>>,
@@ -2718,6 +2830,7 @@ impl Process for DryRunProcess {
     }
 }
 
+/// 以已有处理内容为输入的重处理流程；不重新抓取 source。
 struct Reprocess {
     content: ProcessingContent,
     item_filters: Vec<Arc<dyn SourceItemFilter>>,
@@ -2792,6 +2905,7 @@ impl Process for Reprocess {
     }
 }
 
+/// 以固定 item 列表驱动处理流程，只替换 item 获取方式，其余行为沿用正常流程。
 struct FixedItemProcess {
     items: Vec<SourceItem>,
 }
@@ -2869,6 +2983,7 @@ mod test {
     use std::fmt::{Display, Formatter};
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
+    /// 测试用的可比较 item pointer，只模拟 pointer 身份，不推进真实 source 状态。
     #[derive(Debug)]
     struct PointerItem(usize);
 
@@ -2878,6 +2993,7 @@ mod test {
         }
     }
 
+    /// 测试用的可序列化 source pointer，只服务测试夹具，不代表生产实现。
     #[derive(Default)]
     struct TestSourcePointer(usize);
 
@@ -2899,6 +3015,7 @@ mod test {
         }
     }
 
+    /// 记录测试流程中的并发峰值和启动顺序，只观测行为，不参与调度。
     #[derive(Debug)]
     struct ParallelismProbe {
         active: AtomicUsize,
@@ -2931,6 +3048,7 @@ mod test {
         }
     }
 
+    /// 记录测试中的替换提交、取消和完成事件，只提供观测点，不执行文件替换。
     #[derive(Debug, Default)]
     struct ReplacementProbe {
         first_submitted: tokio::sync::Notify,
@@ -2938,6 +3056,7 @@ mod test {
         cancelled_items: ParkingMutex<Vec<String>>,
     }
 
+    /// 提供固定且可预测的测试文件标签，只验证标签注入流程。
     #[derive(Debug)]
     struct StaticFileTagger;
 
@@ -2956,6 +3075,7 @@ mod test {
         }
     }
 
+    /// 提供可控的 source 测试组件，只生成测试 item 和故障，不执行真实抓取或持久化。
     #[derive(Debug)]
     struct PointerTestComponent {
         item_count: usize,
@@ -3152,6 +3272,7 @@ mod test {
         }
     }
 
+    /// 测试用的 item 过滤器，拒绝所有 item，只验证 item 过滤分支。
     #[derive(Debug)]
     struct RejectAllItems;
 
@@ -3170,6 +3291,7 @@ mod test {
         }
     }
 
+    /// 测试用的内容过滤器，拒绝所有 item 内容，只验证内容过滤分支。
     #[derive(Debug)]
     struct RejectAllContent;
 
@@ -3188,6 +3310,7 @@ mod test {
         }
     }
 
+    /// 构造测试用的 in-flight 文件替换场景，不实现生产替换策略。
     #[derive(Debug)]
     struct ReplaceInFlight;
 
@@ -3211,6 +3334,7 @@ mod test {
         }
     }
 
+    /// 提供固定变量值的测试变量提供器，不读取外部数据源。
     #[derive(Debug)]
     struct StaticVariableProvider(&'static str);
 
@@ -3253,6 +3377,7 @@ mod test {
         }
     }
 
+    /// 捕获测试期间生成的目标路径，只记录路径供断言。
     #[derive(Debug, Default)]
     struct PathCaptureProvider(ParkingMutex<Vec<PathBuf>>);
 
@@ -3293,6 +3418,7 @@ mod test {
         }
     }
 
+    /// 记录测试监听器收到的目标文件名，只验证监听通知内容。
     #[derive(Debug, Default)]
     struct TargetFilenameListener(ParkingMutex<Vec<String>>);
 
@@ -3336,6 +3462,7 @@ mod test {
         }
     }
 
+    /// 可注入故障的内存 pointer storage 测试替身，不代表生产存储实现。
     #[derive(Default)]
     struct PointerStorage {
         states: ParkingMutex<Vec<ProcessorSourceState>>,
@@ -3493,7 +3620,7 @@ mod test {
             Ok(0)
         }
     }
-
+    /// 集中配置 pointer 流程测试的运行参数和故障注入，不作为处理器运行配置。
     struct PointerTestSettings {
         parallelism: u32,
         item_error_continue: bool,
@@ -4626,6 +4753,7 @@ mod test {
         }
     }
     // </editor-fold>
+    /// 记录测试期间收到的成功、错误和完成通知，只观测监听器事件。
     #[derive(Debug, Default)]
     struct RecordingListener {
         successes: AtomicUsize,
@@ -4645,6 +4773,7 @@ mod test {
 
     impl source_downloader_sdk::component::SdComponent for RecordingListener {}
 
+    /// 模拟永不完成的测试下载操作，只验证取消和关闭行为。
     #[derive(Debug)]
     struct NeverFinishedDownloader;
 
@@ -4681,6 +4810,7 @@ mod test {
         }
     }
 
+    /// 模拟缺少下载状态的测试下载器，只验证相应错误处理。
     #[derive(Debug)]
     struct MissingDownloadStateDownloader;
 
@@ -4834,6 +4964,7 @@ mod test {
         assert_eq!(storage.saved_pointers(), vec![updated.last_pointer]);
     }
 
+    /// 始终返回监听器错误的测试替身，只验证监听器错误处理。
     #[derive(Debug)]
     struct FailingListener;
     #[tokio::test]
@@ -5484,6 +5615,7 @@ mod test {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// 模拟替换文件的测试移动器，只验证替换路径，不执行真实移动。
     #[derive(Debug)]
     struct ReplacementFileMover;
 
@@ -5496,6 +5628,7 @@ mod test {
     impl source_downloader_sdk::component::SdComponent for ReplacementFileMover {}
     impl FileMover for ReplacementFileMover {}
 
+    /// 始终返回移动失败的测试替身，只验证移动失败处理。
     #[derive(Debug)]
     struct FailingFileMover;
 
@@ -5517,6 +5650,7 @@ mod test {
         }
     }
 
+    /// 记录是否观察到前置 item 的测试决策器，只验证替换决策输入。
     #[derive(Debug)]
     struct AlwaysReplaceDecider {
         saw_prior_item: AtomicBool,
@@ -5543,6 +5677,7 @@ mod test {
         }
     }
 
+    /// 记录最近一次 item 标题的测试决策器，只提供替换断言数据。
     #[derive(Debug, Default)]
     struct PriorTitleDecider(ParkingMutex<Option<String>>);
 
