@@ -160,7 +160,7 @@ one-item-per-commit and regression-test rules above.
     the download root; fix the known Windows-sensitive `sync_downloader_case`.
   - Suggested commit: `fix: normalize processor processing paths`
 
-- [ ] **Persist continued and skippable Item failures**
+- [x] **Persist continued and skippable Item failures**
   - Kotlin persists a `FAILURE` ProcessingContent when
     `item-error-continue=true` or an error is explicitly skippable.
   - Rust currently invokes error listeners and continues without saving a

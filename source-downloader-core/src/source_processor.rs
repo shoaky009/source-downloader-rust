@@ -842,7 +842,7 @@ trait Process {
         p: &SourceProcessor,
         processing_content: &ProcessingContent,
         files: &Vec<FileContent>,
-    ) -> Result<(), ProcessingError>;
+    ) -> Result<Option<i64>, ProcessingError>;
 
     async fn on_item_error(
         &self,
@@ -851,6 +851,37 @@ trait Process {
         _item: &SourceItem,
         _err: &ProcessingError,
     ) {
+    }
+
+    async fn persist_item_failure(
+        &self,
+        p: &SourceProcessor,
+        source_item: &SourceItem,
+        error: &ProcessingError,
+        content_id: Option<i64>,
+        created_at: Option<OffsetDateTime>,
+    ) {
+        let failed_content = ProcessingContent {
+            id: content_id,
+            processor_name: p.name.clone(),
+            item_hash: source_item.hashing(),
+            item_identity: source_item.identity.clone(),
+            item_content: ItemContentLite {
+                source_item: source_item.clone(),
+                item_variables: HashMap::new(),
+            },
+            rename_times: 0,
+            status: ProcessingStatus::Failure,
+            failure_reason: Some(error.message().to_owned()),
+            created_at: created_at.unwrap_or_else(OffsetDateTime::now_utc),
+            updated_at: None,
+        };
+        let files = Vec::new();
+        if let Err(save_error) =
+            self.on_item_process_complete(p, &failed_content, &files).await
+        {
+            warn!("[item-failure-save-error] {} {}", save_error.message(), source_item);
+        }
     }
 
     async fn on_item_filtered(
@@ -939,6 +970,8 @@ trait Process {
                         self.on_item_error(p, &mut p_rt.coordinator, &source_item, &err)
                             .await;
                         if p.options.item_error_continue {
+                            self.persist_item_failure(p, &source_item, &err, None, None)
+                                .await;
                             warn!(
                                 "[item-continue-on-error] {} {}",
                                 err.message(),
@@ -957,6 +990,8 @@ trait Process {
                     let skippable =
                         matches!(err, ProcessingError::NonRetryable { skip: true, .. });
                     if skippable || p.options.item_error_continue {
+                        self.persist_item_failure(p, &source_item, &err, None, None)
+                            .await;
                         warn!(
                             "[item-continue-on-error] {} {}",
                             err.message(),
@@ -978,7 +1013,7 @@ trait Process {
                     if item_runtime.is_cancelled(&item_hash) {
                         status = ProcessingStatus::Cancelled;
                     }
-                    let content = ProcessingContent {
+                    let mut content = ProcessingContent {
                         id: None,
                         processor_name: p.name.clone(),
                         item_hash,
@@ -991,8 +1026,17 @@ trait Process {
                         updated_at: None,
                     };
                     match self.on_item_process_complete(p, &content, &files).await {
-                        Ok(()) => {
+                        Ok(content_id) => {
+                            content.id = content_id;
                             item_runtime.processed_inc();
+                            let continued_failure =
+                                p.options.item_error_continue.then(|| {
+                                    (
+                                        content.id,
+                                        content.created_at,
+                                        content.item_content.source_item.clone(),
+                                    )
+                                });
                             match self
                                 .on_item_success(
                                     p,
@@ -1006,6 +1050,18 @@ trait Process {
                             {
                                 Ok(()) => {}
                                 Err(err) if p.options.item_error_continue => {
+                                    let (content_id, created_at, source_item) =
+                                        continued_failure.expect(
+                                            "continued failure context is available",
+                                        );
+                                    self.persist_item_failure(
+                                        p,
+                                        &source_item,
+                                        &err,
+                                        content_id,
+                                        Some(created_at),
+                                    )
+                                    .await;
                                     warn!("[item-continue-on-error] {}", err.message());
                                 }
                                 Err(_) => stop_after_item = true,
@@ -1993,12 +2049,12 @@ impl Process for NormalProcess {
         p: &SourceProcessor,
         processing_content: &ProcessingContent,
         files: &Vec<FileContent>,
-    ) -> Result<(), ProcessingError> {
+    ) -> Result<Option<i64>, ProcessingError> {
         debug!("[item-done] {:?}", &processing_content.item_content.source_item);
         if processing_content.status == ProcessingStatus::Filtered
             || !p.options.save_processing_content
         {
-            return Ok(());
+            return Ok(None);
         }
         let content_id = p
             .processing_storage
@@ -2018,7 +2074,8 @@ impl Process for NormalProcess {
                     "Failed to save file contents {}",
                     error.message
                 ))
-            })
+            })?;
+        Ok(Some(content_id))
     }
 
     async fn on_item_error(
@@ -2190,8 +2247,8 @@ impl Process for DryRunProcess {
         _: &SourceProcessor,
         _: &ProcessingContent,
         _: &Vec<FileContent>,
-    ) -> Result<(), ProcessingError> {
-        Ok(())
+    ) -> Result<Option<i64>, ProcessingError> {
+        Ok(None)
     }
 
     async fn on_item_success(
@@ -2279,9 +2336,9 @@ impl Process for Reprocess {
         processor: &SourceProcessor,
         processing_content: &ProcessingContent,
         files: &Vec<FileContent>,
-    ) -> Result<(), ProcessingError> {
+    ) -> Result<Option<i64>, ProcessingError> {
         if !processor.options.save_processing_content {
-            return Ok(());
+            return Ok(None);
         }
         let mut content = processing_content.clone();
         content.id = self.content.id;
@@ -2296,7 +2353,8 @@ impl Process for Reprocess {
             .processing_storage
             .save_file_contents(content_id, encode_files_and_compress(files)?)
             .await
-            .map_err(|error| ProcessingError::non_retryable(error.message))
+            .map_err(|error| ProcessingError::non_retryable(error.message))?;
+        Ok(Some(content_id))
     }
 }
 
@@ -2341,9 +2399,9 @@ impl Process for FixedItemProcess {
         processor: &SourceProcessor,
         processing_content: &ProcessingContent,
         files: &Vec<FileContent>,
-    ) -> Result<(), ProcessingError> {
+    ) -> Result<Option<i64>, ProcessingError> {
         if !processor.options.save_processing_content {
-            return Ok(());
+            return Ok(None);
         }
         let content_id = processor
             .processing_storage
@@ -2354,7 +2412,8 @@ impl Process for FixedItemProcess {
             .processing_storage
             .save_file_contents(content_id, encode_files_and_compress(files)?)
             .await
-            .map_err(|error| ProcessingError::non_retryable(error.message))
+            .map_err(|error| ProcessingError::non_retryable(error.message))?;
+        Ok(Some(content_id))
     }
 }
 
@@ -2842,10 +2901,20 @@ mod test {
             &self,
             content: &ProcessingContent,
         ) -> Result<i64, StorageError> {
-            self.saved_contents.lock().push(content.clone());
-            Ok(content.id.unwrap_or_else(|| {
+            let id = content.id.unwrap_or_else(|| {
                 self.next_content_id.fetch_add(1, AtomicOrdering::Relaxed) as i64
-            }))
+            });
+            let mut saved = content.clone();
+            saved.id = Some(id);
+            let mut saved_contents = self.saved_contents.lock();
+            if let Some(existing) =
+                saved_contents.iter_mut().find(|existing| existing.id == Some(id))
+            {
+                *existing = saved;
+            } else {
+                saved_contents.push(saved);
+            }
+            Ok(id)
         }
 
         async fn processing_content_exists(
@@ -3609,7 +3678,7 @@ mod test {
     #[tokio::test]
     async fn item_error_stops_new_work_and_drains_started_items() {
         let probe = Arc::new(ParallelismProbe::new(2));
-        let (processor, storage) = pointer_test_processor_with_settings(
+        let (mut processor, storage) = pointer_test_processor_with_settings(
             false,
             3,
             false,
@@ -3620,16 +3689,24 @@ mod test {
                 ..Default::default()
             },
         );
+        processor.options.save_processing_content = true;
 
         processor.run().await.unwrap();
 
         assert_eq!(*probe.completed.lock(), vec![2, 1]);
         assert!(storage.saved_pointers().is_empty());
+        assert!(
+            storage
+                .saved_contents
+                .lock()
+                .iter()
+                .all(|content| content.status != ProcessingStatus::Failure)
+        );
     }
 
     #[tokio::test]
     async fn item_error_continue_processes_remaining_items() {
-        let (processor, storage) = pointer_test_processor_with_settings(
+        let (mut processor, storage) = pointer_test_processor_with_settings(
             false,
             3,
             false,
@@ -3640,15 +3717,25 @@ mod test {
                 ..Default::default()
             },
         );
+        processor.options.save_processing_content = true;
 
         processor.run().await.unwrap();
 
         assert_eq!(storage.saved_pointers(), vec![json!(2), json!(3)]);
+        let saved_contents = storage.saved_contents.lock();
+        let failed = saved_contents
+            .iter()
+            .find(|content| content.status == ProcessingStatus::Failure)
+            .expect("continued item error should be persisted");
+        assert_eq!(failed.item_content.source_item.title, "item-1");
+        assert!(
+            failed.failure_reason.as_deref().is_some_and(|reason| !reason.is_empty())
+        );
     }
 
     #[tokio::test]
     async fn item_error_continue_recovers_from_pointer_save_error() {
-        let (processor, storage) = pointer_test_processor_with_settings(
+        let (mut processor, storage) = pointer_test_processor_with_settings(
             false,
             3,
             false,
@@ -3658,14 +3745,53 @@ mod test {
                 ..Default::default()
             },
         );
+        processor.options.save_processing_content = true;
 
         processor.run().await.unwrap();
 
         assert_eq!(storage.saved_pointers(), vec![json!(2), json!(3)]);
+        let saved_contents = storage.saved_contents.lock();
+        let first_item = saved_contents
+            .iter()
+            .filter(|content| content.item_content.source_item.title == "item-1")
+            .collect_vec();
+        assert_eq!(first_item.len(), 1);
+        assert_eq!(first_item[0].status, ProcessingStatus::Failure);
+        assert_eq!(
+            first_item[0].failure_reason.as_deref(),
+            Some("failed to save processor source state")
+        );
+    }
+
+    #[tokio::test]
+    async fn item_error_continue_persists_filtered_pointer_save_error() {
+        let (mut processor, storage) = pointer_test_processor_with_settings(
+            false,
+            3,
+            true,
+            PointerTestSettings {
+                item_error_continue: true,
+                fail_next_state_save: true,
+                ..Default::default()
+            },
+        );
+        processor.options.save_processing_content = true;
+
+        processor.run().await.unwrap();
+
+        assert_eq!(storage.saved_pointers().last(), Some(&json!(3)));
+        let saved_contents = storage.saved_contents.lock();
+        assert_eq!(saved_contents.len(), 1);
+        assert_eq!(saved_contents[0].status, ProcessingStatus::Failure);
+        assert_eq!(saved_contents[0].item_content.source_item.title, "item-1");
+        assert_eq!(
+            saved_contents[0].failure_reason.as_deref(),
+            Some("failed to save processor source state")
+        );
     }
     #[tokio::test]
     async fn skippable_item_error_continues_when_error_continue_is_disabled() {
-        let (processor, storage) = pointer_test_processor_with_settings(
+        let (mut processor, storage) = pointer_test_processor_with_settings(
             false,
             3,
             false,
@@ -3676,10 +3802,18 @@ mod test {
                 ..Default::default()
             },
         );
+        processor.options.save_processing_content = true;
 
         processor.run().await.unwrap();
 
         assert_eq!(storage.saved_pointers(), vec![json!(2), json!(3)]);
+        let saved_contents = storage.saved_contents.lock();
+        let failed = saved_contents
+            .iter()
+            .find(|content| content.status == ProcessingStatus::Failure)
+            .expect("skippable item error should be persisted");
+        assert_eq!(failed.item_content.source_item.title, "item-1");
+        assert_eq!(failed.failure_reason.as_deref(), Some("skippable test error"));
     }
 
     #[tokio::test]
