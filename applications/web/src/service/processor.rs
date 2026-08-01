@@ -8,7 +8,6 @@ use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use serde_qs::to_string;
 use source_downloader_core::application::CoreApplication;
 use source_downloader_core::config::ProcessorConfig;
 use source_downloader_core::processor_manager::ProcessorWrapper;
@@ -228,17 +227,21 @@ async fn get_state(
 
 #[axum::debug_handler]
 async fn update_pointer(
-    State(_core): State<Arc<CoreApplication>>,
-    Path(_name): Path<String>,
+    State(core): State<Arc<CoreApplication>>,
+    Path(name): Path<String>,
     Json(body): Json<PointerPayload>,
-) -> () {
-    info!(
-        "update_pointer name={}, sourceId={} ,pt={}",
-        _name,
-        body.source_id,
-        to_string(&body.pointer).unwrap()
-    );
-    todo!()
+) -> Result<(), AppError> {
+    let processor = require_processor(&core, &name)?;
+    let updated = processor
+        .update_source_pointer(&body.source_id, Value::Object(body.pointer))
+        .await?;
+    if updated.is_none() {
+        return Err(AppError::NotFound(format!(
+            "Processor {name} with source {} not found",
+            body.source_id
+        )));
+    }
+    Ok(())
 }
 
 #[axum::debug_handler]

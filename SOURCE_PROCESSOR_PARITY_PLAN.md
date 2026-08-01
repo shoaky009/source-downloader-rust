@@ -223,7 +223,9 @@ one-item-per-commit and regression-test rules above.
   - Core exposes the persisted state or the Source default pointer; Web maps it
     to the Kotlin-compatible `sourceId`, `pointer`, `lastActiveTime`, and
     `retryTimes` view.
-- [ ] **Implement pointer update endpoint**
+- [x] **Implement pointer update endpoint**
+  - Core requires an existing processor/source state, merges object pointer
+    values, persists the result, and Web returns `404` when the state is absent.
 - [ ] **Implement processor content deletion endpoint**
 - [ ] **Connect the processing reprocess endpoint to Core**
 

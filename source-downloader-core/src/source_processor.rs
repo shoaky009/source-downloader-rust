@@ -817,6 +817,30 @@ impl SourceProcessor {
             }))
     }
 
+    pub async fn update_source_pointer(
+        &self,
+        source_id: &str,
+        pointer: Value,
+    ) -> Result<Option<ProcessorSourceState>, ProcessingError> {
+        let Some(mut state) = self
+            .processing_storage
+            .find_processor_source_state(&self.name, source_id)
+            .await
+            .map_err(|error| ProcessingError::non_retryable(error.message))?
+        else {
+            return Ok(None);
+        };
+        match (state.last_pointer.as_object_mut(), pointer) {
+            (Some(current), Value::Object(updated)) => current.extend(updated),
+            (_, updated) => state.last_pointer = updated,
+        }
+        self.processing_storage
+            .save_processor_source_state(&state)
+            .await
+            .map(Some)
+            .map_err(|error| ProcessingError::non_retryable(error.message))
+    }
+
     pub fn start_rename_task(self: &Arc<Self>) {
         if self.async_downloader.is_none() {
             return;
@@ -4533,6 +4557,39 @@ mod test {
         assert_eq!(state.processor_name, "pointer-test");
         assert_eq!(state.source_id, "pointer-test-source");
         assert_eq!(state.last_pointer, json!(0));
+    }
+
+    #[tokio::test]
+    async fn update_source_pointer_requires_state_and_merges_object_values() {
+        let (processor, storage) = pointer_test_processor(false, 1, false);
+        assert!(
+            processor
+                .update_source_pointer("pointer-test-source", json!({"page": 2}))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        *storage.initial_state.lock() = Some(ProcessorSourceState {
+            id: Some(7),
+            processor_name: processor.name.clone(),
+            source_id: processor.source_id.clone(),
+            last_pointer: json!({"page": 1, "retained": true}),
+        });
+
+        let updated = processor
+            .update_source_pointer(
+                "pointer-test-source",
+                json!({"page": 2, "added": "value"}),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            updated.last_pointer,
+            json!({"page": 2, "retained": true, "added": "value"})
+        );
+        assert_eq!(storage.saved_pointers(), vec![updated.last_pointer]);
     }
 
     #[derive(Debug)]
