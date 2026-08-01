@@ -74,6 +74,38 @@ pub struct DryRunResult {
     pub processing_content: ProcessingContent,
     pub file_contents: Vec<FileContent>,
 }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessorRuntimeSnapshot {
+    pub created_at: OffsetDateTime,
+    pub last_process_failed_message: Option<String>,
+    pub last_start_process_time: Option<OffsetDateTime>,
+    pub last_end_process_time: Option<OffsetDateTime>,
+    pub processing: bool,
+}
+
+#[derive(Debug, Default)]
+struct ProcessorRuntimeState {
+    last_process_failed_message: Option<String>,
+    last_start_process_time: Option<OffsetDateTime>,
+    last_end_process_time: Option<OffsetDateTime>,
+    processing: bool,
+}
+
+#[derive(Debug)]
+struct ProcessorRuntime {
+    created_at: OffsetDateTime,
+    state: RwLock<ProcessorRuntimeState>,
+}
+
+impl ProcessorRuntime {
+    fn new() -> Self {
+        Self {
+            created_at: OffsetDateTime::now_utc(),
+            state: RwLock::new(ProcessorRuntimeState::default()),
+        }
+    }
+}
+
 #[allow(dead_code, unused)]
 pub struct SourceProcessor {
     pub name: String,
@@ -90,6 +122,7 @@ pub struct SourceProcessor {
     options: ProcessorOptions,
     instance_id: i64,
     processing: AtomicBool,
+    runtime: ProcessorRuntime,
     renamer: Renamer,
     download_path: Box<Path>,
 }
@@ -390,18 +423,32 @@ impl ProcessRuntime {
 }
 
 struct ProcessingGuard<'a> {
-    running: &'a AtomicBool,
+    processor: &'a SourceProcessor,
 }
 
 impl<'a> ProcessingGuard<'a> {
-    fn new(running: &'a AtomicBool) -> Self {
-        Self { running }
+    fn new(processor: &'a SourceProcessor) -> Self {
+        let mut state = processor.runtime.state.write();
+        state.last_start_process_time = Some(OffsetDateTime::now_utc());
+        state.last_end_process_time = None;
+        state.processing = true;
+        drop(state);
+        Self { processor }
+    }
+
+    fn record_result(&self, result: &Result<(), ProcessingError>) {
+        self.processor.runtime.state.write().last_process_failed_message =
+            result.as_ref().err().map(|error| error.message().to_owned());
     }
 }
 
 impl Drop for ProcessingGuard<'_> {
     fn drop(&mut self) {
-        self.running.store(false, Ordering::Release);
+        let mut state = self.processor.runtime.state.write();
+        state.last_end_process_time = Some(OffsetDateTime::now_utc());
+        state.processing = false;
+        drop(state);
+        self.processor.processing.store(false, Ordering::Release);
     }
 }
 
@@ -482,6 +529,7 @@ impl SourceProcessor {
             options,
             instance_id: INSTANCE_ID_GENERATOR.fetch_add(1, Ordering::Relaxed),
             processing: AtomicBool::new(false),
+            runtime: ProcessorRuntime::new(),
             renamer,
             download_path,
         }
@@ -514,6 +562,16 @@ impl SourceProcessor {
         }
     }
 
+    pub fn runtime_snapshot(&self) -> ProcessorRuntimeSnapshot {
+        let state = self.runtime.state.read();
+        ProcessorRuntimeSnapshot {
+            created_at: self.runtime.created_at,
+            last_process_failed_message: state.last_process_failed_message.clone(),
+            last_start_process_time: state.last_start_process_time,
+            last_end_process_time: state.last_end_process_time,
+            processing: state.processing,
+        }
+    }
     pub async fn dry_run(
         &self,
         options: DryRunOptions,
@@ -956,61 +1014,96 @@ trait Process {
             info!("[run-reject] {}({}) Already processing", p.name, p.instance_id);
             return Err(ProcessingError::non_retryable("Already processing"));
         }
-        let _processing_guard = ProcessingGuard::new(&p.processing);
-        let mut p_rt = self.init_process_context(p, start_time).await?;
-        debug!("Fetch with pointer: {}", p_rt.coordinator.source_pointer.dump());
-        p_rt.fetch_start_at = Some(Instant::now());
-        let items = self.fetch_items(p, p_rt.coordinator.source_pointer.as_ref()).await?;
-        p_rt.fetch_end_at = Some(Instant::now());
-        let parallelism = p.options.parallelism.max(1) as usize;
-        if p.options.parallelism == 0 {
-            warn!("Processor parallelism=0 is invalid; using parallelism=1");
-        }
-        let process = self;
-        let item_runtime = &p_rt.item;
-        let processor = p;
-        let make_item_future =
-            move |item: source_downloader_sdk::component::PointedItem| async move {
-                let item_pointer = item.item_pointer;
-                let source_item = item.source_item;
-                let item_action = process
-                    .process_item(&source_item, item_runtime, processor)
-                    .await
-                    .unwrap_or_else(ItemAction::Error);
-                (item_pointer, source_item, item_action)
-            };
-        let mut remaining_items = items.into_iter();
-        let mut item_results = FuturesOrdered::new();
-        for item in remaining_items.by_ref().take(parallelism) {
-            item_results.push_back(make_item_future(item));
-        }
+        let processing_guard = ProcessingGuard::new(p);
+        let result = async {
+            let mut p_rt = self.init_process_context(p, start_time).await?;
+            debug!("Fetch with pointer: {}", p_rt.coordinator.source_pointer.dump());
+            p_rt.fetch_start_at = Some(Instant::now());
+            let items =
+                self.fetch_items(p, p_rt.coordinator.source_pointer.as_ref()).await?;
+            p_rt.fetch_end_at = Some(Instant::now());
+            let parallelism = p.options.parallelism.max(1) as usize;
+            if p.options.parallelism == 0 {
+                warn!("Processor parallelism=0 is invalid; using parallelism=1");
+            }
+            let process = self;
+            let item_runtime = &p_rt.item;
+            let processor = p;
+            let make_item_future =
+                move |item: source_downloader_sdk::component::PointedItem| async move {
+                    let item_pointer = item.item_pointer;
+                    let source_item = item.source_item;
+                    let item_action = process
+                        .process_item(&source_item, item_runtime, processor)
+                        .await
+                        .unwrap_or_else(ItemAction::Error);
+                    (item_pointer, source_item, item_action)
+                };
+            let mut remaining_items = items.into_iter();
+            let mut item_results = FuturesOrdered::new();
+            for item in remaining_items.by_ref().take(parallelism) {
+                item_results.push_back(make_item_future(item));
+            }
 
-        let mut stop_scheduling = false;
-        while let Some((item_pointer, source_item, item_action)) =
-            item_results.next().await
-        {
-            let advance_pointer = !stop_scheduling;
-            let mut stop_after_item = false;
-            match item_action {
-                ItemAction::Skip(reason) => {
-                    debug!("[item-skip] {} {:?} ", reason, source_item);
-                }
-                ItemAction::Filtered(reason) => {
-                    debug!("[item-filtered] {} {:?} ", reason, source_item);
-                    if advance_pointer
-                        && let Err(err) = self
-                            .on_item_filtered(
+            let mut stop_scheduling = false;
+            while let Some((item_pointer, source_item, item_action)) =
+                item_results.next().await
+            {
+                let advance_pointer = !stop_scheduling;
+                let mut stop_after_item = false;
+                match item_action {
+                    ItemAction::Skip(reason) => {
+                        debug!("[item-skip] {} {:?} ", reason, source_item);
+                    }
+                    ItemAction::Filtered(reason) => {
+                        debug!("[item-filtered] {} {:?} ", reason, source_item);
+                        if advance_pointer
+                            && let Err(err) = self
+                                .on_item_filtered(
+                                    p,
+                                    &mut p_rt.coordinator,
+                                    &source_item,
+                                    item_pointer.as_ref(),
+                                )
+                                .await
+                        {
+                            p_rt.coordinator.listener_context.has_error = true;
+                            self.on_item_error(
                                 p,
                                 &mut p_rt.coordinator,
                                 &source_item,
-                                item_pointer.as_ref(),
+                                &err,
                             )
-                            .await
-                    {
+                            .await;
+                            if p.options.item_error_continue {
+                                self.persist_item_failure(
+                                    p,
+                                    &source_item,
+                                    &err,
+                                    None,
+                                    None,
+                                )
+                                .await;
+                                warn!(
+                                    "[item-continue-on-error] {} {}",
+                                    err.message(),
+                                    source_item
+                                );
+                            } else {
+                                stop_after_item = true;
+                            }
+                        }
+                    }
+                    ItemAction::Error(err) => {
+                        item_runtime.processed_inc();
                         p_rt.coordinator.listener_context.has_error = true;
                         self.on_item_error(p, &mut p_rt.coordinator, &source_item, &err)
                             .await;
-                        if p.options.item_error_continue {
+                        let skippable = matches!(
+                            err,
+                            ProcessingError::NonRetryable { skip: true, .. }
+                        );
+                        if skippable || p.options.item_error_continue {
                             self.persist_item_failure(p, &source_item, &err, None, None)
                                 .await;
                             warn!(
@@ -1019,145 +1112,135 @@ trait Process {
                                 source_item
                             );
                         } else {
+                            warn!(
+                                "[item-stop-on-error] {}, 停止提交新 Item",
+                                err.message()
+                            );
                             stop_after_item = true;
                         }
                     }
-                }
-                ItemAction::Error(err) => {
-                    item_runtime.processed_inc();
-                    p_rt.coordinator.listener_context.has_error = true;
-                    self.on_item_error(p, &mut p_rt.coordinator, &source_item, &err)
-                        .await;
-                    let skippable =
-                        matches!(err, ProcessingError::NonRetryable { skip: true, .. });
-                    if skippable || p.options.item_error_continue {
-                        self.persist_item_failure(p, &source_item, &err, None, None)
-                            .await;
-                        warn!(
-                            "[item-continue-on-error] {} {}",
-                            err.message(),
-                            source_item
-                        );
-                    } else {
-                        warn!("[item-stop-on-error] {}, 停止提交新 Item", err.message());
-                        stop_after_item = true;
-                    }
-                }
-                ItemAction::Success {
-                    files,
-                    item_variables,
-                    rename_times,
-                    mut status,
-                    failure_reason,
-                } => {
-                    let item_hash = source_item.hashing();
-                    if item_runtime.is_cancelled(&item_hash) {
-                        status = ProcessingStatus::Cancelled;
-                    }
-                    let mut content = ProcessingContent {
-                        id: None,
-                        processor_name: p.name.clone(),
-                        item_hash,
-                        item_identity: source_item.identity.clone(),
-                        item_content: ItemContentLite { source_item, item_variables },
+                    ItemAction::Success {
+                        files,
+                        item_variables,
                         rename_times,
-                        status,
+                        mut status,
                         failure_reason,
-                        created_at: OffsetDateTime::now_utc(),
-                        updated_at: None,
-                    };
-                    match self.on_item_process_complete(p, &content, &files).await {
-                        Ok(content_id) => {
-                            content.id = content_id;
-                            item_runtime.processed_inc();
-                            let continued_failure =
-                                p.options.item_error_continue.then(|| {
-                                    (
-                                        content.id,
-                                        content.created_at,
-                                        content.item_content.source_item.clone(),
-                                    )
-                                });
-                            match self
-                                .on_item_success(
-                                    p,
-                                    advance_pointer,
-                                    &mut p_rt.coordinator,
-                                    item_pointer.as_ref(),
-                                    content,
-                                    files,
-                                )
-                                .await
-                            {
-                                Ok(()) => {}
-                                Err(err) if p.options.item_error_continue => {
-                                    let (content_id, created_at, source_item) =
-                                        continued_failure.expect(
-                                            "continued failure context is available",
-                                        );
-                                    self.persist_item_failure(
-                                        p,
-                                        &source_item,
-                                        &err,
-                                        content_id,
-                                        Some(created_at),
-                                    )
-                                    .await;
-                                    warn!("[item-continue-on-error] {}", err.message());
-                                }
-                                Err(_) => stop_after_item = true,
-                            }
+                    } => {
+                        let item_hash = source_item.hashing();
+                        if item_runtime.is_cancelled(&item_hash) {
+                            status = ProcessingStatus::Cancelled;
                         }
-                        Err(err) => {
-                            item_runtime.processed_inc();
-                            p_rt.coordinator.listener_context.has_error = true;
-                            let source_item = &content.item_content.source_item;
-                            self.on_item_error(
-                                p,
-                                &mut p_rt.coordinator,
-                                source_item,
-                                &err,
-                            )
-                            .await;
-                            let skippable = matches!(
-                                err,
-                                ProcessingError::NonRetryable { skip: true, .. }
-                            );
-                            if skippable || p.options.item_error_continue {
-                                warn!(
-                                    "[item-continue-on-error] {} {}",
-                                    err.message(),
-                                    source_item
+                        let mut content = ProcessingContent {
+                            id: None,
+                            processor_name: p.name.clone(),
+                            item_hash,
+                            item_identity: source_item.identity.clone(),
+                            item_content: ItemContentLite { source_item, item_variables },
+                            rename_times,
+                            status,
+                            failure_reason,
+                            created_at: OffsetDateTime::now_utc(),
+                            updated_at: None,
+                        };
+                        match self.on_item_process_complete(p, &content, &files).await {
+                            Ok(content_id) => {
+                                content.id = content_id;
+                                item_runtime.processed_inc();
+                                let continued_failure =
+                                    p.options.item_error_continue.then(|| {
+                                        (
+                                            content.id,
+                                            content.created_at,
+                                            content.item_content.source_item.clone(),
+                                        )
+                                    });
+                                match self
+                                    .on_item_success(
+                                        p,
+                                        advance_pointer,
+                                        &mut p_rt.coordinator,
+                                        item_pointer.as_ref(),
+                                        content,
+                                        files,
+                                    )
+                                    .await
+                                {
+                                    Ok(()) => {}
+                                    Err(err) if p.options.item_error_continue => {
+                                        let (content_id, created_at, source_item) =
+                                            continued_failure.expect(
+                                                "continued failure context is available",
+                                            );
+                                        self.persist_item_failure(
+                                            p,
+                                            &source_item,
+                                            &err,
+                                            content_id,
+                                            Some(created_at),
+                                        )
+                                        .await;
+                                        warn!(
+                                            "[item-continue-on-error] {}",
+                                            err.message()
+                                        );
+                                    }
+                                    Err(_) => stop_after_item = true,
+                                }
+                            }
+                            Err(err) => {
+                                item_runtime.processed_inc();
+                                p_rt.coordinator.listener_context.has_error = true;
+                                let source_item = &content.item_content.source_item;
+                                self.on_item_error(
+                                    p,
+                                    &mut p_rt.coordinator,
+                                    source_item,
+                                    &err,
+                                )
+                                .await;
+                                let skippable = matches!(
+                                    err,
+                                    ProcessingError::NonRetryable { skip: true, .. }
                                 );
-                            } else {
-                                warn!(
-                                    "[item-stop-on-error] {}, 停止提交新 Item",
-                                    err.message()
-                                );
-                                stop_after_item = true;
+                                if skippable || p.options.item_error_continue {
+                                    warn!(
+                                        "[item-continue-on-error] {} {}",
+                                        err.message(),
+                                        source_item
+                                    );
+                                } else {
+                                    warn!(
+                                        "[item-stop-on-error] {}, 停止提交新 Item",
+                                        err.message()
+                                    );
+                                    stop_after_item = true;
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            if stop_after_item {
-                stop_scheduling = true;
+                if stop_after_item {
+                    stop_scheduling = true;
+                }
+                if !stop_scheduling && let Some(item) = remaining_items.next() {
+                    item_results.push_back(make_item_future(item));
+                }
             }
-            if !stop_scheduling && let Some(item) = remaining_items.next() {
-                item_results.push_back(make_item_future(item));
+            drop(item_results);
+            for (content, _) in &mut p_rt.coordinator.listener_context.contents {
+                if item_runtime.is_cancelled(&content.item_hash) {
+                    content.status = ProcessingStatus::Cancelled;
+                }
             }
+            self.on_process_complete(p, &p_rt).await?;
+            p_rt.process_end_at = Some(Instant::now());
+            info!("[run-done] {} {}", p.name, p_rt.summary());
+            Ok(())
         }
-        drop(item_results);
-        for (content, _) in &mut p_rt.coordinator.listener_context.contents {
-            if item_runtime.is_cancelled(&content.item_hash) {
-                content.status = ProcessingStatus::Cancelled;
-            }
-        }
-        self.on_process_complete(p, &p_rt).await?;
-        p_rt.process_end_at = Some(Instant::now());
-        info!("[run-done] {} {}", p.name, p_rt.summary());
-        Ok(())
+        .await;
+        processing_guard.record_result(&result);
+        result
     }
 
     async fn get_source_state(
@@ -2938,6 +3021,7 @@ mod test {
         saved_contents: ParkingMutex<Vec<ProcessingContent>>,
         next_content_id: AtomicUsize,
         content_exists: AtomicBool,
+        fail_next_state_load: AtomicBool,
         fail_next_state_save: AtomicBool,
         query_count: AtomicUsize,
         query_results: ParkingMutex<Vec<ProcessingContent>>,
@@ -3029,6 +3113,11 @@ mod test {
             _: &str,
             _: &str,
         ) -> Result<Option<ProcessorSourceState>, StorageError> {
+            if self.fail_next_state_load.swap(false, Ordering::AcqRel) {
+                return Err(StorageError {
+                    message: "failed to load processor source state".to_owned(),
+                });
+            }
             Ok(self.initial_state.lock().clone())
         }
 
@@ -4075,6 +4164,81 @@ mod test {
 
     #[derive(Debug)]
     struct FailingListener;
+    #[tokio::test]
+    async fn runtime_snapshot_tracks_completed_runs() {
+        let created_before = OffsetDateTime::now_utc();
+        let (mut processor, _) = pointer_test_processor(false, 1, false);
+        processor.async_downloader = None;
+        let created_after = OffsetDateTime::now_utc();
+
+        let initial = processor.runtime_snapshot();
+        assert!(initial.created_at >= created_before);
+        assert!(initial.created_at <= created_after);
+        assert_eq!(initial.last_process_failed_message, None);
+        assert_eq!(initial.last_start_process_time, None);
+        assert_eq!(initial.last_end_process_time, None);
+        assert!(!initial.processing);
+
+        processor.run().await.unwrap();
+
+        let completed = processor.runtime_snapshot();
+        assert_eq!(completed.last_process_failed_message, None);
+        assert!(!completed.processing);
+        assert!(
+            completed.last_end_process_time.unwrap()
+                >= completed.last_start_process_time.unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_snapshot_records_run_failure() {
+        let (mut processor, storage) = pointer_test_processor(false, 1, false);
+        processor.async_downloader = None;
+        storage.fail_next_state_load.store(true, Ordering::Release);
+
+        assert!(processor.run().await.is_err());
+
+        let snapshot = processor.runtime_snapshot();
+        assert!(
+            snapshot
+                .last_process_failed_message
+                .as_ref()
+                .is_some_and(|message| !message.is_empty())
+        );
+        assert!(snapshot.last_start_process_time.is_some());
+        assert!(snapshot.last_end_process_time.is_some());
+        assert!(!snapshot.processing);
+    }
+
+    #[tokio::test]
+    async fn runtime_snapshot_reports_active_processing() {
+        let replacement_probe = Arc::new(ReplacementProbe::default());
+        let (processor, _) = pointer_test_processor_with_settings(
+            false,
+            1,
+            false,
+            PointerTestSettings {
+                resolved_file: Some(PathBuf::from("runtime-snapshot.txt")),
+                replacement_probe: Some(replacement_probe.clone()),
+                ..Default::default()
+            },
+        );
+        let processor = Arc::new(processor);
+        let running_processor = processor.clone();
+        let run = tokio::spawn(async move { running_processor.run().await });
+        replacement_probe.first_submitted.notified().await;
+
+        let active = processor.runtime_snapshot();
+        assert!(active.processing);
+        assert!(active.last_start_process_time.is_some());
+        assert_eq!(active.last_end_process_time, None);
+
+        replacement_probe.first_cancelled.notify_one();
+        run.await.unwrap().unwrap();
+        let completed = processor.runtime_snapshot();
+        assert!(!completed.processing);
+        assert!(completed.last_end_process_time.is_some());
+    }
 
     impl Display for FailingListener {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {

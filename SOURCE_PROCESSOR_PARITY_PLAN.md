@@ -184,9 +184,10 @@ one-item-per-commit and regression-test rules above.
     listeners for the same event.
   - Listener panics are programming errors and remain prohibited by contract.
 
-- [ ] **Expose processor runtime snapshots**
-  - Add observable created time, last failure, last start/end time, and current
-    processing state equivalent to Kotlin runtime status.
+- [x] **Expose processor runtime snapshots**
+  - `SourceProcessor::runtime_snapshot()` exposes creation time, the latest run
+    failure, latest start/end times, and a lock-consistent processing flag.
+  - Starting a run clears its end time; successful runs clear the prior failure.
 
 - [ ] **Expose processor information**
   - Add a management view covering configured Source, providers, resolver,
