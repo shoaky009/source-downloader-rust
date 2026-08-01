@@ -1788,7 +1788,7 @@ trait Process {
             if tags.is_empty() {
                 resolved_files.push(f);
             } else {
-                tags.extend(p.tags.iter().cloned());
+                tags.extend(f.tags);
                 resolved_files.push(SourceFile { tags, ..f });
             }
         }
@@ -2386,6 +2386,24 @@ mod test {
     }
 
     #[derive(Debug)]
+    struct StaticFileTagger;
+
+    impl Display for StaticFileTagger {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "static-file-tagger")
+        }
+    }
+
+    impl source_downloader_sdk::component::SdComponent for StaticFileTagger {}
+
+    #[async_trait]
+    impl FileTagger for StaticFileTagger {
+        async fn tag(&self, _: &SourceFile) -> Option<String> {
+            Some("generated".to_owned())
+        }
+    }
+
+    #[derive(Debug)]
     struct PointerTestComponent {
         item_count: usize,
         probe: Option<Arc<ParallelismProbe>>,
@@ -2399,6 +2417,7 @@ mod test {
         replacement_probe: Option<Arc<ReplacementProbe>>,
         source_headers: Option<HashMap<String, String>>,
         submitted_headers: Option<Arc<ParkingMutex<Option<HashMap<String, String>>>>>,
+        resolved_file_tags: Vec<String>,
     }
 
     impl Display for PointerTestComponent {
@@ -2476,7 +2495,10 @@ mod test {
                 return vec![SourceFile::new(path.clone()), SourceFile::new(path)];
             }
             if let Some(path) = &self.resolved_file {
-                return vec![SourceFile::new(path.clone())];
+                return vec![SourceFile {
+                    tags: self.resolved_file_tags.clone(),
+                    ..SourceFile::new(path.clone())
+                }];
             }
             if self.unique_files {
                 return vec![SourceFile::new(PathBuf::from(format!("{sequence}.txt")))];
@@ -2816,6 +2838,7 @@ mod test {
         replacement_probe: Option<Arc<ReplacementProbe>>,
         source_headers: Option<HashMap<String, String>>,
         submitted_headers: Option<Arc<ParkingMutex<Option<HashMap<String, String>>>>>,
+        resolved_file_tags: Vec<String>,
     }
 
     impl Default for PointerTestSettings {
@@ -2835,6 +2858,7 @@ mod test {
                 replacement_probe: None,
                 source_headers: None,
                 submitted_headers: None,
+                resolved_file_tags: Vec::new(),
             }
         }
     }
@@ -2871,6 +2895,7 @@ mod test {
             replacement_probe: settings.replacement_probe,
             source_headers: settings.source_headers,
             submitted_headers: settings.submitted_headers,
+            resolved_file_tags: settings.resolved_file_tags,
         });
         let storage = Arc::new(PointerStorage {
             fail_next_state_save: AtomicBool::new(settings.fail_next_state_save),
@@ -3075,6 +3100,29 @@ mod test {
         assert!(each_listener.context_visible.load(AtomicOrdering::Relaxed));
         assert_eq!(batch_listener.completed_items.lock().as_slice(), ["item-1"]);
     }
+    #[tokio::test]
+    async fn file_taggers_preserve_source_tags_without_processor_tags() {
+        let (mut processor, _) = pointer_test_processor_with_settings(
+            false,
+            1,
+            false,
+            PointerTestSettings {
+                resolved_file: Some(PathBuf::from("tagged.txt")),
+                resolved_file_tags: vec!["source".to_owned()],
+                ..Default::default()
+            },
+        );
+        processor.tags.insert("processor".to_owned());
+        processor.options.file_taggers = vec![Arc::new(StaticFileTagger)];
+
+        let results = processor.dry_run(DryRunOptions::default()).await.unwrap();
+
+        assert_eq!(
+            results[0].file_contents[0].tags,
+            vec!["generated".to_owned(), "source".to_owned()]
+        );
+    }
+
     #[tokio::test]
     async fn dry_run_returns_results_without_side_effects() {
         let submit_count = Arc::new(AtomicUsize::new(0));

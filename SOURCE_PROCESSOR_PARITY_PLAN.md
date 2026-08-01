@@ -134,9 +134,9 @@ one-item-per-commit and regression-test rules above.
     and processor headers are both sent.
   - Suggested commit: `fix: prioritize processor download headers`
 
-- [ ] **Preserve SourceFile tags when applying FileTaggers**
-  - Rust currently replaces `SourceFile.tags` with FileTagger output and
-    processor tags whenever a FileTagger is configured.
+- [x] **Preserve SourceFile tags when applying FileTaggers**
+  - Previously Rust replaced `SourceFile.tags` with FileTagger output and
+    processor tags whenever a FileTagger was configured.
   - Kotlin merges FileTagger output with the original SourceFile tags.
   - Acceptance: original and generated tags are retained; processor metadata
     tags are not injected into SourceFile tags.
