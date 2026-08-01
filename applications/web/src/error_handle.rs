@@ -1,7 +1,7 @@
 use axum::http::StatusCode;
 use axum::{body::Body, http::Request, middleware::Next, response::IntoResponse};
 use problem_details::ProblemDetails;
-use source_downloader_sdk::component::ComponentError;
+use source_downloader_sdk::component::{ComponentError, ProcessingError};
 use std::{
     fmt,
     panic::{self, AssertUnwindSafe},
@@ -47,6 +47,12 @@ impl<T> From<std::sync::PoisonError<T>> for AppError {
 impl From<ComponentError> for AppError {
     fn from(err: ComponentError) -> Self {
         Self::BadRequest(err.message)
+    }
+}
+
+impl From<ProcessingError> for AppError {
+    fn from(err: ProcessingError) -> Self {
+        Self::InternalError(err.message().to_owned())
     }
 }
 

@@ -8,7 +8,10 @@ use serde_qs::to_string;
 use source_downloader_core::application::CoreApplication;
 use source_downloader_core::config::ProcessorConfig;
 use source_downloader_core::processor_manager::ProcessorWrapper;
-use source_downloader_core::source_processor::ProcessorRuntimeSnapshot;
+use source_downloader_core::source_processor::{
+    DryRunOptions as CoreDryRunOptions, DryRunResult, ProcessorRuntimeSnapshot,
+    SourceProcessor,
+};
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::ProcessTask;
 use source_downloader_sdk::serde_json::{Map, Value};
@@ -40,6 +43,23 @@ pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
         .with_state(ctx.core.clone())
 }
 
+fn require_processor(
+    core: &CoreApplication,
+    name: &str,
+) -> Result<Arc<SourceProcessor>, AppError> {
+    let wrapper = core
+        .processor_manager
+        .get_processor(name)
+        .ok_or_else(|| AppError::NotFound("Processor not found".to_owned()))?;
+    wrapper.processor.clone().ok_or_else(|| {
+        AppError::BadRequest(
+            wrapper
+                .error_message
+                .clone()
+                .unwrap_or_else(|| "Processor not running".to_owned()),
+        )
+    })
+}
 #[axum::debug_handler]
 async fn get_processor(
     State(core): State<Arc<CoreApplication>>,
@@ -141,12 +161,14 @@ async fn trigger_processor(
 
 #[axum::debug_handler]
 async fn dry_run(
-    State(_core): State<Arc<CoreApplication>>,
-    Path(_name): Path<String>,
-    Json(_): Json<Option<DryRunOptions>>,
-) -> () {
-    info!("dry_run name={}", _name);
-    todo!()
+    State(core): State<Arc<CoreApplication>>,
+    Path(name): Path<String>,
+    options: Option<Json<DryRunOptions>>,
+) -> Result<Json<Vec<DryRunResult>>, AppError> {
+    let processor = require_processor(&core, &name)?;
+    let options = options.map(|Json(options)| options).unwrap_or_default();
+    let results = processor.dry_run(options.into()).await?;
+    Ok(Json(results))
 }
 
 #[axum::debug_handler]
@@ -226,11 +248,20 @@ struct QueryParams {
     page: Option<usize>,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DryRunOptions {
     pub pointer: Option<Map<String, Value>>,
-    #[serde(rename = "filterProcessed")]
     pub filter_processed: Option<bool>,
+}
+
+impl From<DryRunOptions> for CoreDryRunOptions {
+    fn from(options: DryRunOptions) -> Self {
+        Self {
+            pointer: options.pointer.map(Value::Object),
+            filter_processed: options.filter_processed.unwrap_or(true),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -353,5 +384,15 @@ mod tests {
         assert_eq!(value["enabled"], true);
         assert!(value["runtime"].is_null());
         assert_eq!(value["errorMessage"], "component failed");
+    }
+
+    #[test]
+    fn dry_run_options_filter_processed_by_default() {
+        let default_options: CoreDryRunOptions = DryRunOptions::default().into();
+        let explicit_false: CoreDryRunOptions =
+            DryRunOptions { pointer: None, filter_processed: Some(false) }.into();
+
+        assert!(default_options.filter_processed);
+        assert!(!explicit_false.filter_processed);
     }
 }

@@ -206,7 +206,9 @@ one-item-per-commit and regression-test rules above.
 - [x] **Implement processor detail and list endpoints**
   - Detail returns persisted processor configuration or `404`; list applies
     name filtering before pagination and includes runtime or startup errors.
-- [ ] **Implement processor dry-run endpoint**
+- [x] **Implement processor dry-run endpoint**
+  - GET without a body and POST options both delegate to
+    `SourceProcessor::dry_run()`; omitted `filterProcessed` defaults to `true`.
 - [ ] **Implement streaming dry-run in Core and Web**
 - [ ] **Implement manual rename endpoint**
 - [ ] **Implement submitted SourceItem endpoint**

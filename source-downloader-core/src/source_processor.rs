@@ -12,6 +12,7 @@ use futures_util::stream::{FuturesOrdered, StreamExt};
 use humantime::format_duration;
 use itertools::Itertools;
 use parking_lot::{Mutex as SyncMutex, RwLock};
+use serde::Serialize;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::FileContentStatus::{
     Downloaded, FileConflict, Normal, ReadyReplace, TargetExists, Undetected,
@@ -70,7 +71,8 @@ pub struct DryRunOptions {
     pub filter_processed: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DryRunResult {
     pub processing_content: ProcessingContent,
     pub file_contents: Vec<FileContent>,
@@ -3746,6 +3748,9 @@ mod test {
         );
         assert_eq!(results[0].file_contents.len(), 1);
         assert_eq!(results[0].file_contents[0].target_filename, "1.txt");
+        let serialized = serde_json::to_value(&results[0]).unwrap();
+        assert!(serialized.get("processingContent").is_some());
+        assert!(serialized.get("fileContents").is_some());
         assert_eq!(submit_count.load(AtomicOrdering::Acquire), 0);
         assert_eq!(storage.next_content_id.load(AtomicOrdering::Acquire), 0);
         assert!(storage.saved_pointers().is_empty());
