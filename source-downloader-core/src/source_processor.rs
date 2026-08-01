@@ -495,6 +495,25 @@ impl SourceProcessor {
         self.options.process_listeners.get(&mode).map(Vec::as_slice).unwrap_or_default()
     }
 
+    fn notify_process_listeners(
+        &self,
+        mode: ListenerMode,
+        event: &str,
+        mut notify: impl FnMut(&dyn ProcessListener) -> Result<(), ProcessingError>,
+    ) {
+        for listener in self.process_listeners(mode) {
+            if let Err(error) = notify(listener.as_ref()) {
+                warn!(
+                    "Processor[listener-error] {} listener={} event={} {}",
+                    self.name,
+                    listener,
+                    event,
+                    error.message()
+                );
+            }
+        }
+    }
+
     pub async fn dry_run(
         &self,
         options: DryRunOptions,
@@ -600,13 +619,16 @@ impl SourceProcessor {
                                 status: *completed.status,
                             };
                             if renamed {
-                                for listener in self.process_listeners(ListenerMode::Each)
-                                {
-                                    listener.on_item_success(
-                                        &listener_context,
-                                        &item_content,
-                                    );
-                                }
+                                self.notify_process_listeners(
+                                    ListenerMode::Each,
+                                    "item-success",
+                                    |listener| {
+                                        listener.on_item_success(
+                                            &listener_context,
+                                            &item_content,
+                                        )
+                                    },
+                                );
                             }
                         }
                         Err(error) => {
@@ -634,22 +656,28 @@ impl SourceProcessor {
                             let failed = listener_context
                                 .get_item_content_by_hash(&item_hash)
                                 .expect("failed rename item content was just inserted");
-                            for listener in self.process_listeners(ListenerMode::Each) {
-                                listener.on_item_error(
-                                    &listener_context,
-                                    failed.source_item,
-                                    &error,
-                                );
-                            }
+                            self.notify_process_listeners(
+                                ListenerMode::Each,
+                                "item-error",
+                                |listener| {
+                                    listener.on_item_error(
+                                        &listener_context,
+                                        failed.source_item,
+                                        &error,
+                                    )
+                                },
+                            );
                         }
                     }
                 }
             }
         }
         if finished > 0 {
-            for listener in self.process_listeners(ListenerMode::Batch) {
-                listener.on_process_completed(&listener_context);
-            }
+            self.notify_process_listeners(
+                ListenerMode::Batch,
+                "process-completed",
+                |listener| listener.on_process_completed(&listener_context),
+            );
         }
         Ok(finished)
     }
@@ -2050,9 +2078,13 @@ impl Process for NormalProcess {
         if !ctx.coordinator.listener_context.contents.is_empty()
             && p.async_downloader.is_none()
         {
-            for listener in p.process_listeners(ListenerMode::Batch) {
-                listener.on_process_completed(&ctx.coordinator.listener_context);
-            }
+            p.notify_process_listeners(
+                ListenerMode::Batch,
+                "process-completed",
+                |listener| {
+                    listener.on_process_completed(&ctx.coordinator.listener_context)
+                },
+            );
         }
         Ok(())
     }
@@ -2098,9 +2130,9 @@ impl Process for NormalProcess {
         item: &SourceItem,
         error: &ProcessingError,
     ) {
-        for listener in p.process_listeners(ListenerMode::Each) {
-            listener.on_item_error(&ctx.listener_context, item, error);
-        }
+        p.notify_process_listeners(ListenerMode::Each, "item-error", |listener| {
+            listener.on_item_error(&ctx.listener_context, item, error)
+        });
     }
 
     async fn on_item_filtered(
@@ -2136,18 +2168,18 @@ impl Process for NormalProcess {
             status: *completed.status,
         };
         if p.async_downloader.is_none() {
-            for listener in p.process_listeners(ListenerMode::Each) {
-                listener.on_item_success(&ctx.listener_context, &item_content);
-            }
+            p.notify_process_listeners(ListenerMode::Each, "item-success", |listener| {
+                listener.on_item_success(&ctx.listener_context, &item_content)
+            });
         }
         if advance_pointer
             && let Err(error) =
                 p.advance_source_pointer(ctx, &source_item, item_pointer).await
         {
             ctx.listener_context.has_error = true;
-            for listener in p.process_listeners(ListenerMode::Each) {
-                listener.on_item_error(&ctx.listener_context, &source_item, &error);
-            }
+            p.notify_process_listeners(ListenerMode::Each, "item-error", |listener| {
+                listener.on_item_error(&ctx.listener_context, &source_item, &error)
+            });
             return Err(error);
         }
         Ok(())
@@ -2868,13 +2900,18 @@ mod test {
     impl source_downloader_sdk::component::SdComponent for TargetFilenameListener {}
 
     impl ProcessListener for TargetFilenameListener {
-        fn on_item_success(&self, _: &dyn ProcessContext, item_content: &ItemContent) {
+        fn on_item_success(
+            &self,
+            _: &dyn ProcessContext,
+            item_content: &ItemContent,
+        ) -> Result<(), ProcessingError> {
             self.0.lock().extend(
                 item_content
                     .file_contents
                     .iter()
                     .map(|file| file.target_filename.clone()),
             );
+            Ok(())
         }
 
         fn on_item_error(
@@ -2882,10 +2919,16 @@ mod test {
             _: &dyn ProcessContext,
             _: &SourceItem,
             _: &ProcessingError,
-        ) {
+        ) -> Result<(), ProcessingError> {
+            Ok(())
         }
 
-        fn on_process_completed(&self, _: &dyn ProcessContext) {}
+        fn on_process_completed(
+            &self,
+            _: &dyn ProcessContext,
+        ) -> Result<(), ProcessingError> {
+            Ok(())
+        }
     }
 
     #[derive(Default)]
@@ -3993,13 +4036,18 @@ mod test {
         }
     }
     impl ProcessListener for RecordingListener {
-        fn on_item_success(&self, ctx: &dyn ProcessContext, item_content: &ItemContent) {
+        fn on_item_success(
+            &self,
+            ctx: &dyn ProcessContext,
+            item_content: &ItemContent,
+        ) -> Result<(), ProcessingError> {
             self.successes.fetch_add(1, AtomicOrdering::Relaxed);
             self.context_visible.store(
                 ctx.get_item_content(item_content.source_item).is_some(),
                 AtomicOrdering::Relaxed,
             );
             self.successful_statuses.lock().push(item_content.status);
+            Ok(())
         }
 
         fn on_item_error(
@@ -4007,16 +4055,58 @@ mod test {
             _: &dyn ProcessContext,
             _: &SourceItem,
             error: &ProcessingError,
-        ) {
+        ) -> Result<(), ProcessingError> {
             self.errors.fetch_add(1, AtomicOrdering::Relaxed);
             self.error_messages.lock().push(error.message().to_owned());
+            Ok(())
         }
 
-        fn on_process_completed(&self, ctx: &dyn ProcessContext) {
+        fn on_process_completed(
+            &self,
+            ctx: &dyn ProcessContext,
+        ) -> Result<(), ProcessingError> {
             self.completed_items
                 .lock()
                 .extend(ctx.processed_items().map(|item| item.title.to_owned()));
             self.completions.fetch_add(1, AtomicOrdering::Relaxed);
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct FailingListener;
+
+    impl Display for FailingListener {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "failing-listener")
+        }
+    }
+
+    impl source_downloader_sdk::component::SdComponent for FailingListener {}
+
+    impl ProcessListener for FailingListener {
+        fn on_item_success(
+            &self,
+            _: &dyn ProcessContext,
+            _: &ItemContent,
+        ) -> Result<(), ProcessingError> {
+            Err(ProcessingError::non_retryable("item success listener failure"))
+        }
+
+        fn on_item_error(
+            &self,
+            _: &dyn ProcessContext,
+            _: &SourceItem,
+            _: &ProcessingError,
+        ) -> Result<(), ProcessingError> {
+            Err(ProcessingError::non_retryable("item error listener failure"))
+        }
+
+        fn on_process_completed(
+            &self,
+            _: &dyn ProcessContext,
+        ) -> Result<(), ProcessingError> {
+            Err(ProcessingError::non_retryable("process completed listener failure"))
         }
     }
 
@@ -4044,6 +4134,51 @@ mod test {
         assert_eq!(batch_listener.successes.load(AtomicOrdering::Relaxed), 0);
         assert_eq!(batch_listener.completions.load(AtomicOrdering::Relaxed), 1);
         assert_eq!(*batch_listener.completed_items.lock(), vec!["item-1".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn process_listener_failures_are_isolated() {
+        let (mut success_processor, _) = pointer_test_processor(false, 1, false);
+        success_processor.async_downloader = None;
+        let success_listener = Arc::new(RecordingListener::default());
+        success_processor.options.process_listeners.insert(
+            ListenerMode::Each,
+            vec![Arc::new(FailingListener), success_listener.clone()],
+        );
+        success_processor.options.process_listeners.insert(
+            ListenerMode::Batch,
+            vec![Arc::new(FailingListener), success_listener.clone()],
+        );
+
+        success_processor.run().await.unwrap();
+
+        assert_eq!(success_listener.successes.load(AtomicOrdering::Relaxed), 1);
+        assert_eq!(success_listener.completions.load(AtomicOrdering::Relaxed), 1);
+
+        let (mut error_processor, _) = pointer_test_processor_with_settings(
+            false,
+            1,
+            false,
+            PointerTestSettings {
+                item_error_continue: true,
+                invalid_item: Some(1),
+                ..Default::default()
+            },
+        );
+        error_processor.async_downloader = None;
+        let error_listener = Arc::new(RecordingListener::default());
+        error_processor.options.process_listeners.insert(
+            ListenerMode::Each,
+            vec![Arc::new(FailingListener), error_listener.clone()],
+        );
+        error_processor.options.process_listeners.insert(
+            ListenerMode::Batch,
+            vec![Arc::new(FailingListener), error_listener.clone()],
+        );
+
+        error_processor.run().await.unwrap();
+
+        assert_eq!(error_listener.errors.load(AtomicOrdering::Relaxed), 1);
     }
 
     #[tokio::test]

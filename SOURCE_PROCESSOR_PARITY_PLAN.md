@@ -178,11 +178,11 @@ one-item-per-commit and regression-test rules above.
   - Rename failure emits Each error and remains visible in Batch context.
   - In-flight cancellation emits no event before async rename processing.
 
-- [ ] **Define ProcessListener failure isolation**
-  - Kotlin isolates exceptions from each listener. Rust listener methods are
-    infallible at the type level but a panic unwinds the processing call.
-  - Decide whether listener failure is prohibited by contract or represented
-    as `Result`; do not silently catch panics without an explicit contract.
+- [x] **Define ProcessListener failure isolation**
+  - Listener callbacks return `Result<(), ProcessingError>`.
+  - `SourceProcessor` logs each listener error and continues notifying later
+    listeners for the same event.
+  - Listener panics are programming errors and remain prohibited by contract.
 
 - [ ] **Expose processor runtime snapshots**
   - Add observable created time, last failure, last start/end time, and current

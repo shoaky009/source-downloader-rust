@@ -464,18 +464,30 @@ pub trait FileMover: SdComponent {
     }
 }
 
+/// Processors isolate listener errors: one failed listener does not prevent later
+/// listeners from observing the same event.
+///
+/// Implementations must return operational failures as [`ProcessingError`] and
+/// must not panic. Panics are programming errors and are not isolated.
 pub trait ProcessListener: SdComponent {
     /// When item rename is successful
-    fn on_item_success(&self, ctx: &dyn ProcessContext, item_content: &ItemContent);
+    fn on_item_success(
+        &self,
+        ctx: &dyn ProcessContext,
+        item_content: &ItemContent,
+    ) -> Result<(), ProcessingError>;
     /// When item processing is failed
     fn on_item_error(
         &self,
         ctx: &dyn ProcessContext,
         item: &SourceItem,
         error: &ProcessingError,
-    );
+    ) -> Result<(), ProcessingError>;
     /// When processing is completed
-    fn on_process_completed(&self, ctx: &dyn ProcessContext);
+    fn on_process_completed(
+        &self,
+        ctx: &dyn ProcessContext,
+    ) -> Result<(), ProcessingError>;
 }
 
 #[async_trait::async_trait]
