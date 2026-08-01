@@ -150,7 +150,7 @@ one-item-per-commit and regression-test rules above.
     content for each item hash, independent of storage query order.
   - Suggested commit: `fix: select latest replacement history`
 
-- [ ] **Normalize processor and resolved source-file paths**
+- [x] **Normalize processor and resolved source-file paths**
   - Kotlin makes configured save/download roots absolute and relativizes every
     absolute resolved SourceFile path against the download root.
   - Rust preserves relative roots and only relativizes paths for which

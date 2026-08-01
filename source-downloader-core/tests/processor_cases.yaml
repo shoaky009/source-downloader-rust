@@ -19,11 +19,11 @@ sync_downloader_case:
         - path: ".files"
           length: 1
         - pointer: "/files/0/target_save_path"
-          equals: test1/test001
+          path-equals: test1/test001
     - select: "$[?(@.item_content.source_item.title == '2.txt')]"
       asserts:
         - pointer: "/files/0/target_save_path"
-          equals: test1/
+          path-equals: test1/
     - select: "$[?(@.item_content.source_item.title == 'conflict')]"
       asserts:
         - pointer: "/files/0/status"

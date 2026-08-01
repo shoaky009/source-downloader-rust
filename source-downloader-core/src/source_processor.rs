@@ -38,7 +38,7 @@ use source_downloader_sdk::time::OffsetDateTime;
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
@@ -405,6 +405,49 @@ impl Drop for ProcessingGuard<'_> {
     }
 }
 
+fn absolute_processor_path(path: &Path) -> Box<Path> {
+    match std::path::absolute(path) {
+        Ok(path) => path.into_boxed_path(),
+        Err(error) => {
+            warn!("Failed to make processor path absolute path={path:?}, error={error}");
+            path.into()
+        }
+    }
+}
+
+fn relative_path_from(base: &Path, target: &Path) -> Option<PathBuf> {
+    let base_components = base.components().collect_vec();
+    let target_components = target.components().collect_vec();
+    let common_length = base_components
+        .iter()
+        .zip(&target_components)
+        .take_while(|(base, target)| base == target)
+        .count();
+    if common_length == 0
+        || base_components[common_length..]
+            .iter()
+            .chain(&target_components[common_length..])
+            .any(|component| {
+                matches!(component, Component::Prefix(_) | Component::RootDir)
+            })
+    {
+        return None;
+    }
+
+    let mut relative = PathBuf::new();
+    for component in &base_components[common_length..] {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(_) | Component::ParentDir => relative.push(".."),
+            Component::Prefix(_) | Component::RootDir => return None,
+        }
+    }
+    for component in &target_components[common_length..] {
+        relative.push(component.as_os_str());
+    }
+    Some(relative)
+}
+
 impl SourceProcessor {
     pub fn new(
         name: String,
@@ -420,7 +463,9 @@ impl SourceProcessor {
         renamer: Renamer,
         options: ProcessorOptions,
     ) -> Self {
-        let download_path = Path::new(downloader.default_download_path()).into();
+        let save_path = absolute_processor_path(&save_path);
+        let download_path =
+            absolute_processor_path(Path::new(downloader.default_download_path()));
         let async_downloader = downloader.clone().as_async_downloader().ok();
         Self {
             name,
@@ -1816,13 +1861,17 @@ trait Process {
         source_files: Vec<SourceFile>,
         item_group_options: Option<&ItemStrategy>,
     ) -> Result<Vec<FileContent>, ProcessingError> {
-        let mut relative_files: Vec<SourceFile> = vec![];
-        let download_path = p.downloader.default_download_path();
+        let mut relative_files = Vec::with_capacity(source_files.len());
         let opt = &p.options;
-        for mut file in source_files.into_iter() {
-            if let Ok(rel_path) = file.path.strip_prefix(download_path) {
-                file.path = rel_path.to_path_buf();
-            };
+        for mut file in source_files {
+            if file.path.is_absolute() {
+                file.path = relative_path_from(&p.download_path, &file.path).ok_or_else(|| {
+                    ProcessingError::non_retryable(format!(
+                        "Source file path {:?} cannot be relativized against download path {:?}",
+                        file.path, p.download_path
+                    ))
+                })?;
+            }
             relative_files.push(file);
         }
 
@@ -2429,6 +2478,7 @@ mod test {
         source_headers: Option<HashMap<String, String>>,
         submitted_headers: Option<Arc<ParkingMutex<Option<HashMap<String, String>>>>>,
         resolved_file_tags: Vec<String>,
+        download_path: String,
     }
 
     impl Display for PointerTestComponent {
@@ -2565,7 +2615,7 @@ mod test {
         }
 
         fn default_download_path(&self) -> &str {
-            "/tmp/source-downloader-pointer-test"
+            &self.download_path
         }
 
         async fn cancel(
@@ -2679,6 +2729,46 @@ mod test {
                 .iter()
                 .map(|_| HashMap::from([("fileProvider".to_owned(), self.0.to_owned())]))
                 .collect()
+        }
+
+        fn extract_from(
+            &self,
+            _: &SourceItem,
+            _: &str,
+        ) -> Option<HashMap<String, Value>> {
+            None
+        }
+
+        fn primary_variable_name(&self) -> Option<String> {
+            None
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct PathCaptureProvider(ParkingMutex<Vec<PathBuf>>);
+
+    impl Display for PathCaptureProvider {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "path-capture-provider")
+        }
+    }
+
+    impl source_downloader_sdk::component::SdComponent for PathCaptureProvider {}
+
+    #[async_trait]
+    impl VariableProvider for PathCaptureProvider {
+        async fn item_variables(&self, _: &SourceItem) -> HashMap<String, String> {
+            HashMap::new()
+        }
+
+        async fn file_variables(
+            &self,
+            _: &SourceItem,
+            _: &PatternVariables,
+            files: &[SourceFile],
+        ) -> Vec<PatternVariables> {
+            *self.0.lock() = files.iter().map(|file| file.path.clone()).collect();
+            vec![HashMap::new(); files.len()]
         }
 
         fn extract_from(
@@ -2861,6 +2951,8 @@ mod test {
         source_headers: Option<HashMap<String, String>>,
         submitted_headers: Option<Arc<ParkingMutex<Option<HashMap<String, String>>>>>,
         resolved_file_tags: Vec<String>,
+        download_path: String,
+        save_path: PathBuf,
     }
 
     impl Default for PointerTestSettings {
@@ -2881,6 +2973,8 @@ mod test {
                 source_headers: None,
                 submitted_headers: None,
                 resolved_file_tags: Vec::new(),
+                download_path: "/tmp/source-downloader-pointer-test".to_owned(),
+                save_path: PathBuf::from("/tmp/source-downloader-pointer-test"),
             }
         }
     }
@@ -2918,6 +3012,7 @@ mod test {
             source_headers: settings.source_headers,
             submitted_headers: settings.submitted_headers,
             resolved_file_tags: settings.resolved_file_tags,
+            download_path: settings.download_path,
         });
         let storage = Arc::new(PointerStorage {
             fail_next_state_save: AtomicBool::new(settings.fail_next_state_save),
@@ -2928,7 +3023,7 @@ mod test {
         let processor = SourceProcessor::new(
             "pointer-test".to_string(),
             "pointer-test-source".to_string(),
-            PathBuf::from("/tmp/source-downloader-pointer-test").into_boxed_path(),
+            settings.save_path.into_boxed_path(),
             component.clone(),
             component.clone(),
             component.clone(),
@@ -3142,6 +3237,74 @@ mod test {
         assert_eq!(
             results[0].file_contents[0].tags,
             vec!["generated".to_owned(), "source".to_owned()]
+        );
+    }
+
+    #[tokio::test]
+    async fn processor_normalizes_roots_and_relativizes_absolute_source_files() {
+        let current_dir = std::env::current_dir().unwrap();
+        let relative_download_path = PathBuf::from("target/path-contract-download");
+        let relative_save_path = PathBuf::from("target/path-contract-save");
+        let expected_download_path = current_dir.join(&relative_download_path);
+        let expected_save_path = current_dir.join(&relative_save_path);
+        let source_file_path = expected_download_path.join("nested/file.txt");
+        let provider = Arc::new(PathCaptureProvider::default());
+        let (mut processor, _) = pointer_test_processor_with_settings(
+            false,
+            1,
+            false,
+            PointerTestSettings {
+                resolved_file: Some(source_file_path.clone()),
+                download_path: relative_download_path.to_string_lossy().into_owned(),
+                save_path: relative_save_path,
+                ..Default::default()
+            },
+        );
+        processor.options.variable_providers = vec![provider.clone()];
+
+        let results = processor.dry_run(DryRunOptions::default()).await.unwrap();
+        let file = &results[0].file_contents[0];
+
+        assert_eq!(
+            (
+                provider.0.lock().clone(),
+                file.download_path.clone(),
+                file.source_save_path.clone(),
+                file.file_download_path.clone(),
+            ),
+            (
+                vec![PathBuf::from("nested/file.txt")],
+                expected_download_path,
+                expected_save_path,
+                source_file_path,
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn processor_relativizes_absolute_source_files_outside_download_root() {
+        let current_dir = std::env::current_dir().unwrap();
+        let relative_download_path = PathBuf::from("target/path-contract-download");
+        let source_file_path =
+            current_dir.join("target/path-contract-outside/nested/file.txt");
+        let provider = Arc::new(PathCaptureProvider::default());
+        let (mut processor, _) = pointer_test_processor_with_settings(
+            false,
+            1,
+            false,
+            PointerTestSettings {
+                resolved_file: Some(source_file_path),
+                download_path: relative_download_path.to_string_lossy().into_owned(),
+                ..Default::default()
+            },
+        );
+        processor.options.variable_providers = vec![provider.clone()];
+
+        processor.dry_run(DryRunOptions::default()).await.unwrap();
+
+        assert_eq!(
+            *provider.0.lock(),
+            vec![PathBuf::from("../path-contract-outside/nested/file.txt")]
         );
     }
 

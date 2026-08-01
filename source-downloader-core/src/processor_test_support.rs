@@ -534,6 +534,8 @@ pub mod test_support {
         pub pointer: Option<String>,
         // expected value
         pub equals: Option<Value>,
+        #[serde(rename = "path-equals")]
+        pub path_equals: Option<PathBuf>,
         pub length: Option<usize>,
         pub exists: Option<bool>,
     }
@@ -608,6 +610,23 @@ pub mod test_support {
                     return Err(AssertionError::new(format!(
                         "equals failed, expected {}, got {}",
                         expected, target
+                    )));
+                }
+            }
+
+            if let Some(expected) = &assert.path_equals {
+                let actual = target.as_str().ok_or_else(|| {
+                    AssertionError::new("path-equals target is not a string")
+                })?;
+                let expected = std::path::absolute(expected).map_err(|error| {
+                    AssertionError::new(format!(
+                        "failed to make expected path absolute: {error}"
+                    ))
+                })?;
+                if Path::new(actual) != expected {
+                    return Err(AssertionError::new(format!(
+                        "path-equals failed, expected {:?}, got {:?}",
+                        expected, actual
                     )));
                 }
             }
