@@ -109,7 +109,7 @@ impl FileContentFilter for ExpressionFileContentFilter {
         if self.inclusions.is_empty() {
             return true;
         }
-        self.inclusions.iter().any(|expr| {
+        self.inclusions.iter().all(|expr| {
             expr.execute(&file_vars)
                 .inspect_err(|e| {
                     warn!(
