@@ -126,8 +126,8 @@ one-item-per-commit and regression-test rules above.
 
 ### P0: processing result correctness
 
-- [ ] **Let processor download headers override source headers**
-  - Rust currently inserts processor headers before source headers, so source
+- [x] **Let processor download headers override source headers**
+  - Previously Rust inserted processor headers before source headers, so source
     values win on duplicate names. Kotlin applies processor
     `download-options.headers` last.
   - Acceptance: duplicate header names use the processor value; disjoint source

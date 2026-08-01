@@ -1549,7 +1549,7 @@ trait Process {
         let source_headers = p.source.headers(source_item);
         let options = &p.options.download_options;
         let headers: Option<HashMap<&String, &String>> =
-            match (&options.headers, &source_headers) {
+            match (&source_headers, &options.headers) {
                 (None, None) => None,
                 (h1, h2) => {
                     let mut merged = HashMap::new();
@@ -2397,6 +2397,8 @@ mod test {
         retryable_submit_failures: Option<Arc<AtomicUsize>>,
         submit_probe: Option<Arc<ParallelismProbe>>,
         replacement_probe: Option<Arc<ReplacementProbe>>,
+        source_headers: Option<HashMap<String, String>>,
+        submitted_headers: Option<Arc<ParkingMutex<Option<HashMap<String, String>>>>>,
     }
 
     impl Display for PointerTestComponent {
@@ -2447,6 +2449,10 @@ mod test {
         fn parse_raw_pointer(&self, value: Value) -> Box<dyn SourcePointer> {
             Box::new(TestSourcePointer(value.as_u64().unwrap_or_default() as usize))
         }
+
+        fn headers(&self, _: &SourceItem) -> Option<HashMap<String, String>> {
+            self.source_headers.clone()
+        }
     }
 
     #[async_trait]
@@ -2482,6 +2488,14 @@ mod test {
     #[async_trait]
     impl Downloader for PointerTestComponent {
         async fn submit(&self, task: &DownloadTask) -> Result<(), ProcessingError> {
+            if let Some(submitted_headers) = &self.submitted_headers {
+                *submitted_headers.lock() = task.headers.as_ref().map(|headers| {
+                    headers
+                        .iter()
+                        .map(|(key, value)| ((*key).clone(), (*value).clone()))
+                        .collect()
+                });
+            }
             if let Some(submit_count) = &self.submit_count {
                 submit_count.fetch_add(1, AtomicOrdering::AcqRel);
             }
@@ -2800,6 +2814,8 @@ mod test {
         fail_next_state_save: bool,
         submit_probe: Option<Arc<ParallelismProbe>>,
         replacement_probe: Option<Arc<ReplacementProbe>>,
+        source_headers: Option<HashMap<String, String>>,
+        submitted_headers: Option<Arc<ParkingMutex<Option<HashMap<String, String>>>>>,
     }
 
     impl Default for PointerTestSettings {
@@ -2817,6 +2833,8 @@ mod test {
                 fail_next_state_save: false,
                 submit_probe: None,
                 replacement_probe: None,
+                source_headers: None,
+                submitted_headers: None,
             }
         }
     }
@@ -2851,6 +2869,8 @@ mod test {
             retryable_submit_failures: settings.retryable_submit_failures,
             submit_probe: settings.submit_probe,
             replacement_probe: settings.replacement_probe,
+            source_headers: settings.source_headers,
+            submitted_headers: settings.submitted_headers,
         });
         let storage = Arc::new(PointerStorage {
             fail_next_state_save: AtomicBool::new(settings.fail_next_state_save),
@@ -2908,6 +2928,46 @@ mod test {
             },
         );
         (processor, storage)
+    }
+
+    #[tokio::test]
+    async fn processor_download_headers_override_source_headers() {
+        let submitted_headers = Arc::new(ParkingMutex::new(None));
+        let (mut processor, _) = pointer_test_processor_with_settings(
+            false,
+            1,
+            false,
+            PointerTestSettings {
+                unique_files: true,
+                source_headers: Some(HashMap::from([
+                    ("shared".to_owned(), "source".to_owned()),
+                    ("source-only".to_owned(), "source".to_owned()),
+                ])),
+                submitted_headers: Some(submitted_headers.clone()),
+                ..Default::default()
+            },
+        );
+        processor.options.download_options.headers = Some(HashMap::from([
+            ("shared".to_owned(), "processor".to_owned()),
+            ("processor-only".to_owned(), "processor".to_owned()),
+        ]));
+
+        processor
+            .run_items(vec![SourceItem {
+                title: "item-1".to_owned(),
+                ..Default::default()
+            }])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            *submitted_headers.lock(),
+            Some(HashMap::from([
+                ("shared".to_owned(), "processor".to_owned()),
+                ("source-only".to_owned(), "source".to_owned()),
+                ("processor-only".to_owned(), "processor".to_owned()),
+            ]))
+        );
     }
 
     #[test]
