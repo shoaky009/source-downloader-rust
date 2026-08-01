@@ -581,22 +581,13 @@ impl SourceProcessor {
                         .delete_paths(&paths, Some(&content.item_hash))
                         .await
                         .map_err(|error| ProcessingError::non_retryable(error.message))?;
-                    listener_context.has_error = true;
-                    let error =
-                        ProcessingError::non_retryable("Asynchronous download failed");
-                    for listener in self.process_listeners(ListenerMode::Each) {
-                        listener.on_item_error(
-                            &listener_context,
-                            &content.item_content.source_item,
-                            &error,
-                        );
-                    }
                 }
                 Some(false) => {}
                 Some(true) => {
                     finished += 1;
                     match self.process_rename_content(&mut content).await {
                         Ok(files) => {
+                            let renamed = content.status == ProcessingStatus::Renamed;
                             let item_hash = content.item_hash.to_owned();
                             listener_context.add(content, files);
                             let completed = listener_context
@@ -608,26 +599,48 @@ impl SourceProcessor {
                                 item_variables: completed.item_variables,
                                 status: *completed.status,
                             };
-                            for listener in self.process_listeners(ListenerMode::Each) {
-                                listener
-                                    .on_item_success(&listener_context, &item_content);
+                            if renamed {
+                                for listener in self.process_listeners(ListenerMode::Each)
+                                {
+                                    listener.on_item_success(
+                                        &listener_context,
+                                        &item_content,
+                                    );
+                                }
                             }
                         }
                         Err(error) => {
                             listener_context.has_error = true;
-                            for listener in self.process_listeners(ListenerMode::Each) {
-                                listener.on_item_error(
-                                    &listener_context,
-                                    &content.item_content.source_item,
-                                    &error,
-                                );
-                            }
                             warn!(
                                 "Processor[rename-item-error] {} item={} {}",
                                 self.name,
                                 content.item_content.source_item,
                                 error.message()
                             );
+                            let item_hash = content.item_hash.to_owned();
+                            let files = match self.load_file_contents(&content).await {
+                                Ok(files) => files,
+                                Err(load_error) => {
+                                    warn!(
+                                        "Processor[rename-item-files-load-error] {} item={} {}",
+                                        self.name,
+                                        content.item_content.source_item,
+                                        load_error.message()
+                                    );
+                                    Vec::new()
+                                }
+                            };
+                            listener_context.add(content, files);
+                            let failed = listener_context
+                                .get_item_content_by_hash(&item_hash)
+                                .expect("failed rename item content was just inserted");
+                            for listener in self.process_listeners(ListenerMode::Each) {
+                                listener.on_item_error(
+                                    &listener_context,
+                                    failed.source_item,
+                                    &error,
+                                );
+                            }
                         }
                     }
                 }
@@ -3575,6 +3588,15 @@ mod test {
         );
         processor.options.file_replacement_decider = Arc::new(ReplaceInFlight);
         processor.options.save_processing_content = true;
+        let listener = Arc::new(RecordingListener::default());
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Each, vec![listener.clone()]);
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Batch, vec![listener.clone()]);
 
         tokio::time::timeout(Duration::from_secs(1), processor.run())
             .await
@@ -3595,6 +3617,10 @@ mod test {
             .unwrap();
         assert_eq!(first.status, ProcessingStatus::Cancelled);
         assert_eq!(second.status, ProcessingStatus::WaitingToRename);
+        assert!(listener.successful_statuses.lock().is_empty());
+        assert_eq!(listener.errors.load(AtomicOrdering::Relaxed), 0);
+        assert_eq!(listener.completions.load(AtomicOrdering::Relaxed), 0);
+        assert!(listener.completed_items.lock().is_empty());
     }
 
     #[tokio::test]
@@ -3883,6 +3909,8 @@ mod test {
         completions: AtomicUsize,
         context_visible: AtomicBool,
         completed_items: ParkingMutex<Vec<String>>,
+        error_messages: ParkingMutex<Vec<String>>,
+        successful_statuses: ParkingMutex<Vec<ProcessingStatus>>,
     }
 
     impl Display for RecordingListener {
@@ -3928,6 +3956,42 @@ mod test {
             Some(false)
         }
     }
+
+    #[derive(Debug)]
+    struct MissingDownloadStateDownloader;
+
+    impl Display for MissingDownloadStateDownloader {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "missing-download-state")
+        }
+    }
+
+    impl source_downloader_sdk::component::SdComponent for MissingDownloadStateDownloader {}
+
+    #[async_trait]
+    impl Downloader for MissingDownloadStateDownloader {
+        async fn submit(&self, _: &DownloadTask) -> Result<(), ProcessingError> {
+            Ok(())
+        }
+
+        fn default_download_path(&self) -> &str {
+            "/tmp/source-downloader-missing-state"
+        }
+
+        async fn cancel(
+            &self,
+            _: &SourceItem,
+            _: &[SourceFile],
+        ) -> Result<(), ProcessingError> {
+            Ok(())
+        }
+    }
+
+    impl AsyncDownloader for MissingDownloadStateDownloader {
+        fn is_finished(&self, _: &SourceItem) -> Option<bool> {
+            None
+        }
+    }
     impl ProcessListener for RecordingListener {
         fn on_item_success(&self, ctx: &dyn ProcessContext, item_content: &ItemContent) {
             self.successes.fetch_add(1, AtomicOrdering::Relaxed);
@@ -3935,15 +3999,17 @@ mod test {
                 ctx.get_item_content(item_content.source_item).is_some(),
                 AtomicOrdering::Relaxed,
             );
+            self.successful_statuses.lock().push(item_content.status);
         }
 
         fn on_item_error(
             &self,
             _: &dyn ProcessContext,
             _: &SourceItem,
-            _: &ProcessingError,
+            error: &ProcessingError,
         ) {
             self.errors.fetch_add(1, AtomicOrdering::Relaxed);
+            self.error_messages.lock().push(error.message().to_owned());
         }
 
         fn on_process_completed(&self, ctx: &dyn ProcessContext) {
@@ -4035,7 +4101,211 @@ mod test {
             .insert(ListenerMode::Batch, vec![batch_listener.clone()]);
 
         assert_eq!(processor.run_rename().await.unwrap(), 0);
+
         assert_eq!(batch_listener.completions.load(AtomicOrdering::Relaxed), 0);
+    }
+    #[tokio::test]
+    async fn async_rename_missing_download_state_emits_no_listener_events() {
+        use std::sync::OnceLock;
+
+        let source_item =
+            SourceItem { title: "missing-state".to_owned(), ..Default::default() };
+        let content = ProcessingContent {
+            id: Some(2),
+            processor_name: "async-rename-missing-state".to_owned(),
+            item_hash: source_item.hashing(),
+            item_identity: None,
+            item_content: ItemContentLite { source_item, item_variables: HashMap::new() },
+            rename_times: 0,
+            status: ProcessingStatus::WaitingToRename,
+            failure_reason: None,
+            created_at: OffsetDateTime::now_utc(),
+            updated_at: None,
+        };
+        let file = FileContent {
+            download_path: PathBuf::from("/download"),
+            file_download_path: PathBuf::from("/download/file.txt"),
+            source_save_path: PathBuf::from("/save"),
+            pattern_variables: HashMap::new(),
+            tags: Vec::new(),
+            attrs: Default::default(),
+            file_uri: None,
+            target_save_path: PathBuf::from("/save"),
+            target_filename: "file.txt".to_owned(),
+            exist_target_path: None,
+            errors: Vec::new(),
+            status: Normal,
+            target_path: OnceLock::new(),
+            data: None,
+        };
+        let (mut processor, storage) = pointer_test_processor(false, 0, false);
+        processor.name = content.processor_name.clone();
+        processor.async_downloader = Some(Arc::new(MissingDownloadStateDownloader));
+        *storage.query_results.lock() = vec![content];
+        storage
+            .stored_file_contents
+            .lock()
+            .insert(2, encode_files_and_compress(&vec![file]).unwrap());
+        let each_listener = Arc::new(RecordingListener::default());
+        let batch_listener = Arc::new(RecordingListener::default());
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Each, vec![each_listener.clone()]);
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Batch, vec![batch_listener.clone()]);
+
+        assert_eq!(processor.run_rename().await.unwrap(), 0);
+
+        assert_eq!(each_listener.successes.load(AtomicOrdering::Relaxed), 0);
+        assert_eq!(each_listener.errors.load(AtomicOrdering::Relaxed), 0);
+        assert_eq!(batch_listener.completions.load(AtomicOrdering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn async_rename_target_already_exists_emits_only_batch_completion() {
+        use std::fs;
+        use std::sync::OnceLock;
+
+        let root = std::env::temp_dir().join(format!(
+            "source-downloader-rename-target-exists-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let target_dir = root.join("target");
+        fs::create_dir_all(&target_dir).unwrap();
+        let target_file = target_dir.join("file.txt");
+        fs::write(&target_file, b"existing").unwrap();
+        let source_item =
+            SourceItem { title: "target-exists".to_owned(), ..Default::default() };
+        let content = ProcessingContent {
+            id: Some(1),
+            processor_name: "async-rename-target-exists".to_owned(),
+            item_hash: source_item.hashing(),
+            item_identity: None,
+            item_content: ItemContentLite { source_item, item_variables: HashMap::new() },
+            rename_times: 0,
+            status: ProcessingStatus::WaitingToRename,
+            failure_reason: None,
+            created_at: OffsetDateTime::now_utc(),
+            updated_at: None,
+        };
+        let file = FileContent {
+            download_path: root.join("download"),
+            file_download_path: root.join("download/file.txt"),
+            source_save_path: target_dir.clone(),
+            pattern_variables: HashMap::new(),
+            tags: Vec::new(),
+            attrs: Default::default(),
+            file_uri: None,
+            target_save_path: target_dir,
+            target_filename: "file.txt".to_owned(),
+            exist_target_path: None,
+            errors: Vec::new(),
+            status: Normal,
+            target_path: OnceLock::new(),
+            data: None,
+        };
+        let (mut processor, storage) = pointer_test_processor(false, 0, false);
+        processor.file_mover = Arc::new(ReplacementFileMover);
+        processor.name = content.processor_name.clone();
+        *storage.query_results.lock() = vec![content];
+        storage
+            .stored_file_contents
+            .lock()
+            .insert(1, encode_files_and_compress(&vec![file]).unwrap());
+        let each_listener = Arc::new(RecordingListener::default());
+        let batch_listener = Arc::new(RecordingListener::default());
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Each, vec![each_listener.clone()]);
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Batch, vec![batch_listener.clone()]);
+
+        assert_eq!(processor.run_rename().await.unwrap(), 1);
+
+        assert_eq!(each_listener.successes.load(AtomicOrdering::Relaxed), 0);
+        assert_eq!(*each_listener.error_messages.lock(), Vec::<String>::new());
+        assert_eq!(batch_listener.completions.load(AtomicOrdering::Relaxed), 1);
+        assert_eq!(
+            *batch_listener.completed_items.lock(),
+            vec!["target-exists".to_owned()]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn async_rename_failure_is_visible_to_batch_listener() {
+        use std::fs;
+        use std::sync::OnceLock;
+
+        let root = std::env::temp_dir()
+            .join(format!("source-downloader-rename-failure-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let source_item =
+            SourceItem { title: "rename-failure".to_owned(), ..Default::default() };
+        let content = ProcessingContent {
+            id: Some(3),
+            processor_name: "async-rename-failure".to_owned(),
+            item_hash: source_item.hashing(),
+            item_identity: None,
+            item_content: ItemContentLite { source_item, item_variables: HashMap::new() },
+            rename_times: 0,
+            status: ProcessingStatus::WaitingToRename,
+            failure_reason: None,
+            created_at: OffsetDateTime::now_utc(),
+            updated_at: None,
+        };
+        let file = FileContent {
+            download_path: root.join("download"),
+            file_download_path: root.join("download/file.txt"),
+            source_save_path: root.join("target"),
+            pattern_variables: HashMap::new(),
+            tags: Vec::new(),
+            attrs: Default::default(),
+            file_uri: None,
+            target_save_path: root.join("target"),
+            target_filename: "file.txt".to_owned(),
+            exist_target_path: None,
+            errors: Vec::new(),
+            status: Normal,
+            target_path: OnceLock::new(),
+            data: None,
+        };
+        let (mut processor, storage) = pointer_test_processor(false, 0, false);
+        processor.file_mover = Arc::new(FailingFileMover);
+        processor.name = content.processor_name.clone();
+        *storage.query_results.lock() = vec![content];
+        storage
+            .stored_file_contents
+            .lock()
+            .insert(3, encode_files_and_compress(&vec![file]).unwrap());
+        let each_listener = Arc::new(RecordingListener::default());
+        let batch_listener = Arc::new(RecordingListener::default());
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Each, vec![each_listener.clone()]);
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Batch, vec![batch_listener.clone()]);
+
+        assert_eq!(processor.run_rename().await.unwrap(), 1);
+
+        assert_eq!(each_listener.successes.load(AtomicOrdering::Relaxed), 0);
+        assert_eq!(each_listener.errors.load(AtomicOrdering::Relaxed), 1);
+        assert_eq!(batch_listener.completions.load(AtomicOrdering::Relaxed), 1);
+        assert_eq!(
+            *batch_listener.completed_items.lock(),
+            vec!["rename-failure".to_owned()]
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
@@ -4223,6 +4493,27 @@ mod test {
 
     impl source_downloader_sdk::component::SdComponent for ReplacementFileMover {}
     impl FileMover for ReplacementFileMover {}
+
+    #[derive(Debug)]
+    struct FailingFileMover;
+
+    impl Display for FailingFileMover {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "failing-file-mover")
+        }
+    }
+
+    impl source_downloader_sdk::component::SdComponent for FailingFileMover {}
+
+    impl FileMover for FailingFileMover {
+        fn move_file(
+            &self,
+            _: &SourceItem,
+            _: &FileContent,
+        ) -> Result<(), ProcessingError> {
+            Err(ProcessingError::non_retryable("rename test failure"))
+        }
+    }
 
     #[derive(Debug)]
     struct AlwaysReplaceDecider {

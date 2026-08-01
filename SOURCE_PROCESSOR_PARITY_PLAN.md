@@ -171,12 +171,12 @@ one-item-per-commit and regression-test rules above.
 
 ### P1: event and lifecycle parity
 
-- [ ] **Define async rename listener event semantics**
-  - Decide and test Each/Batch behavior for successful rename, target already
-    existing, missing downloader state, unfinished downloads, and rename
-    failures.
-  - Kotlin and Rust currently disagree on which cases emit Each success/error
-    and which contents appear in the Batch listener context.
+- [x] **Define async rename listener event semantics**
+  - Successful rename emits Each success and Batch completion.
+  - An already-existing target appears only in Batch completion.
+  - Missing downloader state and unfinished downloads emit no events.
+  - Rename failure emits Each error and remains visible in Batch context.
+  - In-flight cancellation emits no event before async rename processing.
 
 - [ ] **Define ProcessListener failure isolation**
   - Kotlin isolates exceptions from each listener. Rust listener methods are
