@@ -110,7 +110,7 @@ impl ItemContentFilter for ExpressionItemContentFilter {
         if self.inclusions.is_empty() {
             return true;
         }
-        self.inclusions.iter().any(|expr| {
+        self.inclusions.iter().all(|expr| {
             expr.execute(&item_var)
                 .inspect_err(|e| {
                     warn!(
