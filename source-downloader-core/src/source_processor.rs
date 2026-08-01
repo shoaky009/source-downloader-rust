@@ -1131,11 +1131,22 @@ trait Process {
                 .await
                 .map_err(|error| ProcessingError::non_retryable(error.message))?
         };
-        let mut prior_by_hash = HashMap::new();
+        let mut latest_contents = HashMap::new();
         for content in prior_contents {
-            if prior_by_hash.contains_key(&content.item_hash) {
-                continue;
+            match latest_contents.entry(content.item_hash.clone()) {
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(content);
+                }
+                std::collections::hash_map::Entry::Occupied(mut entry)
+                    if content.created_at > entry.get().created_at =>
+                {
+                    entry.insert(content);
+                }
+                std::collections::hash_map::Entry::Occupied(_) => {}
             }
+        }
+        let mut prior_by_hash = HashMap::with_capacity(latest_contents.len());
+        for content in latest_contents.into_values() {
             let content_id = content.id.ok_or_else(|| {
                 ProcessingError::non_retryable("Persisted replacement content has no id")
             })?;
@@ -2724,6 +2735,9 @@ mod test {
         content_exists: AtomicBool,
         fail_next_state_save: AtomicBool,
         query_count: AtomicUsize,
+        query_results: ParkingMutex<Vec<ProcessingContent>>,
+        found_paths: ParkingMutex<Vec<ProcessingTargetPath>>,
+        stored_file_contents: ParkingMutex<HashMap<i64, Vec<u8>>>,
     }
 
     impl PointerStorage {
@@ -2776,22 +2790,23 @@ mod test {
             _: &ProcessingContentQuery,
         ) -> Result<Vec<ProcessingContent>, StorageError> {
             self.query_count.fetch_add(1, AtomicOrdering::Release);
-            Ok(Vec::new())
+            Ok(self.query_results.lock().clone())
         }
 
         async fn save_file_contents(
             &self,
-            _: i64,
-            _: Vec<u8>,
+            content_id: i64,
+            contents: Vec<u8>,
         ) -> Result<(), StorageError> {
+            self.stored_file_contents.lock().insert(content_id, contents);
             Ok(())
         }
 
         async fn find_file_contents(
             &self,
-            _: i64,
+            content_id: i64,
         ) -> Result<Option<Vec<u8>>, StorageError> {
-            Ok(None)
+            Ok(self.stored_file_contents.lock().get(&content_id).cloned())
         }
 
         async fn find_processor_source_state(
@@ -2813,6 +2828,13 @@ mod test {
             }
             self.states.lock().push(state.clone());
             Ok(state.clone())
+        }
+
+        async fn find_paths(
+            &self,
+            _: &[String],
+        ) -> Result<Vec<ProcessingTargetPath>, StorageError> {
+            Ok(self.found_paths.lock().clone())
         }
 
         async fn save_paths(
@@ -3929,6 +3951,106 @@ mod test {
             self.saw_prior_item.store(before.is_some(), AtomicOrdering::Relaxed);
             true
         }
+    }
+
+    #[derive(Debug, Default)]
+    struct PriorTitleDecider(ParkingMutex<Option<String>>);
+
+    impl Display for PriorTitleDecider {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "prior-title")
+        }
+    }
+
+    impl source_downloader_sdk::component::SdComponent for PriorTitleDecider {}
+
+    impl FileReplacementDecider for PriorTitleDecider {
+        fn should_replace(
+            &self,
+            _: &SourceItem,
+            _: &FileContent,
+            before: Option<&InProcessingItem>,
+            _: &SourceFile,
+        ) -> bool {
+            *self.0.lock() = before.map(|item| item.source_item.title.clone());
+            false
+        }
+    }
+
+    #[tokio::test]
+    async fn replacement_decider_receives_latest_prior_content_regardless_of_query_order()
+    {
+        use std::sync::OnceLock;
+
+        let prior_hash = "prior-hash".to_owned();
+        let prior_content =
+            |id: i64, title: &str, created_at: OffsetDateTime| ProcessingContent {
+                id: Some(id),
+                processor_name: "replacement-history-test".to_owned(),
+                item_hash: prior_hash.clone(),
+                item_identity: None,
+                item_content: ItemContentLite {
+                    source_item: SourceItem {
+                        title: title.to_owned(),
+                        ..Default::default()
+                    },
+                    item_variables: HashMap::new(),
+                },
+                rename_times: 1,
+                status: ProcessingStatus::Renamed,
+                failure_reason: None,
+                created_at,
+                updated_at: None,
+            };
+        let older = prior_content(1, "older", OffsetDateTime::UNIX_EPOCH);
+        let newer =
+            prior_content(2, "newer", OffsetDateTime::from_unix_timestamp(1).unwrap());
+        let target_path = PathBuf::from("replacement-history-target.txt");
+        let storage = Arc::new(PointerStorage {
+            query_results: ParkingMutex::new(vec![older, newer]),
+            found_paths: ParkingMutex::new(vec![ProcessingTargetPath {
+                path: target_path.to_string_lossy().into_owned(),
+                processor_name: "replacement-history-test".to_owned(),
+                item_hash: prior_hash,
+            }]),
+            stored_file_contents: ParkingMutex::new(HashMap::from([
+                (1, encode_files_and_compress(&Vec::new()).unwrap()),
+                (2, encode_files_and_compress(&Vec::new()).unwrap()),
+            ])),
+            ..Default::default()
+        });
+        let mut file = FileContent {
+            download_path: PathBuf::new(),
+            file_download_path: PathBuf::from("download.txt"),
+            source_save_path: PathBuf::new(),
+            pattern_variables: HashMap::new(),
+            tags: Vec::new(),
+            attrs: Default::default(),
+            file_uri: None,
+            target_save_path: PathBuf::new(),
+            target_filename: "replacement-history-target.txt".to_owned(),
+            exist_target_path: Some(target_path.clone()),
+            errors: Vec::new(),
+            status: TargetExists,
+            target_path: OnceLock::new(),
+            data: None,
+        };
+        file.target_path.set(target_path).unwrap();
+        let (mut processor, _) = pointer_test_processor(false, 0, false);
+        processor.processing_storage = storage;
+        let decider = Arc::new(PriorTitleDecider::default());
+        processor.options.file_replacement_decider = decider.clone();
+
+        NormalProcess {}
+            .identify_files_to_replace(
+                &processor,
+                &SourceItem { title: "current".to_owned(), ..Default::default() },
+                &mut [file],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(decider.0.lock().as_deref(), Some("newer"));
     }
 
     #[tokio::test]

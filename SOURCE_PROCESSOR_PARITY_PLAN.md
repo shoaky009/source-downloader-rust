@@ -142,9 +142,9 @@ one-item-per-commit and regression-test rules above.
     tags are not injected into SourceFile tags.
   - Suggested commit: `fix: preserve source file tags when tagging`
 
-- [ ] **Select the latest replacement history**
+- [x] **Select the latest replacement history**
   - Kotlin groups prior renamed content by item hash and selects the greatest
-    `createTime`. Rust currently keeps the first query result without an
+    `createTime`. Previously Rust kept the first query result without an
     ordering contract.
   - Acceptance: `FileReplacementDecider` receives the newest renamed prior
     content for each item hash, independent of storage query order.
