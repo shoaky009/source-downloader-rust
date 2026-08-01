@@ -1,13 +1,13 @@
+use crate::components::holding_task_trigger::state_detail_for_tasks;
+use parking_lot::Mutex;
 use source_downloader_sdk::SdComponent;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ProcessTask, SdComponent,
     SdComponentMetadata, Stateful, TaskRegistry, Trigger,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
-use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
-use std::sync::{Arc, Mutex};
-
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::AbortHandle;
 use tokio::time::MissedTickBehavior;
@@ -30,9 +30,8 @@ impl ComponentSupplier for FixedScheduleTriggerSupplier {
             .ok_or_else(|| ComponentError::from("Missing 'interval' property"))?
             .as_str()
             .ok_or_else(|| ComponentError::from("Invalid 'interval' property"))?;
-        let interval = humantime::parse_duration(interval_str).map_err(|e| {
-            ComponentError::from(e.to_string() + " for 'interval' property")
-        })?;
+        let interval = parse_duration(interval_str)
+            .map_err(|error| ComponentError::from(error.to_string()))?;
 
         let on_start_run_tasks = match props.get("on-start-run-tasks") {
             None => false,
@@ -48,6 +47,110 @@ impl ComponentSupplier for FixedScheduleTriggerSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }
+}
+
+fn parse_duration(value: &str) -> Result<Duration, String> {
+    humantime::parse_duration(value).or_else(|_| parse_iso_duration(value))
+}
+
+fn parse_iso_duration(value: &str) -> Result<Duration, String> {
+    let mut value = value;
+    if let Some(rest) = value.strip_prefix('-') {
+        value = rest;
+        return Err(format!("Invalid duration: {value}"));
+    }
+    let Some(mut rest) = value.strip_prefix('P') else {
+        return Err(format!("Invalid duration: {value}"));
+    };
+
+    let mut seconds = 0u64;
+    let mut nanoseconds = 0u32;
+    let mut in_time = false;
+    let mut saw_component = false;
+    while !rest.is_empty() {
+        if let Some(next) = rest.strip_prefix('T') {
+            if in_time {
+                return Err(format!("Invalid duration: {value}"));
+            }
+            in_time = true;
+            rest = next;
+            continue;
+        }
+
+        let number_end = rest
+            .find(|character: char| !character.is_ascii_digit() && character != '.')
+            .ok_or_else(|| format!("Invalid duration: {value}"))?;
+        if number_end == 0 {
+            return Err(format!("Invalid duration: {value}"));
+        }
+        let number = &rest[..number_end];
+        let unit = rest[number_end..]
+            .chars()
+            .next()
+            .ok_or_else(|| format!("Invalid duration: {value}"))?;
+        rest = &rest[number_end + unit.len_utf8()..];
+
+        match unit {
+            'D' if !in_time => {
+                let days = number
+                    .parse::<u64>()
+                    .map_err(|_| format!("Invalid duration: {value}"))?;
+                seconds = seconds
+                    .checked_add(
+                        days.checked_mul(86_400)
+                            .ok_or_else(|| format!("Duration is too large: {value}"))?,
+                    )
+                    .ok_or_else(|| format!("Duration is too large: {value}"))?;
+            }
+            'H' if in_time && !number.contains('.') => {
+                let hours = number
+                    .parse::<u64>()
+                    .map_err(|_| format!("Invalid duration: {value}"))?;
+                seconds = seconds
+                    .checked_add(
+                        hours
+                            .checked_mul(3_600)
+                            .ok_or_else(|| format!("Duration is too large: {value}"))?,
+                    )
+                    .ok_or_else(|| format!("Duration is too large: {value}"))?;
+            }
+            'M' if in_time && !number.contains('.') => {
+                let minutes = number
+                    .parse::<u64>()
+                    .map_err(|_| format!("Invalid duration: {value}"))?;
+                seconds = seconds
+                    .checked_add(
+                        minutes
+                            .checked_mul(60)
+                            .ok_or_else(|| format!("Duration is too large: {value}"))?,
+                    )
+                    .ok_or_else(|| format!("Duration is too large: {value}"))?;
+            }
+            'S' if in_time => {
+                let (whole, fraction) = number.split_once('.').unwrap_or((number, ""));
+                let whole = whole
+                    .parse::<u64>()
+                    .map_err(|_| format!("Invalid duration: {value}"))?;
+                if fraction.len() > 9 || !fraction.chars().all(|c| c.is_ascii_digit()) {
+                    return Err(format!("Invalid duration: {value}"));
+                }
+                let fraction = format!("{fraction:0<9}")
+                    .parse::<u32>()
+                    .map_err(|_| format!("Invalid duration: {value}"))?;
+                seconds = seconds
+                    .checked_add(whole)
+                    .ok_or_else(|| format!("Duration is too large: {value}"))?;
+                nanoseconds = fraction;
+            }
+            _ => return Err(format!("Invalid duration: {value}")),
+        }
+        saw_component = true;
+    }
+
+    if !saw_component || (!in_time && value == "P") {
+        return Err(format!("Invalid duration: {value}"));
+    }
+    Ok(Duration::new(seconds, nanoseconds))
 }
 
 #[derive(SdComponent)]
@@ -70,16 +173,26 @@ impl FixedScheduleTrigger {
     }
 
     async fn run_tasks_once(tasks: Vec<Arc<dyn ProcessTask>>) {
-        let mut groups: HashMap<Option<String>, Vec<Arc<dyn ProcessTask>>> =
-            HashMap::new();
+        let mut groups: Vec<(Option<String>, Vec<Arc<dyn ProcessTask>>)> = Vec::new();
         for task in tasks {
-            groups.entry(task.group()).or_default().push(task);
+            let group = task.group();
+            if let Some((_, grouped)) =
+                groups.iter_mut().find(|(known, _)| known == &group)
+            {
+                grouped.push(task);
+            } else {
+                groups.push((group, vec![task]));
+            }
         }
 
-        futures_util::future::join_all(groups.into_values().map(|tasks| async move {
+        futures_util::future::join_all(groups.into_iter().map(|(_, tasks)| async move {
             for task in tasks {
                 let result = task.run().await;
-                debug!("Task {} finished with result {:?}", task.name(), result);
+                if let Err(error) = &result {
+                    tracing::error!(task = %task.name(), error = %error, "Task processing failed");
+                } else {
+                    debug!("Task {} finished successfully", task.name());
+                }
             }
         }))
         .await;
@@ -88,22 +201,13 @@ impl FixedScheduleTrigger {
 
 impl Stateful for FixedScheduleTrigger {
     fn get_state_detail(&self) -> Option<Map<String, Value>> {
-        let mut state = Map::new();
-        state.insert(
-            "running".to_string(),
-            Value::Bool(self.worker_handle.lock().unwrap().is_some()),
-        );
-        Some(state)
+        Some(state_detail_for_tasks(&self.task_registry.tasks.read()))
     }
 }
 
 impl Trigger for FixedScheduleTrigger {
     fn start(&self) {
-        let mut handle_lock = self.worker_handle.lock().unwrap();
-        if handle_lock.is_some() {
-            info!("Trigger is already running.");
-            return;
-        }
+        let mut handle_lock = self.worker_handle.lock();
 
         let tasks = self.task_registry.tasks.clone();
         let duration = self.interval;
@@ -132,7 +236,7 @@ impl Trigger for FixedScheduleTrigger {
     }
 
     fn stop(&self) {
-        let mut handle_lock = self.worker_handle.lock().unwrap();
+        let mut handle_lock = self.worker_handle.lock();
         if let Some(handle) = handle_lock.take() {
             handle.abort();
             info!("Trigger stopped, interval: {}s", self.interval.as_secs(),);
@@ -140,8 +244,11 @@ impl Trigger for FixedScheduleTrigger {
     }
 
     fn add_task(&self, task: Arc<dyn ProcessTask>) {
-        self.task_registry.add(task);
-        debug!("Current task count: {}", self.task_registry.tasks.read().len());
+        let mut tasks = self.task_registry.tasks.write();
+        if !tasks.iter().any(|known| Arc::ptr_eq(known, &task)) {
+            tasks.push(task);
+        }
+        debug!("Current task count: {}", tasks.len());
     }
 
     fn remove_task(&self, task: Arc<dyn ProcessTask>) {
@@ -156,7 +263,7 @@ impl Debug for FixedScheduleTrigger {
             .field("interval", &self.interval)
             .field("on_start_run_tasks", &self.on_start_run_tasks)
             .field("tasks", &self.task_registry.tasks.read().len())
-            .field("worker_handle", &self.worker_handle.lock().unwrap().is_some())
+            .field("worker_handle", &self.worker_handle.lock().is_some())
             .finish()
     }
 }
@@ -420,5 +527,16 @@ mod tests {
         trigger.stop();
         assert_eq!(counter1.load(Ordering::SeqCst), 2);
         assert_eq!(counter2.load(Ordering::SeqCst), 1);
+    }
+    #[test]
+    fn parse_duration_accepts_iso_8601_values() {
+        assert_eq!(parse_duration("PT1.5S").unwrap(), Duration::from_millis(1500));
+        assert_eq!(parse_duration("P1DT2H3M4S").unwrap(), Duration::from_secs(93_784));
+    }
+
+    #[test]
+    fn parse_duration_rejects_empty_iso_values() {
+        assert!(parse_duration("P").is_err());
+        assert!(parse_duration("PT").is_err());
     }
 }

@@ -5,6 +5,7 @@ pub mod expression_file_content_filter;
 pub mod expression_item_content_filter;
 pub mod expression_item_filter;
 pub mod fixed_schedule_trigger;
+pub mod holding_task_trigger;
 pub mod http_downloader;
 pub mod never_replace_decider;
 pub mod simple_file_exists_detector;
