@@ -9,6 +9,7 @@ pub mod mapped_file_tagger;
 pub mod file_directory_exists_detector;
 pub mod fixed_schedule_trigger;
 pub mod general_file_mover;
+pub mod hardlink_file_mover;
 pub mod holding_task_trigger;
 pub mod http_downloader;
 pub mod never_replace_decider;
@@ -36,6 +37,7 @@ pub fn get_build_in_component_supplier() -> Vec<Arc<dyn ComponentSupplier>> {
         Arc::new(system_file_mover::SUPPLIER),
         Arc::new(mapped_file_tagger::SUPPLIER),
         Arc::new(general_file_mover::SUPPLIER),
+        Arc::new(hardlink_file_mover::SUPPLIER),
         Arc::new(file_directory_exists_detector::SUPPLIER),
         Arc::new(simple_file_exists_detector::SUPPLIER),
         Arc::new(trimmers::FORCE_SUPPLIER),
