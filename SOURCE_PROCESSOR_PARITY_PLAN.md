@@ -236,6 +236,22 @@ one-item-per-commit and regression-test rules above.
 The Web handlers above must delegate to Core behavior rather than duplicate
 SourceProcessor orchestration.
 
+### P3: maintainability after behavioral coverage
+
+- [ ] **Extract ordered ItemAction settlement from Process::execute**
+  - Defer this refactor until tests cover every `ItemAction`, failure stage,
+    listener/persistence side effect, pointer-advance boundary, cancellation,
+    and stop-scheduling/drain behavior.
+  - Keep the existing `FuturesOrdered` scheduler, bounded parallelism,
+    fetch-order settlement, and allocation/I/O profile unchanged.
+  - Move only result settlement into private `CompletedItem`,
+    `ScheduleDecision`, and action-specific settlement functions; keep
+    lifecycle and scheduling control in `execute()`.
+  - Do not replace the scheduler with a worker pool/channel or unify failure
+    stages whose continuation and persistence semantics differ.
+  - Acceptance: all pre-refactor behavioral tests remain unchanged and pass;
+    targeted benchmarks show no throughput or allocation regression.
+
 ### Intentional Rust divergences to preserve
 
 - [x] Commit pointer progress in fetch order with `FuturesOrdered`; Kotlin
