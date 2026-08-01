@@ -19,6 +19,7 @@ use source_downloader_core::source_processor::{
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::ProcessTask;
 use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::storage::ProcessorSourceState;
 use source_downloader_sdk::time::UtcDateTime;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -218,11 +219,11 @@ async fn post_items(
 
 #[axum::debug_handler]
 async fn get_state(
-    State(_): State<Arc<CoreApplication>>,
+    State(core): State<Arc<CoreApplication>>,
     Path(name): Path<String>,
-) -> () {
-    info!("get_state name={}", name);
-    todo!()
+) -> Result<Json<ProcessorState>, AppError> {
+    let state = require_processor(&core, &name)?.source_state().await?;
+    Ok(Json(state.into()))
 }
 
 #[axum::debug_handler]
@@ -275,6 +276,26 @@ impl From<DryRunOptions> for CoreDryRunOptions {
         Self {
             pointer: options.pointer.map(Value::Object),
             filter_processed: options.filter_processed.unwrap_or(true),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcessorState {
+    source_id: String,
+    pointer: Value,
+    last_active_time: Option<UtcDateTime>,
+    retry_times: u32,
+}
+
+impl From<ProcessorSourceState> for ProcessorState {
+    fn from(state: ProcessorSourceState) -> Self {
+        Self {
+            source_id: state.source_id,
+            pointer: state.last_pointer,
+            last_active_time: None,
+            retry_times: 0,
         }
     }
 }
@@ -409,5 +430,23 @@ mod tests {
 
         assert!(default_options.filter_processed);
         assert!(!explicit_false.filter_processed);
+    }
+
+    #[test]
+    fn processor_state_uses_camel_case_wire_fields() {
+        let value = source_downloader_sdk::serde_json::to_value(ProcessorState::from(
+            ProcessorSourceState {
+                id: Some(7),
+                processor_name: "processor".to_owned(),
+                source_id: "source".to_owned(),
+                last_pointer: source_downloader_sdk::serde_json::json!({"page": 3}),
+            },
+        ))
+        .unwrap();
+
+        assert_eq!(value["sourceId"], "source");
+        assert_eq!(value["pointer"]["page"], 3);
+        assert!(value["lastActiveTime"].is_null());
+        assert_eq!(value["retryTimes"], 0);
     }
 }

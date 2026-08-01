@@ -219,7 +219,10 @@ one-item-per-commit and regression-test rules above.
 - [x] **Implement submitted SourceItem endpoint**
   - Submitted items delegate to `SourceProcessor::run_items()` and retain the
     fixed-item process semantics without advancing the source pointer.
-- [ ] **Implement processor state endpoint**
+- [x] **Implement processor state endpoint**
+  - Core exposes the persisted state or the Source default pointer; Web maps it
+    to the Kotlin-compatible `sourceId`, `pointer`, `lastActiveTime`, and
+    `retryTimes` view.
 - [ ] **Implement pointer update endpoint**
 - [ ] **Implement processor content deletion endpoint**
 - [ ] **Connect the processing reprocess endpoint to Core**

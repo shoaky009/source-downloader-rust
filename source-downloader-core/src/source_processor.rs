@@ -803,6 +803,20 @@ impl SourceProcessor {
         FixedItemProcess { items }.execute(self).await
     }
 
+    pub async fn source_state(&self) -> Result<ProcessorSourceState, ProcessingError> {
+        Ok(self
+            .processing_storage
+            .find_processor_source_state(&self.name, &self.source_id)
+            .await
+            .map_err(|error| ProcessingError::non_retryable(error.message))?
+            .unwrap_or(ProcessorSourceState {
+                id: None,
+                processor_name: self.name.clone(),
+                source_id: self.source_id.clone(),
+                last_pointer: self.source.default_pointer().dump(),
+            }))
+    }
+
     pub fn start_rename_task(self: &Arc<Self>) {
         if self.async_downloader.is_none() {
             return;
@@ -1473,16 +1487,7 @@ trait Process {
         &self,
         p: &SourceProcessor,
     ) -> Result<ProcessorSourceState, ProcessingError> {
-        Ok(p.processing_storage
-            .find_processor_source_state(&p.name, &p.source_id)
-            .await
-            .map_err(|x| ProcessingError::non_retryable(x.message))?
-            .unwrap_or(ProcessorSourceState {
-                id: None,
-                processor_name: p.name.to_owned(),
-                source_id: p.source_id.to_owned(),
-                last_pointer: p.source.default_pointer().dump(),
-            }))
+        p.source_state().await
     }
 
     fn get_source_pointer(
@@ -4516,6 +4521,18 @@ mod test {
             information.options.variable_error_strategy,
             VariableErrorStrategy::Stay
         );
+    }
+
+    #[tokio::test]
+    async fn source_state_uses_source_default_when_not_persisted() {
+        let (processor, _) = pointer_test_processor(false, 1, false);
+
+        let state = processor.source_state().await.unwrap();
+
+        assert_eq!(state.id, None);
+        assert_eq!(state.processor_name, "pointer-test");
+        assert_eq!(state.source_id, "pointer-test-source");
+        assert_eq!(state.last_pointer, json!(0));
     }
 
     #[derive(Debug)]
