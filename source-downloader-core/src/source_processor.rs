@@ -46,7 +46,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, info, warn};
 
 static INSTANCE_ID_GENERATOR: AtomicI64 = AtomicI64::new(0);
@@ -757,9 +757,33 @@ impl SourceProcessor {
         &self,
         options: DryRunOptions,
     ) -> Result<Vec<DryRunResult>, ProcessingError> {
-        let process = DryRunProcess::new(self, options);
+        let process = DryRunProcess::collecting(self, options);
         process.execute(self).await?;
         Ok(process.into_results())
+    }
+
+    pub fn dry_run_stream(
+        self: &Arc<Self>,
+        options: DryRunOptions,
+    ) -> impl futures_util::Stream<Item = Result<DryRunResult, ProcessingError>> + Send + 'static
+    {
+        let capacity = self.options.parallelism.max(1) as usize;
+        let (sender, receiver) = mpsc::channel(capacity);
+        let process = DryRunProcess::streaming(self, options, sender.clone());
+        let processor = self.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                result = process.execute(&processor) => {
+                    if let Err(error) = result {
+                        let _ = sender.send(Err(error)).await;
+                    }
+                }
+                _ = sender.closed() => {}
+            }
+        });
+        futures_util::stream::unfold(receiver, |mut receiver| async move {
+            receiver.recv().await.map(|result| (result, receiver))
+        })
     }
 
     pub async fn reprocess(
@@ -2519,14 +2543,19 @@ pub fn decode_files_from_compressed(
     Ok(files)
 }
 
+enum DryRunOutput {
+    Collected(SyncMutex<Vec<DryRunResult>>),
+    Streamed(mpsc::Sender<Result<DryRunResult, ProcessingError>>),
+}
+
 struct DryRunProcess {
     source_pointer: Option<Value>,
     item_filters: Vec<Arc<dyn SourceItemFilter>>,
-    results: SyncMutex<Vec<DryRunResult>>,
+    output: DryRunOutput,
 }
 
 impl DryRunProcess {
-    fn new(processor: &SourceProcessor, options: DryRunOptions) -> Self {
+    fn collecting(processor: &SourceProcessor, options: DryRunOptions) -> Self {
         let item_filters = if options.filter_processed {
             processor.options.item_filters.clone()
         } else {
@@ -2543,12 +2572,27 @@ impl DryRunProcess {
         Self {
             source_pointer: options.pointer,
             item_filters,
-            results: SyncMutex::new(Vec::new()),
+            output: DryRunOutput::Collected(SyncMutex::new(Vec::new())),
         }
     }
 
+    fn streaming(
+        processor: &SourceProcessor,
+        options: DryRunOptions,
+        sender: mpsc::Sender<Result<DryRunResult, ProcessingError>>,
+    ) -> Self {
+        let mut process = Self::collecting(processor, options);
+        process.output = DryRunOutput::Streamed(sender);
+        process
+    }
+
     fn into_results(self) -> Vec<DryRunResult> {
-        self.results.into_inner()
+        match self.output {
+            DryRunOutput::Collected(results) => results.into_inner(),
+            DryRunOutput::Streamed(_) => {
+                unreachable!("collecting dry-run must use collected output")
+            }
+        }
     }
 }
 
@@ -2590,7 +2634,14 @@ impl Process for DryRunProcess {
         processing_content: ProcessingContent,
         file_contents: Vec<FileContent>,
     ) -> Result<(), ProcessingError> {
-        self.results.lock().push(DryRunResult { processing_content, file_contents });
+        let result = DryRunResult { processing_content, file_contents };
+        match &self.output {
+            DryRunOutput::Collected(results) => results.lock().push(result),
+            DryRunOutput::Streamed(sender) => sender
+                .send(Ok(result))
+                .await
+                .map_err(|_| ProcessingError::non_retryable("Dry-run stream closed"))?,
+        }
         Ok(())
     }
 
@@ -3754,6 +3805,73 @@ mod test {
         assert_eq!(submit_count.load(AtomicOrdering::Acquire), 0);
         assert_eq!(storage.next_content_id.load(AtomicOrdering::Acquire), 0);
         assert!(storage.saved_pointers().is_empty());
+    }
+
+    #[tokio::test]
+    async fn dry_run_stream_emits_each_result_without_side_effects() {
+        let submit_count = Arc::new(AtomicUsize::new(0));
+        let (processor, storage) = pointer_test_processor_with_settings(
+            false,
+            2,
+            false,
+            PointerTestSettings {
+                unique_files: true,
+                submit_count: Some(submit_count.clone()),
+                ..Default::default()
+            },
+        );
+        let processor = Arc::new(processor);
+
+        let results =
+            processor.dry_run_stream(DryRunOptions::default()).collect::<Vec<_>>().await;
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(
+            results
+                .into_iter()
+                .map(|result| result
+                    .unwrap()
+                    .processing_content
+                    .item_content
+                    .source_item
+                    .title)
+                .collect::<Vec<_>>(),
+            ["item-1", "item-2"]
+        );
+        assert_eq!(submit_count.load(AtomicOrdering::Acquire), 0);
+        assert_eq!(storage.next_content_id.load(AtomicOrdering::Acquire), 0);
+        assert!(storage.saved_pointers().is_empty());
+    }
+
+    #[tokio::test]
+    async fn dropping_dry_run_stream_cancels_processing() {
+        let probe = Arc::new(ParallelismProbe::new(2));
+        let (processor, _) = pointer_test_processor_with_settings(
+            false,
+            1,
+            false,
+            PointerTestSettings { probe: Some(probe.clone()), ..Default::default() },
+        );
+        let processor = Arc::new(processor);
+        let stream = processor.dry_run_stream(DryRunOptions::default());
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while probe.active.load(AtomicOrdering::Acquire) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("dry-run should reach the resolver");
+        assert!(processor.runtime_snapshot().processing);
+
+        drop(stream);
+
+        tokio::time::timeout(Duration::from_millis(100), async {
+            while processor.runtime_snapshot().processing {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("dropping the stream should cancel its dry-run");
     }
 
     #[tokio::test]

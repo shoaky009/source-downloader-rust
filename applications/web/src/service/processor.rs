@@ -1,8 +1,12 @@
 use crate::ApplicationContext;
 use crate::error_handle::AppError;
+use axum::body::{Body, Bytes};
 use axum::extract::{Path, Query, State};
+use axum::http::header;
+use axum::response::Response;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_qs::to_string;
 use source_downloader_core::application::CoreApplication;
@@ -173,13 +177,24 @@ async fn dry_run(
 
 #[axum::debug_handler]
 async fn dry_run_stream(
-    State(_code): State<Arc<CoreApplication>>,
-    Path(_name): Path<String>,
-    Json(_options): Json<Option<DryRunOptions>>,
-) -> () {
-    // gen application/x-ndjson
-    info!("dry_run_stream name={}", _name);
-    todo!()
+    State(core): State<Arc<CoreApplication>>,
+    Path(name): Path<String>,
+    options: Option<Json<DryRunOptions>>,
+) -> Result<Response<Body>, AppError> {
+    let processor = require_processor(&core, &name)?;
+    let options = options.map(|Json(options)| options).unwrap_or_default();
+    let stream = processor.dry_run_stream(options.into()).map(|result| {
+        let result =
+            result.map_err(|error| std::io::Error::other(error.message().to_owned()))?;
+        let mut line = source_downloader_sdk::serde_json::to_vec(&result)
+            .map_err(std::io::Error::other)?;
+        line.push(b'\n');
+        Ok::<_, std::io::Error>(Bytes::from(line))
+    });
+    Response::builder()
+        .header(header::CONTENT_TYPE, "application/x-ndjson")
+        .body(Body::from_stream(stream))
+        .map_err(|error| AppError::InternalError(error.to_string()))
 }
 
 #[axum::debug_handler]

@@ -209,7 +209,10 @@ one-item-per-commit and regression-test rules above.
 - [x] **Implement processor dry-run endpoint**
   - GET without a body and POST options both delegate to
     `SourceProcessor::dry_run()`; omitted `filterProcessed` defaults to `true`.
-- [ ] **Implement streaming dry-run in Core and Web**
+- [x] **Implement streaming dry-run in Core and Web**
+  - Core emits each `DryRunResult` through a bounded stream and cancels the
+    process when the receiver disconnects; Web exposes it as
+    `application/x-ndjson`.
 - [ ] **Implement manual rename endpoint**
 - [ ] **Implement submitted SourceItem endpoint**
 - [ ] **Implement processor state endpoint**
