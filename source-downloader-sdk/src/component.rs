@@ -224,12 +224,14 @@ pub trait ComponentSupplier: Send + Sync {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>>;
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SdComponentMetadata {
-    description: String,
-    props_json_schema: Option<Value>,
-    props_ui_schema: Option<Value>,
-    state_json_schema: Option<Value>,
-    state_ui_schema: Option<Value>,
+    pub description: String,
+    pub props_json_schema: Option<Value>,
+    pub props_ui_schema: Option<Value>,
+    pub state_json_schema: Option<Value>,
+    pub state_ui_schema: Option<Value>,
 }
 
 pub trait SdComponent: Any + Send + Sync + Debug + Display {

@@ -208,7 +208,9 @@ impl ComponentManager {
     pub fn get_all_suppliers(&self) -> Vec<Arc<dyn ComponentSupplier>> {
         let mut suppliers = Vec::new();
         for supplier in self.component_suppliers.read().values() {
-            suppliers.push(supplier.clone());
+            if !suppliers.iter().any(|known| Arc::ptr_eq(known, supplier)) {
+                suppliers.push(supplier.clone());
+            }
         }
         suppliers
     }

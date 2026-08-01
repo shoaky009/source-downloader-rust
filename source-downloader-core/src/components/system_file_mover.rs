@@ -28,7 +28,7 @@ impl ComponentSupplier for SystemFileMoverSupplier {
     }
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        todo!()
+        None
     }
 }
 

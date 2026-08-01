@@ -145,12 +145,23 @@ impl From<i32> for ProcessingStatus {
 }
 
 #[derive(Default)]
+pub struct ItemContentCondition {
+    pub title: Option<String>,
+    pub attrs: Option<HashMap<String, String>>,
+    pub variables: Option<HashMap<String, String>>,
+    pub content_type: Option<String>,
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Default)]
 pub struct ProcessingContentQuery {
+    pub id: Option<Vec<i64>>,
     pub processor_name: Option<Vec<String>>,
     pub rename_times_threshold: Option<u32>,
     pub item_hash: Option<Vec<String>>,
     pub item_identity: Option<Vec<String>>,
     pub status: Option<Vec<ProcessingStatus>>,
+    pub item: Option<ItemContentCondition>,
     pub created_at_start: Option<OffsetDateTime>,
     pub created_at_end: Option<OffsetDateTime>,
     pub max_id: Option<i64>,
@@ -163,6 +174,8 @@ pub struct ProcessorSourceState {
     pub processor_name: String,
     pub source_id: String,
     pub last_pointer: Value,
+    pub last_active_time: Option<OffsetDateTime>,
+    pub retry_times: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -1,9 +1,11 @@
 use crate::ApplicationContext;
 use crate::error_handle::error_handler;
 use axum::extract::State;
+use axum::http::StatusCode;
 use axum::routing::{get, post};
-use axum::{Router, middleware};
+use axum::{Json, Router, middleware};
 use source_downloader_core::application::CoreApplication;
+use source_downloader_sdk::serde_json::{Value, json};
 use std::sync::Arc;
 
 build_info::build_info!(fn build_info);
@@ -24,11 +26,12 @@ pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
 }
 
 #[axum::debug_handler]
-async fn reload_core_application(State(core): State<Arc<CoreApplication>>) -> () {
+async fn reload_core_application(State(core): State<Arc<CoreApplication>>) -> StatusCode {
     core.reload();
+    StatusCode::NO_CONTENT
 }
 
 #[axum::debug_handler]
-async fn get_info() {
-    println!("{:#?}", build_info());
+async fn get_info() -> Json<Value> {
+    Json(json!({ "buildInfo": format!("{:#?}", build_info()) }))
 }

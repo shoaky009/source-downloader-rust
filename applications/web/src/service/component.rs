@@ -16,10 +16,10 @@ use source_downloader_core::component_manager::ComponentManager;
 use source_downloader_core::config::ComponentConfig;
 use source_downloader_sdk::component::ComponentRootType::Trigger;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentId, ComponentRootType, ComponentType,
+    ComponentError, ComponentId, ComponentRootType, ComponentType, SdComponentMetadata,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::convert::Infallible;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -39,7 +39,7 @@ pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
                 )
                 .route("/{root_type}/{type_name}/{name}/reload", post(reload_component))
                 .route("/types", get(all_types))
-                .route("/schema", get(component_schema))
+                .route("/{root_type}/{type_name}/metadata", get(component_metadata))
                 .route("/state-stream", get(state_stream)),
         )
         .with_state(ctx.core.clone())
@@ -135,10 +135,11 @@ async fn query_components(
 
 #[axum::debug_handler]
 async fn save_component(
-    State(_core): State<Arc<CoreApplication>>,
+    State(core): State<Arc<CoreApplication>>,
     Json(request): Json<ComponentSaveRequest>,
-) -> Result<(), AppError> {
-    _save_component(_core, request)
+) -> Result<StatusCode, AppError> {
+    _save_component(core, request)?;
+    Ok(StatusCode::CREATED)
 }
 
 fn _save_component(
@@ -174,9 +175,9 @@ async fn save_component_props(
 
 #[axum::debug_handler]
 async fn delete_component(
-    State(_core): State<Arc<CoreApplication>>,
+    State(core): State<Arc<CoreApplication>>,
     Path(path): Path<ComponentIdPath>,
-) -> Result<(), AppError> {
+) -> Result<StatusCode, AppError> {
     let id = ComponentId::new(
         ComponentType {
             root_type: path.root_type.to_owned(),
@@ -184,9 +185,8 @@ async fn delete_component(
         },
         &path.name,
     );
-    let wp = _core.component_manager.get_component(&id);
-    if let Ok(wp) = wp {
-        let refs = wp.get_refs();
+    if let Ok(wrapper) = core.component_manager.get_component(&id) {
+        let refs = wrapper.get_refs();
         if !refs.is_empty() {
             return Err(AppError::BadRequest(format!(
                 "Component has been referenced by other processor, can not be deleted. {}",
@@ -194,12 +194,13 @@ async fn delete_component(
             )));
         }
     }
-    _core.config_operator.delete_component(
+    core.config_operator.delete_component(
         &path.root_type,
         &path.type_name,
         &path.name,
     )?;
-    Ok(())
+    core.component_manager.destroy(&id);
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[axum::debug_handler]
@@ -258,28 +259,31 @@ async fn all_types(
 }
 
 #[axum::debug_handler]
-async fn component_schema(
-    State(_core): State<Arc<CoreApplication>>,
-) -> Json<Vec<String>> {
-    info!("component_schema");
-    Json(vec![])
+async fn component_metadata(
+    State(core): State<Arc<CoreApplication>>,
+    Path(path): Path<ComponentTypePath>,
+) -> Json<Option<Box<SdComponentMetadata>>> {
+    let component_type =
+        ComponentType { root_type: path.root_type, name: path.type_name };
+    Json(
+        core.component_manager
+            .get_supplier(&component_type)
+            .and_then(|supplier| supplier.get_metadata()),
+    )
 }
 
 #[axum::debug_handler]
 async fn state_stream(
-    State(_core): State<Arc<CoreApplication>>,
+    State(core): State<Arc<CoreApplication>>,
     Qs(query): Qs<ComponentIds>,
-) -> Sse<ComponentStateStream> {
-    info!("state_stream");
+) -> Result<Sse<ComponentStateStream>, AppError> {
     let component_ids = query
         .id
         .iter()
-        .map(|x| ComponentId::parse(x))
-        .collect::<Result<HashSet<_>, _>>()
-        .unwrap();
-    let stream =
-        ComponentStateStream::new(_core.component_manager.clone(), component_ids);
-    Sse::new(stream)
+        .map(|value| ComponentId::parse(value))
+        .collect::<Result<HashSet<_>, _>>()?;
+    let stream = ComponentStateStream::new(core.component_manager.clone(), component_ids);
+    Ok(Sse::new(stream))
 }
 
 fn check_request(
@@ -305,6 +309,7 @@ struct ComponentStateStream {
     component_manager: Arc<ComponentManager>,
     component_ids: HashSet<ComponentId>,
     interval: tokio::time::Interval,
+    pending_events: VecDeque<Event>,
 }
 
 impl ComponentStateStream {
@@ -316,6 +321,7 @@ impl ComponentStateStream {
             component_manager,
             component_ids,
             interval: tokio::time::interval(Duration::from_secs(1)),
+            pending_events: VecDeque::new(),
         }
     }
 }
@@ -327,36 +333,49 @@ impl Stream for ComponentStateStream {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        match Pin::new(&mut self.interval).poll_tick(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(_) => {
-                let components = self
-                    .component_manager
-                    .get_all_component()
-                    .into_iter()
-                    .filter(|x| self.component_ids.contains(&x.id))
-                    .collect::<Vec<_>>();
-                for wrapper in &components {
-                    if let Some(state) = &wrapper
-                        .component
-                        .clone()
-                        .and_then(|x| x.as_stateful())
-                        .and_then(|x| x.get_state_detail())
-                    {
-                        let event = Event::default()
-                            .id(wrapper.id.display())
-                            .event("component-state")
-                            .data(
-                                source_downloader_sdk::serde_json::to_string(&state)
-                                    .unwrap_or("{}".to_string()),
-                            );
+        if let Some(event) = self.pending_events.pop_front() {
+            return Poll::Ready(Some(Ok(event)));
+        }
+        loop {
+            match Pin::new(&mut self.interval).poll_tick(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(_) => {
+                    let components = self
+                        .component_manager
+                        .get_all_component()
+                        .into_iter()
+                        .filter(|wrapper| self.component_ids.contains(&wrapper.id))
+                        .collect::<Vec<_>>();
+                    for wrapper in components {
+                        if let Some(state) = wrapper
+                            .component
+                            .clone()
+                            .and_then(|component| component.as_stateful())
+                            .and_then(|stateful| stateful.get_state_detail())
+                        {
+                            let event = Event::default()
+                                .id(wrapper.id.display())
+                                .event("component-state")
+                                .data(
+                                    source_downloader_sdk::serde_json::to_string(&state)
+                                        .unwrap_or_else(|_| "{}".to_owned()),
+                                );
+                            self.pending_events.push_back(event);
+                        }
+                    }
+                    if let Some(event) = self.pending_events.pop_front() {
                         return Poll::Ready(Some(Ok(event)));
                     }
                 }
-                Poll::Ready(None)
             }
         }
     }
+}
+
+#[derive(Deserialize)]
+struct ComponentTypePath {
+    root_type: ComponentRootType,
+    type_name: String,
 }
 
 #[derive(Deserialize)]
@@ -422,7 +441,7 @@ struct ComponentInfo {
     error_message: Option<String>,
 }
 
-struct Qs<T>(pub T);
+pub(crate) struct Qs<T>(pub T);
 
 impl<S, T> FromRequestParts<S> for Qs<T>
 where

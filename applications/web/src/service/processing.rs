@@ -1,16 +1,21 @@
 use crate::ApplicationContext;
 use crate::error_handle::AppError;
-use axum::extract::{Path, Query, State};
+use crate::service::component::Qs;
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use source_downloader_core::source_processor::decode_files_from_compressed;
 use source_downloader_sdk::SourceItem;
+use source_downloader_sdk::component::FileContent;
 use source_downloader_sdk::storage::{
-    ItemContentLite, ProcessingContent, ProcessingStatus,
+    ItemContentCondition, ItemContentLite, ProcessingContent, ProcessingContentQuery,
+    ProcessingStatus,
 };
 use source_downloader_sdk::time::{OffsetDateTime, UtcDateTime};
+use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::info;
 
 pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
     Router::new()
@@ -28,66 +33,105 @@ pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
 
 #[axum::debug_handler]
 async fn get_content(
-    State(_ctx): State<Arc<ApplicationContext>>,
+    State(ctx): State<Arc<ApplicationContext>>,
     Path(id): Path<i64>,
-) -> Json<ProcessingContent> {
-    info!("get_content id={}", id);
-    ProcessingContent {
-        id: Some(id),
-        processor_name: "www".to_string(),
-        item_hash: "aaa".to_string(),
-        item_identity: None,
-        item_content: ItemContentLite {
-            source_item: SourceItem {
-                title: "".to_string(),
-                link: "localhost".parse().unwrap(),
-                datetime: OffsetDateTime::now_utc(),
-                content_type: "text".to_string(),
-                download_uri: "localhost".parse().unwrap(),
-                attrs: Default::default(),
-                tags: Default::default(),
-                identity: None,
-            },
-            item_variables: Default::default(),
-        },
-        rename_times: 0,
-        status: ProcessingStatus::Renamed,
-        failure_reason: None,
-        created_at: OffsetDateTime::now_utc(),
-        updated_at: None,
-    }
-    .into()
+) -> Result<Json<ProcessingContentDetail>, AppError> {
+    Ok(Json(load_content_detail(&ctx, id).await?))
+}
+
+async fn load_content_detail(
+    ctx: &ApplicationContext,
+    id: i64,
+) -> Result<ProcessingContentDetail, AppError> {
+    let content = ctx
+        .storage
+        .find_content_by_id(id)
+        .await
+        .map_err(|error| AppError::InternalError(error.message))?
+        .ok_or_else(|| {
+            AppError::NotFound(format!("Processing content {id} not found"))
+        })?;
+    let file_contents = match ctx
+        .storage
+        .find_file_contents(id)
+        .await
+        .map_err(|error| AppError::InternalError(error.message))?
+    {
+        Some(bytes) => decode_files_from_compressed(&bytes)?,
+        None => Vec::new(),
+    };
+    Ok(ProcessingContentDetail::new(content, file_contents))
 }
 
 #[axum::debug_handler]
 async fn query_contents(
-    State(_ctx): State<Arc<ApplicationContext>>,
-    Query(query): Query<QueryContents>,
-) -> Json<Vec<ProcessingContent>> {
-    info!("query_contents limit={} offset={}", query.limit, query.offset);
-    vec![].into()
+    State(ctx): State<Arc<ApplicationContext>>,
+    Qs(query): Qs<QueryContents>,
+) -> Result<Json<Scroll>, AppError> {
+    let max_id = query.max_id.filter(|id| *id > 0);
+    let statuses = query.status.as_deref().map(parse_processing_statuses).transpose()?;
+    let contents = ctx
+        .storage
+        .query_processing_content(&ProcessingContentQuery {
+            id: query.id,
+            processor_name: query.processor_name,
+            item_hash: query.item_hash.map(|hash| vec![hash]),
+            status: statuses,
+            item: query.item.map(Into::into),
+            created_at_start: query.create_time_begin.map(Into::into),
+            created_at_end: query.create_time_end.map(Into::into),
+            max_id,
+            limit: Some(query.limit),
+            ..Default::default()
+        })
+        .await
+        .map_err(|error| AppError::InternalError(error.message))?;
+    let next_max_id =
+        contents.last().and_then(|content| content.id).unwrap_or(max_id.unwrap_or(0));
+    Ok(Json(Scroll {
+        contents: contents.into_iter().map(ProcessingContentSummary::from).collect(),
+        next_max_id,
+    }))
 }
 
 #[axum::debug_handler]
 async fn update_content(
-    State(_ctx): State<Arc<ApplicationContext>>,
-    Path(id): Path<String>,
+    State(ctx): State<Arc<ApplicationContext>>,
+    Path(id): Path<i64>,
     Json(body): Json<UpdateContent>,
-) -> () {
-    info!(
-        "update_content id={}, status={}, renameTimes={}",
-        id,
-        body.status.unwrap_or("".to_string()),
-        body.rename_times.unwrap_or(0)
-    );
+) -> Result<Json<ProcessingContentDetail>, AppError> {
+    let mut content = ctx
+        .storage
+        .find_content_by_id(id)
+        .await
+        .map_err(|error| AppError::InternalError(error.message))?
+        .ok_or_else(|| {
+            AppError::NotFound(format!("Processing content {id} not found"))
+        })?;
+    if let Some(status) = body.status {
+        content.status = parse_processing_status(&status)?;
+    }
+    if let Some(rename_times) = body.rename_times {
+        content.rename_times = rename_times;
+    }
+    content.updated_at = Some(OffsetDateTime::now_utc());
+    ctx.storage
+        .save_processing_content(&content)
+        .await
+        .map_err(|error| AppError::InternalError(error.message))?;
+    Ok(Json(load_content_detail(&ctx, id).await?))
 }
 
 #[axum::debug_handler]
 async fn delete_content(
-    State(_ctx): State<Arc<ApplicationContext>>,
-    Path(id): Path<String>,
-) -> () {
-    info!("delete_content id={}", id);
+    State(ctx): State<Arc<ApplicationContext>>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, AppError> {
+    ctx.storage
+        .delete_processing_content(id)
+        .await
+        .map_err(|error| AppError::InternalError(error.message))?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[axum::debug_handler]
@@ -118,33 +162,167 @@ async fn reprocess(
     Ok(())
 }
 
-#[allow(dead_code)]
-fn default_limit() -> u32 {
+fn parse_processing_statuses(
+    values: &[String],
+) -> Result<Vec<ProcessingStatus>, AppError> {
+    values.iter().map(|value| parse_processing_status(value)).collect()
+}
+
+fn parse_processing_status(value: &str) -> Result<ProcessingStatus, AppError> {
+    let status = match value {
+        "WAITING_TO_RENAME" | "WaitingToRename" => ProcessingStatus::WaitingToRename,
+        "FILTERED" | "Filtered" => ProcessingStatus::Filtered,
+        "DOWNLOAD_FAILED" | "DownloadFailed" => ProcessingStatus::DownloadFailed,
+        "TARGET_ALREADY_EXISTS" | "TargetAlreadyExists" => {
+            ProcessingStatus::TargetAlreadyExists
+        }
+        "RENAMED" | "Renamed" => ProcessingStatus::Renamed,
+        "NO_FILES" | "NoFiles" => ProcessingStatus::NoFiles,
+        "FAILURE" | "Failure" => ProcessingStatus::Failure,
+        "CANCELLED" | "Cancelled" => ProcessingStatus::Cancelled,
+        _ => {
+            return Err(AppError::BadRequest(format!(
+                "Unknown processing status: {value}"
+            )));
+        }
+    };
+    Ok(status)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Scroll {
+    contents: Vec<ProcessingContentSummary>,
+    next_max_id: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcessingContentSummary {
+    id: Option<i64>,
+    processor_name: String,
+    item_hash: String,
+    item_identity: Option<String>,
+    item_content: ItemContentSummary,
+    rename_times: u32,
+    status: ProcessingStatus,
+    failure_reason: Option<String>,
+    created_at: OffsetDateTime,
+    updated_at: Option<OffsetDateTime>,
+}
+
+impl From<ProcessingContent> for ProcessingContentSummary {
+    fn from(content: ProcessingContent) -> Self {
+        let ItemContentLite { source_item, item_variables } = content.item_content;
+        Self {
+            id: content.id,
+            processor_name: content.processor_name,
+            item_hash: content.item_hash,
+            item_identity: content.item_identity,
+            item_content: ItemContentSummary { source_item, item_variables },
+            rename_times: content.rename_times,
+            status: content.status,
+            failure_reason: content.failure_reason,
+            created_at: content.created_at,
+            updated_at: content.updated_at,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ItemContentSummary {
+    source_item: SourceItem,
+    item_variables: HashMap<String, String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcessingContentDetail {
+    id: Option<i64>,
+    processor_name: String,
+    item_hash: String,
+    item_identity: Option<String>,
+    item_content: ItemContentDetail,
+    rename_times: u32,
+    status: ProcessingStatus,
+    failure_reason: Option<String>,
+    created_at: OffsetDateTime,
+    updated_at: Option<OffsetDateTime>,
+}
+
+impl ProcessingContentDetail {
+    fn new(content: ProcessingContent, file_contents: Vec<FileContent>) -> Self {
+        let ItemContentLite { source_item, item_variables } = content.item_content;
+        Self {
+            id: content.id,
+            processor_name: content.processor_name,
+            item_hash: content.item_hash,
+            item_identity: content.item_identity,
+            item_content: ItemContentDetail {
+                source_item,
+                file_contents,
+                item_variables,
+            },
+            rename_times: content.rename_times,
+            status: content.status,
+            failure_reason: content.failure_reason,
+            created_at: content.created_at,
+            updated_at: content.updated_at,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ItemContentDetail {
+    source_item: SourceItem,
+    file_contents: Vec<FileContent>,
+    item_variables: HashMap<String, String>,
+}
+
+fn default_limit() -> u64 {
     20
 }
-#[allow(dead_code)]
-fn default_offset() -> u64 {
-    0
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ItemCondition {
+    title: Option<String>,
+    attrs: Option<HashMap<String, String>>,
+    variables: Option<HashMap<String, String>>,
+    content_type: Option<String>,
+    tags: Option<Vec<String>>,
+}
+
+impl From<ItemCondition> for ItemContentCondition {
+    fn from(condition: ItemCondition) -> Self {
+        Self {
+            title: condition.title,
+            attrs: condition.attrs,
+            variables: condition.variables,
+            content_type: condition.content_type,
+            tags: condition.tags,
+        }
+    }
 }
 
 #[derive(Deserialize)]
-#[allow(dead_code)]
 struct QueryContents {
     #[serde(default = "default_limit")]
-    limit: u32,
-    #[serde(default = "default_offset")]
-    offset: u64,
+    limit: u64,
+    #[serde(rename = "maxId")]
+    max_id: Option<i64>,
     #[serde(rename = "processorName")]
     processor_name: Option<Vec<String>>,
     status: Option<Vec<String>>,
-    id: Option<Vec<String>>,
+    id: Option<Vec<i64>>,
     #[serde(rename = "itemHash")]
-    item_hash: Option<Vec<String>>,
+    item_hash: Option<String>,
     #[serde(rename = "createTime.begin")]
     create_time_begin: Option<UtcDateTime>,
     #[serde(rename = "createTime.end")]
     create_time_end: Option<UtcDateTime>,
-    //TODO item condition
+    item: Option<ItemCondition>,
 }
 
 #[derive(Deserialize)]
@@ -153,4 +331,65 @@ struct UpdateContent {
     rename_times: Option<u32>,
     #[serde(rename = "status")]
     status: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn processing_content() -> ProcessingContent {
+        ProcessingContent {
+            id: Some(7),
+            processor_name: "processor".to_owned(),
+            item_hash: "hash".to_owned(),
+            item_identity: None,
+            item_content: ItemContentLite {
+                source_item: SourceItem {
+                    title: "title".to_owned(),
+                    link: "https://example.com".parse().unwrap(),
+                    datetime: OffsetDateTime::now_utc(),
+                    content_type: "text/plain".to_owned(),
+                    download_uri: "https://example.com/file".parse().unwrap(),
+                    attrs: Default::default(),
+                    tags: Default::default(),
+                    identity: None,
+                },
+                item_variables: HashMap::new(),
+            },
+            rename_times: 1,
+            status: ProcessingStatus::Renamed,
+            failure_reason: None,
+            created_at: OffsetDateTime::now_utc(),
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn list_omits_files_while_detail_includes_them() {
+        let summary = source_downloader_sdk::serde_json::to_value(
+            ProcessingContentSummary::from(processing_content()),
+        )
+        .unwrap();
+        let detail = source_downloader_sdk::serde_json::to_value(
+            ProcessingContentDetail::new(processing_content(), Vec::new()),
+        )
+        .unwrap();
+
+        assert!(summary["itemContent"].get("fileContents").is_none());
+        assert_eq!(
+            detail["itemContent"]["fileContents"],
+            source_downloader_sdk::serde_json::json!([])
+        );
+        assert_eq!(summary["processorName"], "processor");
+        assert!(summary.get("processor_name").is_none());
+    }
+
+    #[test]
+    fn processing_status_accepts_kotlin_wire_names() {
+        assert_eq!(
+            parse_processing_status("WAITING_TO_RENAME").unwrap(),
+            ProcessingStatus::WaitingToRename
+        );
+        assert!(parse_processing_status("UNKNOWN").is_err());
+    }
 }

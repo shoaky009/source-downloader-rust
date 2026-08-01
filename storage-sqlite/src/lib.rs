@@ -11,6 +11,8 @@ use source_downloader_sdk::storage::{
     ProcessingStorage, ProcessingTargetPath, ProcessorSourceState,
 };
 use std::str::FromStr;
+use time::OffsetDateTime;
+use time::format_description::well_known::Iso8601;
 
 pub struct SeaProcessingStorage {
     db: DatabaseConnection,
@@ -57,14 +59,37 @@ impl SeaProcessingStorage {
         })
     }
 
+    fn parse_saved_time(value: String) -> Result<OffsetDateTime, Error> {
+        OffsetDateTime::parse(&value, &Iso8601::DEFAULT)
+            .or_else(|_| {
+                let normalized =
+                    value.replacen(' ', "T", 1).replace(" +", "+").replace(" -", "-");
+                OffsetDateTime::parse(&normalized, &Iso8601::DEFAULT)
+            })
+            .map_err(|error| Error {
+                message: format!("Invalid processor source state time: {error}"),
+            })
+    }
+
+    fn json_key_path(prefix: &str, key: &str) -> String {
+        format!("{prefix}.\"{}\"", key.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+
     fn model_to_processor_source_state(
         saved: processor_source_state::Model,
     ) -> Result<ProcessorSourceState, Error> {
+        let last_active_time =
+            saved.last_active_at.map(Self::parse_saved_time).transpose()?;
+        let retry_times = u32::try_from(saved.retry_times).map_err(|_| Error {
+            message: format!("Invalid negative retry_times: {}", saved.retry_times),
+        })?;
         Ok(ProcessorSourceState {
             id: Some(saved.id),
             processor_name: saved.processor_name,
             source_id: saved.source_id,
             last_pointer: saved.last_pointer_json,
+            last_active_time,
+            retry_times,
         })
     }
 }
@@ -113,23 +138,57 @@ impl ProcessingStorage for SeaProcessingStorage {
     }
 
     async fn delete_processing_content(&self, id: i64) -> Result<(), Error> {
-        processing_record::Entity::delete_by_id(id)
-            .exec(&self.db)
+        let transaction = self
+            .db
+            .begin()
             .await
-            .map_err(|e| Error { message: e.to_string() })?;
-        Ok(())
+            .map_err(|error| Error { message: error.to_string() })?;
+        item_file_content::Entity::delete_by_id(id)
+            .exec(&transaction)
+            .await
+            .map_err(|error| Error { message: error.to_string() })?;
+        processing_record::Entity::delete_by_id(id)
+            .exec(&transaction)
+            .await
+            .map_err(|error| Error { message: error.to_string() })?;
+        transaction.commit().await.map_err(|error| Error { message: error.to_string() })
     }
 
     async fn delete_processing_contents_by_processor(
         &self,
         processor_name: &str,
     ) -> Result<u64, Error> {
-        processing_record::Entity::delete_many()
-            .filter(processing_record::Column::ProcessorName.eq(processor_name))
-            .exec(&self.db)
+        let transaction = self
+            .db
+            .begin()
             .await
-            .map(|result| result.rows_affected)
-            .map_err(|error| Error { message: error.to_string() })
+            .map_err(|error| Error { message: error.to_string() })?;
+        let content_ids = processing_record::Entity::find()
+            .select_only()
+            .column(processing_record::Column::Id)
+            .filter(processing_record::Column::ProcessorName.eq(processor_name))
+            .into_tuple::<i64>()
+            .all(&transaction)
+            .await
+            .map_err(|error| Error { message: error.to_string() })?;
+        if !content_ids.is_empty() {
+            item_file_content::Entity::delete_many()
+                .filter(item_file_content::Column::Id.is_in(content_ids))
+                .exec(&transaction)
+                .await
+                .map_err(|error| Error { message: error.to_string() })?;
+        }
+        let deleted = processing_record::Entity::delete_many()
+            .filter(processing_record::Column::ProcessorName.eq(processor_name))
+            .exec(&transaction)
+            .await
+            .map_err(|error| Error { message: error.to_string() })?
+            .rows_affected;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| Error { message: error.to_string() })?;
+        Ok(deleted)
     }
 
     async fn find_by_name_and_hash(
@@ -169,6 +228,10 @@ impl ProcessingStorage for SeaProcessingStorage {
         query: &ProcessingContentQuery,
     ) -> Result<Vec<ProcessingContent>, Error> {
         let mut db_query = processing_record::Entity::find();
+        if let Some(ids) = &query.id {
+            db_query =
+                db_query.filter(processing_record::Column::Id.is_in(ids.iter().copied()));
+        }
 
         // 动态条件：processor_name
         if let Some(processor_names) = &query.processor_name {
@@ -198,6 +261,48 @@ impl ProcessingStorage for SeaProcessingStorage {
             let status_codes: Vec<i32> = statuses.iter().map(|s| *s as i32).collect();
             db_query =
                 db_query.filter(processing_record::Column::Status.is_in(status_codes));
+        }
+        if let Some(item) = &query.item {
+            if let Some(title) = &item.title {
+                db_query = db_query.filter(Expr::cust_with_values(
+                    "json_extract(item_content, ?) GLOB ?",
+                    ["$.source_item.title".to_owned(), format!("*{title}*")],
+                ));
+            }
+            if let Some(attrs) = &item.attrs {
+                for (key, value) in attrs {
+                    db_query = db_query.filter(Expr::cust_with_values(
+                        "json_extract(item_content, ?) = ?",
+                        [
+                            Self::json_key_path("$.source_item.attrs", key),
+                            value.to_owned(),
+                        ],
+                    ));
+                }
+            }
+            if let Some(variables) = &item.variables {
+                for (key, value) in variables {
+                    db_query = db_query.filter(Expr::cust_with_values(
+                        "json_extract(item_content, ?) = ?",
+                        [Self::json_key_path("$.item_variables", key), value.to_owned()],
+                    ));
+                }
+            }
+            if let Some(content_type) = &item.content_type {
+                db_query = db_query.filter(Expr::cust_with_values(
+                    "json_extract(item_content, ?) = ?",
+                    ["$.source_item.contentType".to_owned(), content_type.to_owned()],
+                ));
+            }
+            if let Some(tags) = &item.tags {
+                for tag in tags {
+                    db_query = db_query.filter(Expr::cust_with_values(
+                        "EXISTS (SELECT 1 FROM json_each(item_content, \
+                         '$.source_item.tags') WHERE value = ?)",
+                        [tag.to_owned()],
+                    ));
+                }
+            }
         }
 
         // 动态条件：rename_times_threshold
@@ -298,13 +403,23 @@ impl ProcessingStorage for SeaProcessingStorage {
         &self,
         state: &ProcessorSourceState,
     ) -> Result<ProcessorSourceState, Error> {
+        let retry_times = i32::try_from(state.retry_times).map_err(|_| Error {
+            message: format!("retry_times is too large: {}", state.retry_times),
+        })?;
+        let last_active_at = state
+            .last_active_time
+            .map(|value| value.format(&Iso8601::DEFAULT))
+            .transpose()
+            .map_err(|error| Error {
+                message: format!("Failed to format processor source state time: {error}"),
+            })?;
         let model = processor_source_state::ActiveModel {
             id: if let Some(id) = state.id { Set(id) } else { NotSet },
             processor_name: Set(state.processor_name.to_owned()),
             source_id: Set(state.source_id.to_owned()),
             last_pointer_json: Set(state.last_pointer.clone()),
-            retry_times: Set(0),
-            last_active_at: Set(Some(time::OffsetDateTime::now_utc().to_string())),
+            retry_times: Set(retry_times),
+            last_active_at: Set(last_active_at),
         };
 
         let saved = model
@@ -375,8 +490,14 @@ impl ProcessingStorage for SeaProcessingStorage {
         if paths.is_empty() {
             return Ok(());
         }
-        let mut condition =
-            Condition::all().add(target_path::Column::Id.is_in(paths.iter().cloned()));
+        let path_condition = paths.iter().fold(Condition::any(), |condition, path| {
+            if path.ends_with('*') {
+                condition.add(Expr::cust_with_values("id GLOB ?", [path.to_owned()]))
+            } else {
+                condition.add(target_path::Column::Id.eq(path))
+            }
+        });
+        let mut condition = Condition::all().add(path_condition);
         if let Some(item_hash) = item_hash {
             condition = condition.add(target_path::Column::ItemHash.eq(item_hash));
         }
@@ -406,8 +527,8 @@ mod test {
     use crate::SeaProcessingStorage;
     use source_downloader_sdk::SourceItem;
     use source_downloader_sdk::storage::{
-        ItemContentLite, ProcessingContent, ProcessingStatus, ProcessingStorage,
-        ProcessingTargetPath,
+        ItemContentCondition, ItemContentLite, ProcessingContent, ProcessingContentQuery,
+        ProcessingStatus, ProcessingStorage, ProcessingTargetPath, ProcessorSourceState,
     };
     use std::collections::HashMap;
     use time::OffsetDateTime;
@@ -501,6 +622,87 @@ mod test {
         assert_eq!(res.status, ProcessingStatus::Failure);
     }
     #[tokio::test]
+    async fn test_query_by_id_and_delete_file_contents() {
+        let storage = SeaProcessingStorage::new("sqlite::memory:").await.unwrap();
+        let mut selected_content =
+            create_test_processing_content("processor", ProcessingStatus::Renamed);
+        selected_content.item_content.source_item.title = "Selected title".to_owned();
+        selected_content
+            .item_content
+            .source_item
+            .attrs
+            .insert("language".to_owned(), serde_json::json!("zh"));
+        selected_content.item_content.source_item.tags.push("anime".to_owned());
+        selected_content
+            .item_content
+            .item_variables
+            .insert("season".to_owned(), "2".to_owned());
+        let selected_id =
+            storage.save_processing_content(&selected_content).await.unwrap();
+        let other_id = storage
+            .save_processing_content(&create_test_processing_content(
+                "processor",
+                ProcessingStatus::Failure,
+            ))
+            .await
+            .unwrap();
+        storage.save_file_contents(selected_id, vec![1, 2, 3]).await.unwrap();
+
+        let selected = storage
+            .query_processing_content(&ProcessingContentQuery {
+                id: Some(vec![selected_id]),
+                item: Some(ItemContentCondition {
+                    title: Some("Selected".to_owned()),
+                    attrs: Some(HashMap::from([(
+                        "language".to_owned(),
+                        "zh".to_owned(),
+                    )])),
+                    variables: Some(HashMap::from([(
+                        "season".to_owned(),
+                        "2".to_owned(),
+                    )])),
+                    content_type: Some("text/html".to_owned()),
+                    tags: Some(vec!["anime".to_owned()]),
+                }),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].id, Some(selected_id));
+        assert_ne!(selected[0].id, Some(other_id));
+
+        storage.delete_processing_content(selected_id).await.unwrap();
+        assert!(storage.find_content_by_id(selected_id).await.unwrap().is_none());
+        assert!(storage.find_file_contents(selected_id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_processor_source_state_round_trip() {
+        let storage = SeaProcessingStorage::new("sqlite::memory:").await.unwrap();
+        let last_active_time = OffsetDateTime::now_utc();
+        let state = ProcessorSourceState {
+            id: None,
+            processor_name: "processor".to_owned(),
+            source_id: "source".to_owned(),
+            last_pointer: serde_json::json!({"page": 3}),
+            last_active_time: Some(last_active_time),
+            retry_times: 2,
+        };
+
+        let saved = storage.save_processor_source_state(&state).await.unwrap();
+        let loaded = storage
+            .find_processor_source_state("processor", "source")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(saved.last_active_time, Some(last_active_time));
+        assert_eq!(loaded.last_active_time, Some(last_active_time));
+        assert_eq!(loaded.retry_times, 2);
+    }
+
+    #[tokio::test]
     async fn test_target_path_lifecycle() {
         let storage = SeaProcessingStorage::new("sqlite::memory:").await.unwrap();
         let path = "/target/file.txt".to_owned();
@@ -534,6 +736,33 @@ mod test {
         storage.delete_paths(std::slice::from_ref(&path), Some("second")).await.unwrap();
         assert!(storage.find_paths(&[path]).await.unwrap().is_empty());
     }
+    #[tokio::test]
+    async fn test_delete_target_path_prefix() {
+        let storage = SeaProcessingStorage::new("sqlite::memory:").await.unwrap();
+        let matching = "/target/sub/file.txt".to_owned();
+        let retained = "/other/file.txt".to_owned();
+        storage
+            .save_paths(vec![
+                ProcessingTargetPath {
+                    path: matching.clone(),
+                    processor_name: "processor".to_owned(),
+                    item_hash: "hash".to_owned(),
+                },
+                ProcessingTargetPath {
+                    path: retained.clone(),
+                    processor_name: "processor".to_owned(),
+                    item_hash: "hash".to_owned(),
+                },
+            ])
+            .await
+            .unwrap();
+
+        storage.delete_paths(&["/target/*".to_owned()], None).await.unwrap();
+
+        assert!(storage.find_paths(&[matching]).await.unwrap().is_empty());
+        assert_eq!(storage.find_paths(&[retained]).await.unwrap().len(), 1);
+    }
+
     #[tokio::test]
     async fn test_delete_processor_contents_and_paths() {
         let storage = SeaProcessingStorage::new("sqlite::memory:").await.unwrap();

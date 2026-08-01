@@ -1,0 +1,184 @@
+{
+  "version": 1,
+  "rootType": "processor",
+  "fields": [
+    {
+      "path": "name",
+      "title": "任务名称",
+      "description": "处理器唯一名称",
+      "type": "string",
+      "required": true,
+      "askMode": "always",
+      "level": "basic"
+    },
+    {
+      "path": "enabled",
+      "title": "启用状态",
+      "description": "创建后是否立即启用该处理器",
+      "type": "boolean",
+      "defaultValue": true,
+      "askMode": "auto",
+      "level": "basic"
+    },
+    {
+      "path": "category",
+      "title": "分类",
+      "type": "string",
+      "askMode": "auto",
+      "level": "basic"
+    },
+    {
+      "path": "tags",
+      "title": "标签",
+      "type": "string-array",
+      "askMode": "auto",
+      "level": "basic"
+    },
+    {
+      "path": "triggers",
+      "title": "触发器",
+      "description": "引用一个或多个 trigger 组件，留空表示手动触发",
+      "type": "component-ref-array",
+      "refRootType": "trigger",
+      "askMode": "always",
+      "level": "basic"
+    },
+    {
+      "path": "source",
+      "title": "数据源",
+      "type": "component-ref",
+      "required": true,
+      "refRootType": "source",
+      "askMode": "always",
+      "level": "basic"
+    },
+    {
+      "path": "item-file-resolver",
+      "title": "文件解析器",
+      "type": "component-ref",
+      "required": true,
+      "refRootType": "item-file-resolver",
+      "askMode": "always",
+      "level": "basic"
+    },
+    {
+      "path": "downloader",
+      "title": "下载器",
+      "type": "component-ref",
+      "required": true,
+      "refRootType": "downloader",
+      "askMode": "always",
+      "level": "basic"
+    },
+    {
+      "path": "file-mover",
+      "title": "文件移动器",
+      "type": "component-ref",
+      "required": true,
+      "refRootType": "file-mover",
+      "askMode": "always",
+      "level": "basic"
+    },
+    {
+      "path": "save-path",
+      "title": "保存根目录",
+      "type": "path",
+      "required": true,
+      "askMode": "always",
+      "level": "basic"
+    },
+    {
+      "path": "options.save-path-pattern",
+      "title": "子目录模板",
+      "type": "string",
+      "patternKind": "save-path",
+      "askMode": "auto",
+      "level": "basic"
+    },
+    {
+      "path": "options.filename-pattern",
+      "title": "文件名模板",
+      "type": "string",
+      "patternKind": "filename",
+      "askMode": "auto",
+      "level": "basic"
+    },
+    {
+      "path": "options.variable-providers",
+      "title": "变量提供器",
+      "type": "component-ref-array",
+      "refRootType": "variable-provider",
+      "askMode": "auto",
+      "level": "basic"
+    },
+    {
+      "path": "options.variable-error-strategy",
+      "title": "变量错误策略",
+      "description": "变量表达式失败时使用原表达式、未解析标记或整个配置模式",
+      "type": "enum",
+      "defaultValue": "STAY",
+      "componentTypes": ["ORIGINAL", "PATTERN", "STAY", "TO_UNRESOLVED"],
+      "askMode": "auto",
+      "level": "advanced"
+    },
+    {
+      "path": "options.fetch-limit",
+      "title": "单次抓取数量",
+      "type": "integer",
+      "defaultValue": 50,
+      "valueType": "int",
+      "askMode": "never",
+      "level": "advanced"
+    },
+    {
+      "path": "options.pointer-batch-mode",
+      "title": "批量更新指针",
+      "type": "boolean",
+      "defaultValue": true,
+      "valueType": "boolean",
+      "askMode": "never",
+      "level": "advanced"
+    },
+    {
+      "path": "options.parallelism",
+      "title": "并发处理数",
+      "type": "integer",
+      "defaultValue": 1,
+      "valueType": "int",
+      "askMode": "never",
+      "level": "advanced"
+    },
+    {
+      "path": "options.rename-task-interval",
+      "title": "重命名补偿间隔",
+      "type": "duration",
+      "defaultValue": "5m",
+      "valueType": "duration",
+      "askMode": "never",
+      "level": "advanced"
+    },
+    {
+      "path": "options.rename-times-threshold",
+      "title": "重命名重试次数",
+      "type": "integer",
+      "defaultValue": 3,
+      "valueType": "int",
+      "askMode": "never",
+      "level": "advanced"
+    },
+    {
+      "path": "options.file-grouping",
+      "title": "文件分组规则",
+      "type": "object-array",
+      "askMode": "never",
+      "level": "advanced"
+    },
+    {
+      "path": "options.item-grouping",
+      "title": "条目分组规则",
+      "type": "object-array",
+      "askMode": "never",
+      "level": "advanced"
+    }
+  ]
+}

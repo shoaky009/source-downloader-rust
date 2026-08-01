@@ -819,6 +819,8 @@ impl SourceProcessor {
                 processor_name: self.name.clone(),
                 source_id: self.source_id.clone(),
                 last_pointer: self.source.default_pointer().dump(),
+                last_active_time: None,
+                retry_times: 0,
             }))
     }
 
@@ -1552,6 +1554,7 @@ trait Process {
         let raw_pointer = std::mem::take(&mut source_state.last_pointer);
         let source_pointer = self.get_source_pointer(p, raw_pointer);
         source_state.last_pointer = source_pointer.dump();
+        source_state.last_active_time = Some(OffsetDateTime::now_utc());
         let p_ctx = ProcessRuntime {
             trace_id: PROCESS_ID_GENERATOR
                 .fetch_add(i64::MIN, Ordering::Relaxed)
@@ -4366,6 +4369,8 @@ mod test {
             processor_name: processor.name.to_owned(),
             source_id: processor.source_id.to_owned(),
             last_pointer: json!(41),
+            last_active_time: None,
+            retry_times: 0,
         });
 
         processor.run().await.unwrap();
@@ -4606,6 +4611,8 @@ mod test {
             processor_name: processor.name.clone(),
             source_id: processor.source_id.clone(),
             last_pointer: json!({"page": 1, "retained": true}),
+            last_active_time: None,
+            retry_times: 0,
         });
 
         let updated = processor

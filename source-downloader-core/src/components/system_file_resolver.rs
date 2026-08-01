@@ -31,7 +31,7 @@ impl ComponentSupplier for SystemFileResolverSupplier {
         true
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        todo!()
+        None
     }
 }
 

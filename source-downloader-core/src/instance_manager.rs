@@ -92,6 +92,10 @@ impl InstanceManager {
             .collect()
     }
 
+    pub fn get_instance_factories(&self) -> Vec<Arc<dyn InstanceFactory>> {
+        self.factories.read().values().cloned().collect()
+    }
+
     pub fn register_instance_factory(
         &self,
         factory: Arc<dyn InstanceFactory>,

@@ -2,7 +2,7 @@ use crate::ApplicationContext;
 use crate::error_handle::AppError;
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, Query, State};
-use axum::http::header;
+use axum::http::{StatusCode, header};
 use axum::response::Response;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
@@ -19,9 +19,10 @@ use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::ProcessTask;
 use source_downloader_sdk::serde_json::{Map, Value};
 use source_downloader_sdk::storage::ProcessorSourceState;
-use source_downloader_sdk::time::UtcDateTime;
+use source_downloader_sdk::time::{OffsetDateTime, UtcDateTime};
 use std::collections::HashSet;
 use std::sync::Arc;
+use tracing::warn;
 
 pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
     Router::new()
@@ -36,8 +37,8 @@ pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
                 .route("/{name}/reload", post(reload_processor))
                 .route("/{name}/dry-run", get(dry_run).post(dry_run))
                 .route("/{name}/dry-run-stream", get(dry_run_stream).post(dry_run_stream))
-                .route("/{name}/trigger", post(trigger_processor))
-                .route("/{name}/rename", post(trigger_rename))
+                .route("/{name}/trigger", get(trigger_processor))
+                .route("/{name}/rename", get(trigger_rename))
                 .route("/{name}/items", post(post_items))
                 .route("/{name}/state", get(get_state))
                 .route("/{name}/pointer", put(update_pointer))
@@ -95,71 +96,76 @@ async fn query_processors(
 
 #[axum::debug_handler]
 async fn update_processor(
-    State(_core): State<Arc<CoreApplication>>,
-    Path(_name): Path<String>,
+    State(core): State<Arc<CoreApplication>>,
+    Path(name): Path<String>,
     Json(body): Json<ProcessorConfig>,
-) -> Result<(), AppError> {
-    _core.config_operator.save_processor(body.clone())?;
-    _core.processor_manager.destroy_processor(&_name);
-    _core.processor_manager.create_processor(&body);
-    Ok(())
+) -> Result<Json<ProcessorConfig>, AppError> {
+    if core.config_operator.get_processor_config(&name).is_none() {
+        return Err(AppError::NotFound("Processor config not found".to_owned()));
+    }
+    if body.name != name {
+        return Err(AppError::BadRequest(format!(
+            "Processor name mismatch: path={name}, body={}",
+            body.name
+        )));
+    }
+    core.config_operator.save_processor(body.clone())?;
+    core.processor_manager.destroy_processor(&name);
+    core.processor_manager.create_processor(&body);
+    Ok(Json(body))
 }
 
 #[axum::debug_handler]
 async fn delete_processor(
-    State(_core): State<Arc<CoreApplication>>,
+    State(core): State<Arc<CoreApplication>>,
     Path(name): Path<String>,
-) -> Result<(), AppError> {
-    _core.processor_manager.destroy_processor(&name);
-    _core.config_operator.delete_processor(&name)?;
-    Ok(())
+) -> Result<StatusCode, AppError> {
+    core.processor_manager.destroy_processor(&name);
+    core.config_operator.delete_processor(&name)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[axum::debug_handler]
 async fn create_processor(
-    State(_core): State<Arc<CoreApplication>>,
+    State(core): State<Arc<CoreApplication>>,
     Json(body): Json<ProcessorConfig>,
-) -> Result<(), AppError> {
-    if _core.processor_manager.processor_exists(&body.name) {
+) -> Result<StatusCode, AppError> {
+    if core.processor_manager.processor_exists(&body.name) {
         return Err(AppError::BadRequest("Processor already exists".to_string()));
     }
-    _core.config_operator.save_processor(body.clone())?;
-    _core.processor_manager.create_processor(&body);
-    Ok(())
+    core.config_operator.save_processor(body.clone())?;
+    core.processor_manager.create_processor(&body);
+    Ok(StatusCode::CREATED)
 }
 
 #[axum::debug_handler]
 async fn reload_processor(
-    State(_core): State<Arc<CoreApplication>>,
-    Path(_name): Path<String>,
-) -> Result<(), AppError> {
-    let config = _core.config_operator.get_processor_config(&_name);
-    if config.is_none() {
-        return Err(AppError::NotFound("Processor config not found".to_string()));
+    State(core): State<Arc<CoreApplication>>,
+    Path(name): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let config = core
+        .config_operator
+        .get_processor_config(&name)
+        .ok_or_else(|| AppError::NotFound("Processor config not found".to_string()))?;
+    if core.processor_manager.processor_exists(&name) {
+        core.processor_manager.destroy_processor(&name);
     }
-    let config = config.unwrap();
-    if _core.processor_manager.processor_exists(&_name) {
-        _core.processor_manager.destroy_processor(&_name)
-    }
-    _core.processor_manager.create_processor(&config);
-    Ok(())
+    core.processor_manager.create_processor(&config);
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[axum::debug_handler]
 async fn trigger_processor(
-    State(_core): State<Arc<CoreApplication>>,
-    Path(_name): Path<String>,
-) -> Result<(), AppError> {
-    let wp = _core
-        .processor_manager
-        .get_processor(&_name)
-        .ok_or_else(|| AppError::NotFound("Processor not found".into()))?;
-    let p = wp
-        .processor
-        .clone()
-        .ok_or_else(|| AppError::BadRequest("Processor not running".into()))?;
-    let _ = p.run().await;
-    Ok(())
+    State(core): State<Arc<CoreApplication>>,
+    Path(name): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let processor = require_processor(&core, &name)?;
+    tokio::spawn(async move {
+        if let Err(error) = processor.run().await {
+            warn!("Processor[manual-trigger-error] {} {}", processor.name, error);
+        }
+    });
+    Ok(StatusCode::ACCEPTED)
 }
 
 #[axum::debug_handler]
@@ -200,9 +206,9 @@ async fn dry_run_stream(
 async fn trigger_rename(
     State(core): State<Arc<CoreApplication>>,
     Path(name): Path<String>,
-) -> Result<(), AppError> {
+) -> Result<StatusCode, AppError> {
     require_processor(&core, &name)?.run_rename().await?;
-    Ok(())
+    Ok(StatusCode::ACCEPTED)
 }
 
 #[axum::debug_handler]
@@ -210,9 +216,9 @@ async fn post_items(
     State(core): State<Arc<CoreApplication>>,
     Path(name): Path<String>,
     Json(items): Json<Vec<SourceItem>>,
-) -> Result<(), AppError> {
+) -> Result<StatusCode, AppError> {
     require_processor(&core, &name)?.run_items(items).await?;
-    Ok(())
+    Ok(StatusCode::ACCEPTED)
 }
 
 #[axum::debug_handler]
@@ -287,7 +293,7 @@ impl From<DryRunOptions> for CoreDryRunOptions {
 struct ProcessorState {
     source_id: String,
     pointer: Value,
-    last_active_time: Option<UtcDateTime>,
+    last_active_time: Option<OffsetDateTime>,
     retry_times: u32,
 }
 
@@ -296,8 +302,8 @@ impl From<ProcessorSourceState> for ProcessorState {
         Self {
             source_id: state.source_id,
             pointer: state.last_pointer,
-            last_active_time: None,
-            retry_times: 0,
+            last_active_time: state.last_active_time,
+            retry_times: state.retry_times,
         }
     }
 }
@@ -458,6 +464,8 @@ mod tests {
                 processor_name: "processor".to_owned(),
                 source_id: "source".to_owned(),
                 last_pointer: source_downloader_sdk::serde_json::json!({"page": 3}),
+                last_active_time: None,
+                retry_times: 0,
             },
         ))
         .unwrap();

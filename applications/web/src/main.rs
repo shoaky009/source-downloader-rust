@@ -106,11 +106,13 @@ async fn run_web_server(
     let processing_routers =
         service::processing::register_routers(core_application.clone());
     let path_routers = service::path::register_routers(core_application.clone());
+    let metadata_routers = service::metadata::register_routers(core_application.clone());
     let api_routers = app_router
         .merge(component_routers)
         .merge(processor_routers)
         .merge(processing_routers)
         .merge(path_routers)
+        .merge(metadata_routers)
         .layer(middleware::from_fn(error_handle::error_handler));
 
     let root_router = match &config.server.static_dir {
