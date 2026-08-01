@@ -12,8 +12,8 @@ use source_downloader_core::application::CoreApplication;
 use source_downloader_core::config::ProcessorConfig;
 use source_downloader_core::processor_manager::ProcessorWrapper;
 use source_downloader_core::source_processor::{
-    DryRunOptions as CoreDryRunOptions, DryRunResult, ProcessorRuntimeSnapshot,
-    SourceProcessor,
+    DryRunOptions as CoreDryRunOptions, DryRunResult, ProcessorContentDeletion,
+    ProcessorRuntimeSnapshot, SourceProcessor,
 };
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::ProcessTask;
@@ -22,7 +22,6 @@ use source_downloader_sdk::storage::ProcessorSourceState;
 use source_downloader_sdk::time::UtcDateTime;
 use std::collections::HashSet;
 use std::sync::Arc;
-use tracing::info;
 
 pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
     Router::new()
@@ -246,11 +245,11 @@ async fn update_pointer(
 
 #[axum::debug_handler]
 async fn delete_contents(
-    State(_core): State<Arc<CoreApplication>>,
+    State(core): State<Arc<CoreApplication>>,
     Path(name): Path<String>,
-) -> () {
-    info!("delete_contents name={}", name);
-    todo!()
+) -> Result<Json<ContentDeletion>, AppError> {
+    let deleted = require_processor(&core, &name)?.delete_contents().await?;
+    Ok(Json(deleted.into()))
 }
 
 #[derive(Deserialize)]
@@ -299,6 +298,22 @@ impl From<ProcessorSourceState> for ProcessorState {
             pointer: state.last_pointer,
             last_active_time: None,
             retry_times: 0,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ContentDeletion {
+    processing_content: u64,
+    target_path: u64,
+}
+
+impl From<ProcessorContentDeletion> for ContentDeletion {
+    fn from(deleted: ProcessorContentDeletion) -> Self {
+        Self {
+            processing_content: deleted.processing_content,
+            target_path: deleted.target_path,
         }
     }
 }

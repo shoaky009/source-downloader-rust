@@ -19,6 +19,10 @@ pub trait ProcessingStorage: Send + Sync {
         hashing: &str,
     ) -> Result<bool, Error>;
     async fn delete_processing_content(&self, id: i64) -> Result<(), Error>;
+    async fn delete_processing_contents_by_processor(
+        &self,
+        processor_name: &str,
+    ) -> Result<u64, Error>;
     async fn find_by_name_and_hash(
         &self,
         processor_name: &str,
@@ -69,6 +73,8 @@ pub trait ProcessingStorage: Send + Sync {
     ) -> Result<(), Error> {
         Ok(())
     }
+    async fn delete_paths_by_processor(&self, processor_name: &str)
+    -> Result<u64, Error>;
 }
 
 #[derive(Debug, Clone, Serialize)]

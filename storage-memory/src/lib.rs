@@ -32,6 +32,13 @@ impl ProcessingStorage for MemoryProcessingStorage {
         todo!()
     }
 
+    async fn delete_processing_contents_by_processor(
+        &self,
+        _: &str,
+    ) -> Result<u64, Error> {
+        todo!()
+    }
+
     async fn find_by_name_and_hash(
         &self,
         _: &str,
@@ -78,6 +85,10 @@ impl ProcessingStorage for MemoryProcessingStorage {
     }
 
     async fn save_paths(&self, _: Vec<ProcessingTargetPath>) -> Result<(), Error> {
+        todo!()
+    }
+
+    async fn delete_paths_by_processor(&self, _: &str) -> Result<u64, Error> {
         todo!()
     }
 }

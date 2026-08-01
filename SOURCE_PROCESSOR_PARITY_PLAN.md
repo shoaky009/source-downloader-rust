@@ -226,7 +226,9 @@ one-item-per-commit and regression-test rules above.
 - [x] **Implement pointer update endpoint**
   - Core requires an existing processor/source state, merges object pointer
     values, persists the result, and Web returns `404` when the state is absent.
-- [ ] **Implement processor content deletion endpoint**
+- [x] **Implement processor content deletion endpoint**
+  - Storage adapters bulk-delete processing records and target paths by
+    processor name and return affected-row counts through Core and Web.
 - [ ] **Connect the processing reprocess endpoint to Core**
 
 The Web handlers above must delegate to Core behavior rather than duplicate

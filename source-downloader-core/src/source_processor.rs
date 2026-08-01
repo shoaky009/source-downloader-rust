@@ -85,6 +85,11 @@ pub struct ProcessorRuntimeSnapshot {
     pub last_end_process_time: Option<OffsetDateTime>,
     pub processing: bool,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProcessorContentDeletion {
+    pub processing_content: u64,
+    pub target_path: u64,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessorOptionInformation {
@@ -839,6 +844,22 @@ impl SourceProcessor {
             .await
             .map(Some)
             .map_err(|error| ProcessingError::non_retryable(error.message))
+    }
+
+    pub async fn delete_contents(
+        &self,
+    ) -> Result<ProcessorContentDeletion, ProcessingError> {
+        let processing_content = self
+            .processing_storage
+            .delete_processing_contents_by_processor(&self.name)
+            .await
+            .map_err(|error| ProcessingError::non_retryable(error.message))?;
+        let target_path = self
+            .processing_storage
+            .delete_paths_by_processor(&self.name)
+            .await
+            .map_err(|error| ProcessingError::non_retryable(error.message))?;
+        Ok(ProcessorContentDeletion { processing_content, target_path })
     }
 
     pub fn start_rename_task(self: &Arc<Self>) {
@@ -3351,6 +3372,13 @@ mod test {
             Ok(())
         }
 
+        async fn delete_processing_contents_by_processor(
+            &self,
+            _: &str,
+        ) -> Result<u64, StorageError> {
+            Ok(0)
+        }
+
         async fn find_by_name_and_hash(
             &self,
             _: &str,
@@ -3428,6 +3456,10 @@ mod test {
             _: Vec<ProcessingTargetPath>,
         ) -> Result<(), StorageError> {
             Ok(())
+        }
+
+        async fn delete_paths_by_processor(&self, _: &str) -> Result<u64, StorageError> {
+            Ok(0)
         }
     }
 

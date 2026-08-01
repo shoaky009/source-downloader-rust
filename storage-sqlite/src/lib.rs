@@ -120,6 +120,18 @@ impl ProcessingStorage for SeaProcessingStorage {
         Ok(())
     }
 
+    async fn delete_processing_contents_by_processor(
+        &self,
+        processor_name: &str,
+    ) -> Result<u64, Error> {
+        processing_record::Entity::delete_many()
+            .filter(processing_record::Column::ProcessorName.eq(processor_name))
+            .exec(&self.db)
+            .await
+            .map(|result| result.rows_affected)
+            .map_err(|error| Error { message: error.to_string() })
+    }
+
     async fn find_by_name_and_hash(
         &self,
         processor_name: &str,
@@ -375,6 +387,18 @@ impl ProcessingStorage for SeaProcessingStorage {
             .map_err(|error| Error { message: error.to_string() })?;
         Ok(())
     }
+
+    async fn delete_paths_by_processor(
+        &self,
+        processor_name: &str,
+    ) -> Result<u64, Error> {
+        target_path::Entity::delete_many()
+            .filter(target_path::Column::ProcessorName.eq(processor_name))
+            .exec(&self.db)
+            .await
+            .map(|result| result.rows_affected)
+            .map_err(|error| Error { message: error.to_string() })
+    }
 }
 
 #[cfg(test)]
@@ -509,6 +533,71 @@ mod test {
 
         storage.delete_paths(std::slice::from_ref(&path), Some("second")).await.unwrap();
         assert!(storage.find_paths(&[path]).await.unwrap().is_empty());
+    }
+    #[tokio::test]
+    async fn test_delete_processor_contents_and_paths() {
+        let storage = SeaProcessingStorage::new("sqlite::memory:").await.unwrap();
+        let first_id = storage
+            .save_processing_content(&create_test_processing_content(
+                "selected",
+                ProcessingStatus::Renamed,
+            ))
+            .await
+            .unwrap();
+        let second_id = storage
+            .save_processing_content(&create_test_processing_content(
+                "selected",
+                ProcessingStatus::Failure,
+            ))
+            .await
+            .unwrap();
+        let retained_id = storage
+            .save_processing_content(&create_test_processing_content(
+                "retained",
+                ProcessingStatus::Renamed,
+            ))
+            .await
+            .unwrap();
+        storage
+            .save_paths(vec![
+                ProcessingTargetPath {
+                    path: "/selected/one".to_owned(),
+                    processor_name: "selected".to_owned(),
+                    item_hash: "one".to_owned(),
+                },
+                ProcessingTargetPath {
+                    path: "/selected/two".to_owned(),
+                    processor_name: "selected".to_owned(),
+                    item_hash: "two".to_owned(),
+                },
+                ProcessingTargetPath {
+                    path: "/retained/one".to_owned(),
+                    processor_name: "retained".to_owned(),
+                    item_hash: "one".to_owned(),
+                },
+            ])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            storage.delete_processing_contents_by_processor("selected").await.unwrap(),
+            2
+        );
+        assert_eq!(storage.delete_paths_by_processor("selected").await.unwrap(), 2);
+
+        assert!(storage.find_content_by_id(first_id).await.unwrap().is_none());
+        assert!(storage.find_content_by_id(second_id).await.unwrap().is_none());
+        assert!(storage.find_content_by_id(retained_id).await.unwrap().is_some());
+        let retained_paths = storage
+            .find_paths(&[
+                "/selected/one".to_owned(),
+                "/selected/two".to_owned(),
+                "/retained/one".to_owned(),
+            ])
+            .await
+            .unwrap();
+        assert_eq!(retained_paths.len(), 1);
+        assert_eq!(retained_paths[0].processor_name, "retained");
     }
 }
 
