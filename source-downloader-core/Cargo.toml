@@ -41,6 +41,7 @@ jsonpath-rust = { workspace = true }
 mockall = { workspace = true }
 http-serde = { workspace = true }
 tracing-test = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
 
 [[bench]]
 name = "filter"
