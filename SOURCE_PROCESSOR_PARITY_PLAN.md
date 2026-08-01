@@ -203,7 +203,9 @@ one-item-per-commit and regression-test rules above.
 
 ### P2: Web adapter and streaming gaps
 
-- [ ] **Implement processor detail and list endpoints**
+- [x] **Implement processor detail and list endpoints**
+  - Detail returns persisted processor configuration or `404`; list applies
+    name filtering before pagination and includes runtime or startup errors.
 - [ ] **Implement processor dry-run endpoint**
 - [ ] **Implement streaming dry-run in Core and Web**
 - [ ] **Implement manual rename endpoint**

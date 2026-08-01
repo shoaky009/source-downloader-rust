@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_qs::to_string;
 use source_downloader_core::application::CoreApplication;
 use source_downloader_core::config::ProcessorConfig;
+use source_downloader_core::processor_manager::ProcessorWrapper;
+use source_downloader_core::source_processor::ProcessorRuntimeSnapshot;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::ProcessTask;
 use source_downloader_sdk::serde_json::{Map, Value};
@@ -40,20 +42,32 @@ pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
 
 #[axum::debug_handler]
 async fn get_processor(
-    State(_): State<Arc<CoreApplication>>,
+    State(core): State<Arc<CoreApplication>>,
     Path(name): Path<String>,
-) -> () {
-    info!("get_processor name={}", name);
-    todo!()
+) -> Result<Json<ProcessorConfig>, AppError> {
+    let config = core
+        .config_operator
+        .get_processor_config(&name)
+        .ok_or_else(|| AppError::NotFound("Processor config not found".to_owned()))?;
+    Ok(Json(config))
 }
 
 #[axum::debug_handler]
 async fn query_processors(
-    State(_core): State<Arc<CoreApplication>>,
-    Query(_): Query<QueryParams>,
+    State(core): State<Arc<CoreApplication>>,
+    Query(params): Query<QueryParams>,
 ) -> Json<Vec<ProcessorInfo>> {
-    info!("query_processors");
-    todo!()
+    let processors = select_processor_configs(
+        core.config_operator.get_all_processor_config(),
+        &params,
+    )
+    .into_iter()
+    .map(|config| {
+        let wrapper = core.processor_manager.get_processor(&config.name);
+        ProcessorInfo::from_config(&config, wrapper.as_deref())
+    })
+    .collect();
+    Json(processors)
 }
 
 #[axum::debug_handler]
@@ -205,12 +219,11 @@ struct PointerPayload {
     pub pointer: Map<String, Value>,
 }
 
-#[derive(Deserialize)]
-#[allow(dead_code)]
+#[derive(Default, Deserialize)]
 struct QueryParams {
     name: Option<String>,
-    size: Option<u32>,
-    page: Option<u32>,
+    size: Option<usize>,
+    page: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -220,18 +233,33 @@ pub struct DryRunOptions {
     pub filter_processed: Option<bool>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ProcessorInfo {
     pub name: String,
     pub enabled: bool,
     pub category: Option<String>,
     pub tags: HashSet<String>,
-    pub runtime: RuntimeSnapshot,
-    #[serde(rename = "errorMessage")]
+    pub runtime: Option<RuntimeSnapshot>,
     pub error_message: Option<String>,
 }
 
-#[derive(Serialize)]
+impl ProcessorInfo {
+    fn from_config(config: &ProcessorConfig, wrapper: Option<&ProcessorWrapper>) -> Self {
+        Self {
+            name: config.name.clone(),
+            enabled: config.enabled,
+            category: config.category.clone(),
+            tags: config.tags.clone(),
+            runtime: wrapper
+                .and_then(|wrapper| wrapper.processor.as_ref())
+                .map(|processor| processor.runtime_snapshot().into()),
+            error_message: wrapper.and_then(|wrapper| wrapper.error_message.clone()),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RuntimeSnapshot {
     pub created_at: UtcDateTime,
@@ -239,4 +267,91 @@ struct RuntimeSnapshot {
     pub last_start_process_time: Option<UtcDateTime>,
     pub last_end_process_time: Option<UtcDateTime>,
     pub processing: bool,
+}
+
+impl From<ProcessorRuntimeSnapshot> for RuntimeSnapshot {
+    fn from(snapshot: ProcessorRuntimeSnapshot) -> Self {
+        Self {
+            created_at: snapshot.created_at.into(),
+            last_process_failed_message: snapshot.last_process_failed_message,
+            last_start_process_time: snapshot.last_start_process_time.map(Into::into),
+            last_end_process_time: snapshot.last_end_process_time.map(Into::into),
+            processing: snapshot.processing,
+        }
+    }
+}
+
+fn select_processor_configs(
+    configs: Vec<ProcessorConfig>,
+    params: &QueryParams,
+) -> Vec<ProcessorConfig> {
+    let page = params.page.unwrap_or(0);
+    let size = params.size.unwrap_or(50);
+    configs
+        .into_iter()
+        .filter(|config| {
+            params.name.as_ref().is_none_or(|name| config.name.contains(name))
+        })
+        .skip(page.saturating_mul(size))
+        .take(size)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn processor_config(name: &str) -> ProcessorConfig {
+        ProcessorConfig {
+            name: name.to_owned(),
+            enabled: true,
+            save_path: "downloads".to_owned(),
+            triggers: Vec::new(),
+            source: "source".to_owned(),
+            item_file_resolver: "resolver".to_owned(),
+            downloader: "downloader".to_owned(),
+            file_mover: "mover".to_owned(),
+            options: Default::default(),
+            category: None,
+            tags: HashSet::new(),
+        }
+    }
+
+    #[test]
+    fn processor_query_filters_before_pagination() {
+        let configs = vec![
+            processor_config("alpha"),
+            processor_config("beta"),
+            processor_config("alphabet"),
+        ];
+        let params =
+            QueryParams { name: Some("alpha".to_owned()), size: Some(1), page: Some(1) };
+
+        let selected = select_processor_configs(configs, &params);
+
+        assert_eq!(
+            selected.iter().map(|config| config.name.as_str()).collect::<Vec<_>>(),
+            ["alphabet"]
+        );
+    }
+
+    #[test]
+    fn processor_info_exposes_failed_wrapper_state() {
+        let config = processor_config("broken");
+        let wrapper = ProcessorWrapper {
+            name: config.name.clone(),
+            processor: None,
+            error_message: Some("component failed".to_owned()),
+        };
+
+        let value = source_downloader_sdk::serde_json::to_value(
+            ProcessorInfo::from_config(&config, Some(&wrapper)),
+        )
+        .unwrap();
+
+        assert_eq!(value["name"], "broken");
+        assert_eq!(value["enabled"], true);
+        assert!(value["runtime"].is_null());
+        assert_eq!(value["errorMessage"], "component failed");
+    }
 }
