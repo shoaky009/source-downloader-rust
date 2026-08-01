@@ -208,12 +208,12 @@ async fn trigger_rename(
 
 #[axum::debug_handler]
 async fn post_items(
-    State(_core): State<Arc<CoreApplication>>,
-    Path(_name): Path<String>,
+    State(core): State<Arc<CoreApplication>>,
+    Path(name): Path<String>,
     Json(items): Json<Vec<SourceItem>>,
-) -> () {
-    info!("post_items name={}, items={}", _name, to_string(&items).unwrap());
-    todo!()
+) -> Result<(), AppError> {
+    require_processor(&core, &name)?.run_items(items).await?;
+    Ok(())
 }
 
 #[axum::debug_handler]

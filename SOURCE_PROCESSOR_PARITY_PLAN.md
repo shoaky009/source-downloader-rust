@@ -216,7 +216,9 @@ one-item-per-commit and regression-test rules above.
 - [x] **Implement manual rename endpoint**
   - The Web endpoint resolves the running processor and delegates to
     `SourceProcessor::run_rename()`.
-- [ ] **Implement submitted SourceItem endpoint**
+- [x] **Implement submitted SourceItem endpoint**
+  - Submitted items delegate to `SourceProcessor::run_items()` and retain the
+    fixed-item process semantics without advancing the source pointer.
 - [ ] **Implement processor state endpoint**
 - [ ] **Implement pointer update endpoint**
 - [ ] **Implement processor content deletion endpoint**
