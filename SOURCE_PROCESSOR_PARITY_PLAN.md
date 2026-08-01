@@ -117,6 +117,118 @@ Rules:
   - Implements bounded parallel streaming downloads, request headers, HTTP error classification, partial-file cleanup, and cancellation.
   - Keep this separate from SourceProcessor commits.
 
+
+## Follow-up parity backlog
+
+The items below were found by a second end-to-end comparison with Kotlin
+`SourceProcessor`. Continue from the first unchecked item, preserving the
+one-item-per-commit and regression-test rules above.
+
+### P0: processing result correctness
+
+- [ ] **Let processor download headers override source headers**
+  - Rust currently inserts processor headers before source headers, so source
+    values win on duplicate names. Kotlin applies processor
+    `download-options.headers` last.
+  - Acceptance: duplicate header names use the processor value; disjoint source
+    and processor headers are both sent.
+  - Suggested commit: `fix: prioritize processor download headers`
+
+- [ ] **Preserve SourceFile tags when applying FileTaggers**
+  - Rust currently replaces `SourceFile.tags` with FileTagger output and
+    processor tags whenever a FileTagger is configured.
+  - Kotlin merges FileTagger output with the original SourceFile tags.
+  - Acceptance: original and generated tags are retained; processor metadata
+    tags are not injected into SourceFile tags.
+  - Suggested commit: `fix: preserve source file tags when tagging`
+
+- [ ] **Select the latest replacement history**
+  - Kotlin groups prior renamed content by item hash and selects the greatest
+    `createTime`. Rust currently keeps the first query result without an
+    ordering contract.
+  - Acceptance: `FileReplacementDecider` receives the newest renamed prior
+    content for each item hash, independent of storage query order.
+  - Suggested commit: `fix: select latest replacement history`
+
+- [ ] **Normalize processor and resolved source-file paths**
+  - Kotlin makes configured save/download roots absolute and relativizes every
+    absolute resolved SourceFile path against the download root.
+  - Rust preserves relative roots and only relativizes paths for which
+    `strip_prefix(download_path)` succeeds.
+  - Acceptance: define and test the cross-platform path contract for relative
+    roots, absolute paths under the download root, and absolute paths outside
+    the download root; fix the known Windows-sensitive `sync_downloader_case`.
+  - Suggested commit: `fix: normalize processor processing paths`
+
+- [ ] **Persist continued and skippable Item failures**
+  - Kotlin persists a `FAILURE` ProcessingContent when
+    `item-error-continue=true` or an error is explicitly skippable.
+  - Rust currently invokes error listeners and continues without saving a
+    failure record.
+  - Acceptance: continued and skippable failures are queryable as failed
+    ProcessingContent; a non-skippable stopping error retains stop semantics.
+  - Suggested commit: `fix: persist continued item failures`
+
+### P1: event and lifecycle parity
+
+- [ ] **Define async rename listener event semantics**
+  - Decide and test Each/Batch behavior for successful rename, target already
+    existing, missing downloader state, unfinished downloads, and rename
+    failures.
+  - Kotlin and Rust currently disagree on which cases emit Each success/error
+    and which contents appear in the Batch listener context.
+
+- [ ] **Define ProcessListener failure isolation**
+  - Kotlin isolates exceptions from each listener. Rust listener methods are
+    infallible at the type level but a panic unwinds the processing call.
+  - Decide whether listener failure is prohibited by contract or represented
+    as `Result`; do not silently catch panics without an explicit contract.
+
+- [ ] **Expose processor runtime snapshots**
+  - Add observable created time, last failure, last start/end time, and current
+    processing state equivalent to Kotlin runtime status.
+
+- [ ] **Expose processor information**
+  - Add a management view covering configured Source, providers, resolver,
+    downloader, mover, filters, listeners, download/save paths, and options.
+
+- [ ] **Add active process cancellation if required**
+  - Rust's weak-reference rename loop exits after processor destruction, but
+    there is no Kotlin-equivalent `close()` that cancels an active processing
+    run.
+  - Implement only with a concrete reload/delete cancellation contract.
+
+### P2: Web adapter and streaming gaps
+
+- [ ] **Implement processor detail and list endpoints**
+- [ ] **Implement processor dry-run endpoint**
+- [ ] **Implement streaming dry-run in Core and Web**
+- [ ] **Implement manual rename endpoint**
+- [ ] **Implement submitted SourceItem endpoint**
+- [ ] **Implement processor state endpoint**
+- [ ] **Implement pointer update endpoint**
+- [ ] **Implement processor content deletion endpoint**
+- [ ] **Connect the processing reprocess endpoint to Core**
+
+The Web handlers above must delegate to Core behavior rather than duplicate
+SourceProcessor orchestration.
+
+### Intentional Rust divergences to preserve
+
+- [x] Commit pointer progress in fetch order with `FuturesOrdered`; Kotlin
+  updates in completion order.
+- [x] Stop scheduling new items after a stopping error and drain already
+  started work; Kotlin cancels its processing scope.
+- [x] Run the first async rename check immediately rather than waiting.
+- [x] Retry typed `ProcessingError::Retryable` errors rather than matching
+  Kotlin `IOException`.
+- [x] Keep retry attempts configurable.
+- [x] Do not add `Sleepable` lifecycle hooks without a component that needs
+  them.
+- [x] Do not port the unused Kotlin channel buffer option.
+- [x] Deduplicate an item hash for the entire Rust run rather than only while
+  that item is in flight.
+
 ## Known non-goals
 
 - Do not port Kotlin `channelBufferSize`: the Kotlin Channel implementation is commented out, while Rust already bounds active Item work with `parallelism` and `FuturesOrdered`.
