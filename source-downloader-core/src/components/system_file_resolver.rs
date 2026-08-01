@@ -49,25 +49,21 @@ impl Display for SystemFileResolver {
 impl ItemFileResolver for SystemFileResolver {
     async fn resolve_files(&self, source_item: &SourceItem) -> Vec<SourceFile> {
         let path = Url::parse(&source_item.download_uri.to_string())
-            .unwrap()
-            .to_file_path()
-            // 可能有问题，中文和前缀没处理
-            .unwrap_or_else(|_| PathBuf::from(&source_item.download_uri.to_string()));
-        if !path.exists() {
-            return vec![];
+            .ok()
+            .and_then(|url| url.to_file_path().ok())
+            .unwrap_or_else(|| PathBuf::from(source_item.download_uri.to_string()));
+        if !path.exists() || !path.is_dir() {
+            return vec![SourceFile::new(path)];
         }
-        if path.is_dir() {
-            let mut entries: Vec<SourceFile> = WalkDir::new(path)
-                .into_iter()
-                .filter_map(|e| e.ok())
-                .filter(|e| e.path().is_file())
-                .map(|e| SourceFile::new(e.into_path()))
-                .collect();
-            entries.sort_by(|a, b| a.path.cmp(&b.path));
-            entries
-        } else {
-            vec![SourceFile::new(path)]
-        }
+
+        let mut entries: Vec<SourceFile> = WalkDir::new(path)
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().is_file())
+            .map(|entry| SourceFile::new(entry.into_path()))
+            .collect();
+        entries.sort_by(|left, right| left.path.cmp(&right.path));
+        entries
     }
 }
 
@@ -163,6 +159,6 @@ mod tests {
         let resolver = INSTANCE;
         let result = resolver.resolve_files(&item).await;
 
-        assert_eq!(result.len(), 0);
+        assert_eq!(result.len(), 1);
     }
 }
