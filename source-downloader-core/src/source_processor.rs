@@ -2959,12 +2959,14 @@ mod test {
     #[derive(Debug)]
     struct PointerTestComponent {
         item_count: usize,
+        duplicate_source_item: bool,
         probe: Option<Arc<ParallelismProbe>>,
         invalid_item: Option<usize>,
         resolved_file: Option<PathBuf>,
         submit_count: Option<Arc<AtomicUsize>>,
         unique_files: bool,
         skippable_download_item: Option<usize>,
+        retryable_fetch_failures: Option<Arc<AtomicUsize>>,
         retryable_submit_failures: Option<Arc<AtomicUsize>>,
         submit_probe: Option<Arc<ParallelismProbe>>,
         replacement_probe: Option<Arc<ReplacementProbe>>,
@@ -2998,10 +3000,24 @@ mod test {
             _: &'pointer dyn SourcePointer,
             _: u32,
         ) -> Result<Vec<PointedItem>, ProcessingError> {
+            if let Some(failures) = &self.retryable_fetch_failures
+                && failures
+                    .fetch_update(
+                        AtomicOrdering::AcqRel,
+                        AtomicOrdering::Acquire,
+                        |remaining| remaining.checked_sub(1),
+                    )
+                    .is_ok()
+            {
+                return Err(ProcessingError::retryable("retryable fetch error"));
+            }
             Ok((1..=self.item_count)
                 .map(|sequence| PointedItem {
                     source_item: SourceItem {
-                        title: format!("item-{sequence}"),
+                        title: format!(
+                            "item-{}",
+                            if self.duplicate_source_item { 1 } else { sequence }
+                        ),
                         link: Uri::from_static("http://localhost/item"),
                         datetime: OffsetDateTime::UNIX_EPOCH,
                         content_type: "test".to_string(),
@@ -3325,6 +3341,7 @@ mod test {
         states: ParkingMutex<Vec<ProcessorSourceState>>,
         initial_state: ParkingMutex<Option<ProcessorSourceState>>,
         saved_contents: ParkingMutex<Vec<ProcessingContent>>,
+        fail_next_content_save: AtomicBool,
         next_content_id: AtomicUsize,
         content_exists: AtomicBool,
         fail_next_state_load: AtomicBool,
@@ -3333,6 +3350,7 @@ mod test {
         query_results: ParkingMutex<Vec<ProcessingContent>>,
         found_paths: ParkingMutex<Vec<ProcessingTargetPath>>,
         stored_file_contents: ParkingMutex<HashMap<i64, Vec<u8>>>,
+        fail_next_file_save: AtomicBool,
     }
 
     impl PointerStorage {
@@ -3347,6 +3365,11 @@ mod test {
             &self,
             content: &ProcessingContent,
         ) -> Result<i64, StorageError> {
+            if self.fail_next_content_save.swap(false, Ordering::AcqRel) {
+                return Err(StorageError {
+                    message: "failed to save processing content".to_owned(),
+                });
+            }
             let id = content.id.unwrap_or_else(|| {
                 self.next_content_id.fetch_add(1, AtomicOrdering::Relaxed) as i64
             });
@@ -3410,6 +3433,11 @@ mod test {
             content_id: i64,
             contents: Vec<u8>,
         ) -> Result<(), StorageError> {
+            if self.fail_next_file_save.swap(false, Ordering::AcqRel) {
+                return Err(StorageError {
+                    message: "failed to save file contents".to_owned(),
+                });
+            }
             self.stored_file_contents.lock().insert(content_id, contents);
             Ok(())
         }
@@ -3470,14 +3498,18 @@ mod test {
         parallelism: u32,
         item_error_continue: bool,
         probe: Option<Arc<ParallelismProbe>>,
+        duplicate_source_item: bool,
         invalid_item: Option<usize>,
         resolved_file: Option<PathBuf>,
         submit_count: Option<Arc<AtomicUsize>>,
         unique_files: bool,
         skippable_download_item: Option<usize>,
         retryable_submit_failures: Option<Arc<AtomicUsize>>,
+        retryable_fetch_failures: Option<Arc<AtomicUsize>>,
         fail_next_state_save: bool,
+        fail_next_file_save: bool,
         submit_probe: Option<Arc<ParallelismProbe>>,
+        fail_next_content_save: bool,
         replacement_probe: Option<Arc<ReplacementProbe>>,
         source_headers: Option<HashMap<String, String>>,
         submitted_headers: Option<Arc<ParkingMutex<Option<HashMap<String, String>>>>>,
@@ -3494,14 +3526,18 @@ mod test {
                 probe: None,
                 invalid_item: None,
                 resolved_file: None,
+                duplicate_source_item: false,
                 submit_count: None,
                 unique_files: false,
                 skippable_download_item: None,
                 retryable_submit_failures: None,
                 fail_next_state_save: false,
+                fail_next_file_save: false,
+                retryable_fetch_failures: None,
                 submit_probe: None,
                 replacement_probe: None,
                 source_headers: None,
+                fail_next_content_save: false,
                 submitted_headers: None,
                 resolved_file_tags: Vec::new(),
                 download_path: "/tmp/source-downloader-pointer-test".to_owned(),
@@ -3537,6 +3573,7 @@ mod test {
             submit_count: settings.submit_count,
             unique_files: settings.unique_files,
             skippable_download_item: settings.skippable_download_item,
+            duplicate_source_item: settings.duplicate_source_item,
             retryable_submit_failures: settings.retryable_submit_failures,
             submit_probe: settings.submit_probe,
             replacement_probe: settings.replacement_probe,
@@ -3544,9 +3581,12 @@ mod test {
             submitted_headers: settings.submitted_headers,
             resolved_file_tags: settings.resolved_file_tags,
             download_path: settings.download_path,
+            retryable_fetch_failures: settings.retryable_fetch_failures,
         });
         let storage = Arc::new(PointerStorage {
+            fail_next_content_save: AtomicBool::new(settings.fail_next_content_save),
             fail_next_state_save: AtomicBool::new(settings.fail_next_state_save),
+            fail_next_file_save: AtomicBool::new(settings.fail_next_file_save),
             ..Default::default()
         });
         let item_filters: Vec<Arc<dyn SourceItemFilter>> =
@@ -3721,6 +3761,49 @@ mod test {
         );
         assert_eq!(submit_count.load(AtomicOrdering::Acquire), 2);
         assert!(storage.saved_pointers().is_empty());
+    }
+
+    #[tokio::test]
+    async fn fixed_item_process_skips_duplicate_items() {
+        let submit_count = Arc::new(AtomicUsize::new(0));
+        let (mut processor, storage) = pointer_test_processor_with_settings(
+            false,
+            0,
+            false,
+            PointerTestSettings {
+                unique_files: true,
+                submit_count: Some(submit_count.clone()),
+                ..Default::default()
+            },
+        );
+        processor.options.save_processing_content = true;
+        let item = SourceItem { title: "item-1".to_owned(), ..Default::default() };
+
+        processor.run_items(vec![item.clone(), item]).await.unwrap();
+
+        assert_eq!(storage.saved_contents.lock().len(), 1);
+        assert_eq!(submit_count.load(AtomicOrdering::Acquire), 1);
+        assert!(storage.saved_pointers().is_empty());
+    }
+
+    #[tokio::test]
+    async fn source_duplicate_item_is_skipped_without_advancing_pointer() {
+        let submit_count = Arc::new(AtomicUsize::new(0));
+        let (processor, storage) = pointer_test_processor_with_settings(
+            false,
+            2,
+            false,
+            PointerTestSettings {
+                duplicate_source_item: true,
+                submit_count: Some(submit_count.clone()),
+                unique_files: true,
+                ..Default::default()
+            },
+        );
+        processor.run().await.unwrap();
+
+        assert_eq!(submit_count.load(AtomicOrdering::Acquire), 1);
+        assert_eq!(storage.saved_pointers(), vec![json!(1)]);
     }
 
     #[tokio::test]
@@ -4186,6 +4269,45 @@ mod test {
     }
 
     #[tokio::test]
+    async fn fetch_retries_retryable_source_errors() {
+        let fetch_failures = Arc::new(AtomicUsize::new(2));
+        let (processor, storage) = pointer_test_processor_with_settings(
+            false,
+            1,
+            false,
+            PointerTestSettings {
+                retryable_fetch_failures: Some(fetch_failures.clone()),
+                ..Default::default()
+            },
+        );
+
+        processor.run().await.unwrap();
+
+        assert_eq!(fetch_failures.load(AtomicOrdering::Acquire), 0);
+        assert_eq!(storage.saved_pointers(), vec![json!(1)]);
+    }
+
+    #[tokio::test]
+    async fn exhausted_fetch_error_prevents_item_settlement() {
+        let fetch_failures = Arc::new(AtomicUsize::new(usize::MAX));
+        let (mut processor, storage) = pointer_test_processor_with_settings(
+            false,
+            1,
+            false,
+            PointerTestSettings {
+                retryable_fetch_failures: Some(fetch_failures),
+                ..Default::default()
+            },
+        );
+        processor.options.retry_attempts = 1;
+
+        let error = processor.run().await.unwrap_err();
+
+        assert!(error.contains("retryable fetch error"));
+        assert!(storage.saved_pointers().is_empty());
+    }
+
+    #[tokio::test]
     async fn apply_retry_honors_configured_attempts() {
         let attempts = AtomicUsize::new(0);
         let result = SourceProcessor::apply_retry(
@@ -4247,6 +4369,69 @@ mod test {
                 .iter()
                 .all(|content| content.status != ProcessingStatus::Failure)
         );
+    }
+
+    #[tokio::test]
+    async fn item_persistence_error_stops_new_work_and_drains_started_items() {
+        let probe = Arc::new(ParallelismProbe::new(2));
+        let (mut processor, storage) = pointer_test_processor_with_settings(
+            false,
+            3,
+            false,
+            PointerTestSettings {
+                parallelism: 2,
+                probe: Some(probe.clone()),
+                unique_files: true,
+                fail_next_file_save: true,
+                ..Default::default()
+            },
+        );
+        processor.options.save_processing_content = true;
+
+        processor.run().await.unwrap();
+
+        assert_eq!(*probe.completed.lock(), vec![2, 1]);
+        assert!(storage.saved_pointers().is_empty());
+        let saved_contents = storage.saved_contents.lock();
+        assert_eq!(saved_contents.len(), 2);
+        assert_eq!(
+            saved_contents
+                .iter()
+                .map(|content| content.item_content.source_item.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["item-1", "item-2"]
+        );
+        assert!(
+            saved_contents
+                .iter()
+                .all(|content| content.status == ProcessingStatus::WaitingToRename)
+        );
+    }
+
+    #[tokio::test]
+    async fn item_content_persistence_error_stops_new_work_and_drains_started_items() {
+        let probe = Arc::new(ParallelismProbe::new(2));
+        let (mut processor, storage) = pointer_test_processor_with_settings(
+            false,
+            3,
+            false,
+            PointerTestSettings {
+                parallelism: 2,
+                probe: Some(probe.clone()),
+                unique_files: true,
+                fail_next_content_save: true,
+                ..Default::default()
+            },
+        );
+        processor.options.save_processing_content = true;
+
+        processor.run().await.unwrap();
+
+        assert_eq!(*probe.completed.lock(), vec![2, 1]);
+        assert!(storage.saved_pointers().is_empty());
+        let saved_contents = storage.saved_contents.lock();
+        assert_eq!(saved_contents.len(), 1);
+        assert_eq!(saved_contents[0].item_content.source_item.title, "item-2");
     }
 
     #[tokio::test]
@@ -4360,7 +4545,6 @@ mod test {
         assert_eq!(failed.item_content.source_item.title, "item-1");
         assert_eq!(failed.failure_reason.as_deref(), Some("skippable test error"));
     }
-
     #[tokio::test]
     async fn existing_pointer_is_preserved_when_no_items_are_fetched() {
         let (processor, storage) = pointer_test_processor(true, 0, false);
@@ -4376,6 +4560,25 @@ mod test {
         processor.run().await.unwrap();
 
         assert_eq!(storage.saved_pointers(), vec![json!(41)]);
+    }
+
+    #[tokio::test]
+    async fn batch_pointer_state_save_error_is_reported_after_item_processing() {
+        let (processor, storage) = pointer_test_processor_with_settings(
+            true,
+            1,
+            false,
+            PointerTestSettings { fail_next_state_save: true, ..Default::default() },
+        );
+
+        let error = processor.run().await.unwrap_err();
+
+        assert_eq!(error, "failed to save processor source state");
+        assert!(storage.saved_pointers().is_empty());
+        assert_eq!(
+            processor.runtime_snapshot().last_process_failed_message.as_deref(),
+            Some("failed to save processor source state")
+        );
     }
 
     // <editor-fold desc="Sync item content tests">
