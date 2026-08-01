@@ -1,9 +1,9 @@
 use crate::ApplicationContext;
+use crate::error_handle::AppError;
 use axum::extract::{Path, Query, State};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
-use source_downloader_core::application::CoreApplication;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::storage::{
     ItemContentLite, ProcessingContent, ProcessingStatus,
@@ -23,12 +23,12 @@ pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
                 .route("/{id}", delete(delete_content))
                 .route("/{id}/reprocess", post(reprocess)),
         )
-        .with_state(ctx.core.clone())
+        .with_state(ctx)
 }
 
 #[axum::debug_handler]
 async fn get_content(
-    State(_core): State<Arc<CoreApplication>>,
+    State(_ctx): State<Arc<ApplicationContext>>,
     Path(id): Path<i64>,
 ) -> Json<ProcessingContent> {
     info!("get_content id={}", id);
@@ -61,7 +61,7 @@ async fn get_content(
 
 #[axum::debug_handler]
 async fn query_contents(
-    State(_core): State<Arc<CoreApplication>>,
+    State(_ctx): State<Arc<ApplicationContext>>,
     Query(query): Query<QueryContents>,
 ) -> Json<Vec<ProcessingContent>> {
     info!("query_contents limit={} offset={}", query.limit, query.offset);
@@ -70,7 +70,7 @@ async fn query_contents(
 
 #[axum::debug_handler]
 async fn update_content(
-    State(_core): State<Arc<CoreApplication>>,
+    State(_ctx): State<Arc<ApplicationContext>>,
     Path(id): Path<String>,
     Json(body): Json<UpdateContent>,
 ) -> () {
@@ -84,7 +84,7 @@ async fn update_content(
 
 #[axum::debug_handler]
 async fn delete_content(
-    State(_core): State<Arc<CoreApplication>>,
+    State(_ctx): State<Arc<ApplicationContext>>,
     Path(id): Path<String>,
 ) -> () {
     info!("delete_content id={}", id);
@@ -92,10 +92,30 @@ async fn delete_content(
 
 #[axum::debug_handler]
 async fn reprocess(
-    State(_core): State<Arc<CoreApplication>>,
-    Path(id): Path<String>,
-) -> () {
-    info!("reprocess id={}", id);
+    State(ctx): State<Arc<ApplicationContext>>,
+    Path(id): Path<i64>,
+) -> Result<(), AppError> {
+    let content = ctx
+        .storage
+        .find_content_by_id(id)
+        .await
+        .map_err(|error| AppError::InternalError(error.message))?
+        .ok_or_else(|| {
+            AppError::NotFound(format!("Processing content {id} not found"))
+        })?;
+    let processor_name = content.processor_name.clone();
+    let processor = ctx
+        .core
+        .processor_manager
+        .get_processor(&processor_name)
+        .and_then(|wrapper| wrapper.processor.clone())
+        .ok_or_else(|| {
+            AppError::NotFound(format!(
+                "Processor {processor_name} not found or unavailable"
+            ))
+        })?;
+    processor.reprocess(content).await?;
+    Ok(())
 }
 
 #[allow(dead_code)]

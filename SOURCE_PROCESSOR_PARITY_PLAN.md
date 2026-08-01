@@ -229,7 +229,9 @@ one-item-per-commit and regression-test rules above.
 - [x] **Implement processor content deletion endpoint**
   - Storage adapters bulk-delete processing records and target paths by
     processor name and return affected-row counts through Core and Web.
-- [ ] **Connect the processing reprocess endpoint to Core**
+- [x] **Connect the processing reprocess endpoint to Core**
+  - Web loads the persisted content by numeric ID, resolves its active
+    processor, and delegates to `SourceProcessor::reprocess()`.
 
 The Web handlers above must delegate to Core behavior rather than duplicate
 SourceProcessor orchestration.
