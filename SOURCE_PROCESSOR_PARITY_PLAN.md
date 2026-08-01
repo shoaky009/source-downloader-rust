@@ -252,6 +252,16 @@ SourceProcessor orchestration.
   - Acceptance: all pre-refactor behavioral tests remain unchanged and pass;
     targeted benchmarks show no throughput or allocation regression.
 
+- [ ] **Add process-scoped Sleepable lifecycle when required**
+  - Keep this deferred while no Source, ItemFileResolver, Downloader, or
+    FileMover needs process-scoped acquisition and release.
+  - Before implementation, define lifecycle tests covering normal completion,
+    item/fetch failure, active cancellation, panic isolation, and overlapping
+    process rejection.
+  - Match Kotlin's acquire-before-processing and release-in-finalization
+    contract without adding work to components that do not implement
+    `Sleepable`.
+
 ### Intentional Rust divergences to preserve
 
 - [x] Commit pointer progress in fetch order with `FuturesOrdered`; Kotlin
