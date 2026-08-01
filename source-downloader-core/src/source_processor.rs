@@ -7,6 +7,7 @@ use crate::process::variable::VariableAggregation;
 use async_trait::async_trait;
 use backon::Retryable;
 use backon::{BackoffBuilder, ConstantBuilder};
+use futures_util::future::{AbortHandle, Abortable};
 use futures_util::stream::{FuturesOrdered, StreamExt};
 use humantime::format_duration;
 use itertools::Itertools;
@@ -181,6 +182,8 @@ pub struct SourceProcessor {
     options: ProcessorOptions,
     instance_id: i64,
     processing: AtomicBool,
+    closed: AtomicBool,
+    active_process: SyncMutex<Option<AbortHandle>>,
     runtime: ProcessorRuntime,
     renamer: Renamer,
     download_path: Box<Path>,
@@ -507,6 +510,7 @@ impl Drop for ProcessingGuard<'_> {
         state.last_end_process_time = Some(OffsetDateTime::now_utc());
         state.processing = false;
         drop(state);
+        self.processor.active_process.lock().take();
         self.processor.processing.store(false, Ordering::Release);
     }
 }
@@ -588,6 +592,8 @@ impl SourceProcessor {
             options,
             instance_id: INSTANCE_ID_GENERATOR.fetch_add(1, Ordering::Relaxed),
             processing: AtomicBool::new(false),
+            closed: AtomicBool::new(false),
+            active_process: SyncMutex::new(None),
             runtime: ProcessorRuntime::new(),
             renamer,
             download_path,
@@ -621,6 +627,12 @@ impl SourceProcessor {
         }
     }
 
+    pub fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+        if let Some(active_process) = self.active_process.lock().as_ref() {
+            active_process.abort();
+        }
+    }
     pub fn runtime_snapshot(&self) -> ProcessorRuntimeSnapshot {
         let state = self.runtime.state.read();
         ProcessorRuntimeSnapshot {
@@ -780,6 +792,9 @@ impl SourceProcessor {
                 let Some(processor) = processor.upgrade() else {
                     break;
                 };
+                if processor.closed.load(Ordering::Acquire) {
+                    break;
+                }
                 if let Err(error) = processor.run_rename().await {
                     warn!(
                         "Processor[rename-task-error] {} {}",
@@ -794,6 +809,9 @@ impl SourceProcessor {
     }
 
     pub async fn run_rename(&self) -> Result<usize, ProcessingError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(ProcessingError::non_retryable("Processor is closed"));
+        }
         let Some(async_downloader) = self.async_downloader.as_ref() else {
             warn!("Processor[rename-skip] {} downloader is synchronous", self.name);
             return Ok(0);
@@ -1177,9 +1195,21 @@ trait Process {
         let start_time = Instant::now();
         let _span_exec_entered = span_exec.enter();
         info!("[run-start] {}({})", p.name, p.instance_id);
+        if p.closed.load(Ordering::Acquire) {
+            return Err(ProcessingError::non_retryable("Processor is closed"));
+        }
         if p.processing.swap(true, Ordering::AcqRel) {
             info!("[run-reject] {}({}) Already processing", p.name, p.instance_id);
             return Err(ProcessingError::non_retryable("Already processing"));
+        }
+        let (abort_handle, abort_registration) = AbortHandle::new_pair();
+        {
+            let mut active_process = p.active_process.lock();
+            if p.closed.load(Ordering::Acquire) {
+                p.processing.store(false, Ordering::Release);
+                return Err(ProcessingError::non_retryable("Processor is closed"));
+            }
+            *active_process = Some(abort_handle);
         }
         let processing_guard = ProcessingGuard::new(p);
         let result = async {
@@ -1404,8 +1434,11 @@ trait Process {
             p_rt.process_end_at = Some(Instant::now());
             info!("[run-done] {} {}", p.name, p_rt.summary());
             Ok(())
-        }
-        .await;
+        };
+        let result = match Abortable::new(result, abort_registration).await {
+            Ok(result) => result,
+            Err(_) => Err(ProcessingError::non_retryable("Processing cancelled")),
+        };
         processing_guard.record_result(&result);
         result
     }
@@ -4438,6 +4471,37 @@ mod test {
         let completed = processor.runtime_snapshot();
         assert!(!completed.processing);
         assert!(completed.last_end_process_time.is_some());
+    }
+
+    #[tokio::test]
+    async fn close_cancels_active_processing_and_rejects_new_runs() {
+        let replacement_probe = Arc::new(ReplacementProbe::default());
+        let (processor, _) = pointer_test_processor_with_settings(
+            false,
+            1,
+            false,
+            PointerTestSettings {
+                resolved_file: Some(PathBuf::from("cancelled-process.txt")),
+                replacement_probe: Some(replacement_probe.clone()),
+                ..Default::default()
+            },
+        );
+        let processor = Arc::new(processor);
+        let running_processor = processor.clone();
+        let run = tokio::spawn(async move { running_processor.run().await });
+        replacement_probe.first_submitted.notified().await;
+
+        processor.close();
+
+        let error = run.await.unwrap().unwrap_err();
+        assert_eq!(error, "Processing cancelled");
+        let snapshot = processor.runtime_snapshot();
+        assert!(!snapshot.processing);
+        assert_eq!(
+            snapshot.last_process_failed_message.as_deref(),
+            Some("Processing cancelled")
+        );
+        assert_eq!(processor.run().await.unwrap_err(), "Processor is closed");
     }
 
     impl Display for FailingListener {

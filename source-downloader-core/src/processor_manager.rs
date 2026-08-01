@@ -466,6 +466,7 @@ impl ProcessorManager {
             let task = processor.clone();
             trigger.remove_task(task);
         }
+        processor.close();
         debug!("Processor[on-destroy-arc] {}", Arc::strong_count(processor));
     }
 
@@ -734,8 +735,8 @@ mod test {
     use std::sync::Arc;
     use storage_memory::MemoryProcessingStorage;
 
-    #[test]
-    fn normal_cases() {
+    #[tokio::test]
+    async fn normal_cases() {
         let component_manager = Arc::new(ComponentManager::new(Arc::new(
             YamlConfigOperator::new("./tests/resources/config.yaml"),
         )));
@@ -763,6 +764,8 @@ mod test {
         assert!(processor_wp.is_some());
         assert!(processor_wp.as_ref().unwrap().error_message.is_none());
         assert!(processor_wp.as_ref().unwrap().processor.is_some());
+        let processor =
+            processor_wp.as_ref().unwrap().processor.as_ref().unwrap().clone();
         let referenced_ids = [
             ComponentRootType::Source.parse_component_id("system-file:test"),
             ComponentRootType::ItemFileResolver.parse_component_id("system-file:test"),
@@ -784,6 +787,13 @@ mod test {
         drop(processor_wp);
         manager.destroy_processor(name);
         assert!(!manager.processor_exists(name));
+        assert_eq!(
+            source_downloader_sdk::component::ProcessTask::run(processor.as_ref())
+                .await
+                .unwrap_err(),
+            "Processor is closed"
+        );
+        drop(processor);
         assert!(Arc::strong_count(&source_component) < source_refs_while_running);
         for id in &referenced_ids {
             assert!(component_manager.get_component(id).unwrap().get_refs().is_empty());

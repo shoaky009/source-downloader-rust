@@ -194,11 +194,12 @@ one-item-per-commit and regression-test rules above.
     resolved components, filters, listeners, renaming pipeline, paths, tags,
     download settings, and scalar processing options.
 
-- [ ] **Add active process cancellation if required**
-  - Rust's weak-reference rename loop exits after processor destruction, but
-    there is no Kotlin-equivalent `close()` that cancels an active processing
-    run.
-  - Implement only with a concrete reload/delete cancellation contract.
+- [x] **Add active process cancellation**
+  - `SourceProcessor::close()` aborts the active processing future, rejects new
+    runs, and stops the weak-reference rename loop.
+  - `ProcessorManager::destroy_processor()` closes the removed processor, so
+    processor reload/delete and application reload share the same cancellation
+    contract.
 
 ### P2: Web adapter and streaming gaps
 
