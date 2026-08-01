@@ -189,9 +189,10 @@ one-item-per-commit and regression-test rules above.
     failure, latest start/end times, and a lock-consistent processing flag.
   - Starting a run clears its end time; successful runs clear the prior failure.
 
-- [ ] **Expose processor information**
-  - Add a management view covering configured Source, providers, resolver,
-    downloader, mover, filters, listeners, download/save paths, and options.
+- [x] **Expose processor information**
+  - `SourceProcessor::information()` returns a typed management view covering
+    resolved components, filters, listeners, renaming pipeline, paths, tags,
+    download settings, and scalar processing options.
 
 - [ ] **Add active process cancellation if required**
   - Rust's weak-reference rename loop exits after processor destruction, but

@@ -1,7 +1,7 @@
 use crate::components::simple_file_exists_detector::SimpleFileExistsDetector;
 use crate::components::source_item_identity_filter::SourceItemIdentityFilter;
 use crate::config::ListenerMode;
-use crate::process::file::{PathPattern, RawFileContent, Renamer};
+use crate::process::file::{PathPattern, RawFileContent, Renamer, VariableErrorStrategy};
 use crate::process::rule::{FileRule, ItemRule, ItemStrategy};
 use crate::process::variable::VariableAggregation;
 use async_trait::async_trait;
@@ -81,6 +81,65 @@ pub struct ProcessorRuntimeSnapshot {
     pub last_start_process_time: Option<OffsetDateTime>,
     pub last_end_process_time: Option<OffsetDateTime>,
     pub processing: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessorOptionInformation {
+    pub save_path_pattern: String,
+    pub filename_pattern: String,
+    pub variable_error_strategy: VariableErrorStrategy,
+    pub save_processing_content: bool,
+    pub rename_task_interval: Duration,
+    pub rename_times_threshold: u32,
+    pub parallelism: u32,
+    pub retry_attempts: usize,
+    pub retry_backoff: Duration,
+    pub task_group: Option<String>,
+    pub fetch_limit: u32,
+    pub item_error_continue: bool,
+    pub pointer_batch_mode: bool,
+    pub item_rule_count: usize,
+    pub file_rule_count: usize,
+    pub download_category: Option<String>,
+    pub download_tags: Option<Vec<String>>,
+    pub download_headers: Option<HashMap<String, String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VariableProcessChainInformation {
+    pub input: String,
+    pub providers: Vec<String>,
+    pub key_mapping: HashMap<String, String>,
+    pub exclude_keys: HashSet<String>,
+    pub include_keys: HashSet<String>,
+    pub conditional: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessorInformation {
+    pub name: String,
+    pub source_id: String,
+    pub source: String,
+    pub variable_providers: Vec<String>,
+    pub item_file_resolver: String,
+    pub downloader: String,
+    pub file_mover: String,
+    pub item_filters: Vec<String>,
+    pub item_content_filters: Vec<String>,
+    pub source_file_filters: Vec<String>,
+    pub file_content_filters: Vec<String>,
+    pub file_taggers: Vec<String>,
+    pub process_listeners: HashMap<ListenerMode, Vec<String>>,
+    pub file_exists_detector: String,
+    pub file_replacement_decider: String,
+    pub variable_replacers: Vec<String>,
+    pub variable_process_chains: Vec<VariableProcessChainInformation>,
+    pub trimming: HashMap<String, Vec<String>>,
+    pub download_path: String,
+    pub source_save_path: String,
+    pub category: Option<String>,
+    pub tags: HashSet<String>,
+    pub options: ProcessorOptionInformation,
 }
 
 #[derive(Debug, Default)]
@@ -570,6 +629,114 @@ impl SourceProcessor {
             last_start_process_time: state.last_start_process_time,
             last_end_process_time: state.last_end_process_time,
             processing: state.processing,
+        }
+    }
+
+    pub fn information(&self) -> ProcessorInformation {
+        ProcessorInformation {
+            name: self.name.clone(),
+            source_id: self.source_id.clone(),
+            source: self.source.to_string(),
+            variable_providers: self
+                .options
+                .variable_providers
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            item_file_resolver: self.item_file_resolver.to_string(),
+            downloader: self.downloader.to_string(),
+            file_mover: self.file_mover.to_string(),
+            item_filters: self
+                .options
+                .item_filters
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            item_content_filters: self
+                .options
+                .item_content_filters
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            source_file_filters: self
+                .options
+                .source_file_filters
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            file_content_filters: self
+                .options
+                .file_content_filters
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            file_taggers: self
+                .options
+                .file_taggers
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            process_listeners: self
+                .options
+                .process_listeners
+                .iter()
+                .map(|(mode, listeners)| {
+                    (*mode, listeners.iter().map(ToString::to_string).collect())
+                })
+                .collect(),
+            file_exists_detector: self.options.file_exists_detector.to_string(),
+            file_replacement_decider: self.options.file_replacement_decider.to_string(),
+            variable_replacers: self
+                .renamer
+                .variable_replacers
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            variable_process_chains: self
+                .renamer
+                .variable_process_chain
+                .iter()
+                .map(|chain| VariableProcessChainInformation {
+                    input: chain.input.clone(),
+                    providers: chain.chain.iter().map(ToString::to_string).collect(),
+                    key_mapping: chain.output.key_mapping.clone(),
+                    exclude_keys: chain.output.exclude_keys.clone(),
+                    include_keys: chain.output.include_keys.clone(),
+                    conditional: chain.condition.is_some(),
+                })
+                .collect(),
+            trimming: self
+                .renamer
+                .trimming
+                .iter()
+                .map(|(variable, trimmers)| {
+                    (variable.clone(), trimmers.iter().map(ToString::to_string).collect())
+                })
+                .collect(),
+            download_path: self.download_path.to_string_lossy().into_owned(),
+            source_save_path: self.save_path.to_string_lossy().into_owned(),
+            category: self.category.clone(),
+            tags: self.tags.clone(),
+            options: ProcessorOptionInformation {
+                save_path_pattern: self.options.save_path_pattern.pattern.clone(),
+                filename_pattern: self.options.filename_pattern.pattern.clone(),
+                variable_error_strategy: self.renamer.variable_error_strategy,
+                save_processing_content: self.options.save_processing_content,
+                rename_task_interval: self.options.rename_task_interval,
+                rename_times_threshold: self.options.rename_times_threshold,
+                parallelism: self.options.parallelism,
+                retry_attempts: self.options.retry_attempts,
+                retry_backoff: self.options.retry_backoff,
+                task_group: self.options.task_group.clone(),
+                fetch_limit: self.options.fetch_limit,
+                item_error_continue: self.options.item_error_continue,
+                pointer_batch_mode: self.options.pointer_batch_mode,
+                item_rule_count: self.options.item_rules.len(),
+                file_rule_count: self.options.file_rules.len(),
+                download_category: self.options.download_options.category.clone(),
+                download_tags: self.options.download_options.tags.clone(),
+                download_headers: self.options.download_options.headers.clone(),
+            },
         }
     }
     pub async fn dry_run(
@@ -4160,6 +4327,39 @@ mod test {
             self.completions.fetch_add(1, AtomicOrdering::Relaxed);
             Ok(())
         }
+    }
+
+    #[test]
+    fn processor_information_exposes_resolved_configuration() {
+        let (mut processor, _) = pointer_test_processor(false, 1, false);
+        processor.category = Some("series".to_owned());
+        processor.tags = HashSet::from(["tracked".to_owned()]);
+        processor
+            .options
+            .process_listeners
+            .insert(ListenerMode::Each, vec![Arc::new(RecordingListener::default())]);
+
+        let information = processor.information();
+
+        assert_eq!(information.name, "pointer-test");
+        assert_eq!(information.source_id, "pointer-test-source");
+        assert_eq!(information.source, "pointer-test");
+        assert_eq!(information.item_file_resolver, "pointer-test");
+        assert_eq!(information.downloader, "pointer-test");
+        assert_eq!(information.file_mover, "pointer-test");
+        assert_eq!(
+            information.process_listeners.get(&ListenerMode::Each),
+            Some(&vec!["recording-listener".to_owned()])
+        );
+        assert_eq!(information.download_path, processor.download_path.to_string_lossy());
+        assert_eq!(information.source_save_path, processor.save_path.to_string_lossy());
+        assert_eq!(information.category.as_deref(), Some("series"));
+        assert_eq!(information.tags, HashSet::from(["tracked".to_owned()]));
+        assert_eq!(information.options.parallelism, processor.options.parallelism);
+        assert_eq!(
+            information.options.variable_error_strategy,
+            VariableErrorStrategy::Stay
+        );
     }
 
     #[derive(Debug)]
