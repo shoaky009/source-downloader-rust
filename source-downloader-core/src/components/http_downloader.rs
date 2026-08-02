@@ -7,12 +7,15 @@ use serde_json::{Map, Value};
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, DownloadTask, Downloader,
     ProcessingError, SdComponent, SdComponentMetadata, SourceFile, SourceFileRef,
+    Stateful,
 };
 use source_downloader_sdk::{SdComponent, SourceItem};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 use tokio::io::AsyncWriteExt;
 
 pub struct HttpDownloaderSupplier;
@@ -68,12 +71,19 @@ impl ComponentSupplier for HttpDownloaderSupplier {
 }
 
 #[derive(SdComponent, Debug)]
-#[component(Downloader)]
+#[component(Downloader, Stateful)]
 struct HttpDownloader {
     path: String,
     client: reqwest::Client,
     parallelism: usize,
-    downloads: Mutex<HashMap<PathBuf, AbortHandle>>,
+    downloads: Mutex<HashMap<PathBuf, DownloadState>>,
+}
+
+#[derive(Debug)]
+struct DownloadState {
+    abort_handle: AbortHandle,
+    downloaded_bytes: Arc<AtomicU64>,
+    started_at: Instant,
 }
 
 impl Display for HttpDownloader {
@@ -92,7 +102,15 @@ impl HttpDownloader {
             return Ok(());
         };
         let path = file.path.to_path_buf();
+        if let Some(parent) = path.parent()
+            && parent != Path::new(&self.path)
+            && !parent.exists()
+        {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+
         let (abort_handle, abort_registration) = AbortHandle::new_pair();
+        let downloaded_bytes = Arc::new(AtomicU64::new(0));
         {
             let mut downloads = self.downloads.lock();
             if downloads.contains_key(&path) {
@@ -101,11 +119,18 @@ impl HttpDownloader {
                     path.display()
                 )));
             }
-            downloads.insert(path.clone(), abort_handle);
+            downloads.insert(
+                path.clone(),
+                DownloadState {
+                    abort_handle,
+                    downloaded_bytes: Arc::clone(&downloaded_bytes),
+                    started_at: Instant::now(),
+                },
+            );
         }
 
         let result = Abortable::new(
-            self.download_response(uri.to_string(), &path, headers),
+            self.download_response(uri.to_string(), &path, headers, downloaded_bytes),
             abort_registration,
         )
         .await
@@ -138,6 +163,7 @@ impl HttpDownloader {
         uri: String,
         path: &Path,
         headers: Option<&HashMap<&String, &String>>,
+        downloaded_bytes: Arc<AtomicU64>,
     ) -> Result<(), ProcessingError> {
         let mut request = self.client.get(&uri);
         if let Some(headers) = headers {
@@ -160,18 +186,16 @@ impl HttpDownloader {
             )));
         }
         if status.is_server_error() {
-            return Err(ProcessingError::retryable(format!(
+            return Err(ProcessingError::non_retryable(format!(
                 "Failed to download status code {status}: {uri}"
             )));
         }
 
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
         let mut target = tokio::fs::File::create(path).await?;
         while let Some(chunk) = response.chunk().await.map_err(|error| {
             ProcessingError::retryable(format!("Failed while downloading {uri}: {error}"))
         })? {
+            downloaded_bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
             target.write_all(&chunk).await?;
         }
         target.flush().await?;
@@ -205,15 +229,49 @@ impl Downloader for HttpDownloader {
     ) -> Result<(), ProcessingError> {
         for file in files {
             if let Some(download) = self.downloads.lock().remove(&file.path) {
-                download.abort();
-            }
-            match tokio::fs::remove_file(&file.path).await {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
+                download.abort_handle.abort();
             }
         }
         Ok(())
+    }
+}
+
+impl Stateful for HttpDownloader {
+    fn get_state_detail(&self) -> Option<Map<String, Value>> {
+        let mut state = Map::new();
+        for (path, download) in self.downloads.lock().iter() {
+            let elapsed_seconds = download.started_at.elapsed().as_secs();
+            let downloaded = download.downloaded_bytes.load(Ordering::Relaxed);
+            let speed = if elapsed_seconds == 0 {
+                downloaded
+            } else {
+                downloaded / elapsed_seconds
+            };
+            state.insert(
+                path.to_string_lossy().into_owned(),
+                serde_json::json!({
+                    "file": path.to_string_lossy(),
+                    "speed": readable_rate(speed),
+                }),
+            );
+        }
+        Some(state)
+    }
+}
+
+fn readable_rate(rate: u64) -> String {
+    const KILOBYTE: f64 = 1024.0;
+    const MEGABYTE: f64 = KILOBYTE * 1024.0;
+    const GIGABYTE: f64 = MEGABYTE * 1024.0;
+    let rate_as_float = rate as f64;
+    if rate_as_float > GIGABYTE {
+        format!("{:.2} GiB/s", rate_as_float / GIGABYTE)
+    } else if rate_as_float > MEGABYTE {
+        format!("{:.2} MiB/s", rate_as_float / MEGABYTE)
+    } else if rate_as_float > KILOBYTE {
+        format!("{:.2} KiB/s", rate_as_float / KILOBYTE)
+    } else {
+        format!("{rate} B/s")
     }
 }
 
@@ -359,5 +417,29 @@ mod tests {
         assert!(submit_result.unwrap_err().message().contains("cancelled"));
         cancel_result.unwrap();
         assert!(!target.exists());
+    }
+    #[test]
+    fn readable_rate_uses_human_readable_units() {
+        assert_eq!(readable_rate(1024), "1024 B/s");
+        assert_eq!(readable_rate(1025), "1.00 KiB/s");
+        assert_eq!(readable_rate(1024 * 1024 + 1), "1.00 MiB/s");
+    }
+
+    #[test]
+    fn supplier_rejects_zero_parallelism() {
+        let props = serde_json::json!({
+            "download-path": "downloads",
+            "parallelism": 0
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+
+        let error = SUPPLIER.apply(&props).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "HTTP downloader parallelism must be greater than zero"
+        );
     }
 }
