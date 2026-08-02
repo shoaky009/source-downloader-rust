@@ -63,8 +63,7 @@ impl ComponentSupplier for FixedSourceSupplier {
     fn apply(
         &self,
         props: &Map<String, Value>,
-    ) -> Result<Arc<dyn source_downloader_sdk::component::SdComponent>, ComponentError>
-    {
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let content = props
             .get("content")
             .ok_or_else(|| ComponentError::from("Missing 'content' property"))?;

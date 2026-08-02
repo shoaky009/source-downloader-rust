@@ -20,8 +20,7 @@ impl ComponentSupplier for RunCommandSupplier {
     fn apply(
         &self,
         props: &Map<String, Value>,
-    ) -> Result<Arc<dyn source_downloader_sdk::component::SdComponent>, ComponentError>
-    {
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let raw_command = props
             .get("command")
             .ok_or_else(|| ComponentError::from("Missing 'command' property"))?;

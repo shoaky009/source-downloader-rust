@@ -40,8 +40,7 @@ impl ComponentSupplier for RegexVariableProviderSupplier {
     fn apply(
         &self,
         props: &Map<String, Value>,
-    ) -> Result<Arc<dyn source_downloader_sdk::component::SdComponent>, ComponentError>
-    {
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let config: RegexVariableProviderConfig =
             serde_json::from_value(Value::Object(props.clone())).map_err(|error| {
                 ComponentError::new(format!("Invalid regex provider config: {error}"))

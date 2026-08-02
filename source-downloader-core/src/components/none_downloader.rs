@@ -20,8 +20,7 @@ impl ComponentSupplier for NoneDownloaderSupplier {
     fn apply(
         &self,
         props: &Map<String, Value>,
-    ) -> Result<Arc<dyn source_downloader_sdk::component::SdComponent>, ComponentError>
-    {
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let path = match props.get("downloadPath") {
             None => std::env::current_dir().map_err(|error| {
                 ComponentError::new(format!("Failed to get current directory: {error}"))

@@ -20,8 +20,7 @@ impl ComponentSupplier for UrlFileResolverSupplier {
     fn apply(
         &self,
         _: &Map<String, Value>,
-    ) -> Result<Arc<dyn source_downloader_sdk::component::SdComponent>, ComponentError>
-    {
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         Ok(Arc::new(UrlFileResolver))
     }
 

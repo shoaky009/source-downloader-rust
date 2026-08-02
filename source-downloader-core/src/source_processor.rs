@@ -5744,7 +5744,7 @@ mod test {
             ])),
             ..Default::default()
         });
-        let mut file = FileContent {
+        let file = FileContent {
             download_path: PathBuf::new(),
             file_download_path: PathBuf::from("download.txt"),
             source_save_path: PathBuf::new(),
@@ -5848,7 +5848,7 @@ mod test {
             .await
             .unwrap();
 
-        let mut file = FileContent {
+        let file = FileContent {
             download_path: root.clone(),
             file_download_path: download_file.clone(),
             source_save_path: root.clone(),
