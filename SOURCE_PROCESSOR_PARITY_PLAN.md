@@ -21,7 +21,7 @@ one-item-per-commit and regression-test rules above.
 
 ### P3: maintainability after behavioral coverage
 
-- [ ] **Extract ordered ItemAction settlement from Process::execute**
+- [x] **Extract ordered ItemAction settlement from Process::execute**
   - Defer this refactor until tests cover every `ItemAction`, failure stage,
     listener/persistence side effect, pointer-advance boundary, cancellation,
     and stop-scheduling/drain behavior.

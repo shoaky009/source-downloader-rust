@@ -482,6 +482,24 @@ enum ItemAction {
     Error(ProcessingError),
 }
 
+struct CompletedItem {
+    item_pointer: Arc<dyn ItemPointer>,
+    source_item: SourceItem,
+    action: ItemAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScheduleDecision {
+    Continue,
+    Stop,
+}
+
+impl ScheduleDecision {
+    fn should_stop(self) -> bool {
+        matches!(self, Self::Stop)
+    }
+}
+
 impl ItemProcessRuntime {
     fn filter_inc(&self) {
         self.filter_count.fetch_add(1, Ordering::Relaxed);
@@ -1387,6 +1405,208 @@ trait Process {
         Ok(())
     }
 
+    fn settle_skipped_item(
+        &self,
+        source_item: &SourceItem,
+        reason: String,
+    ) -> ScheduleDecision {
+        debug!("[item-skip] {} {:?} ", reason, source_item);
+        ScheduleDecision::Continue
+    }
+
+    async fn settle_filtered_item(
+        &self,
+        p: &SourceProcessor,
+        coordinator: &mut ProcessCoordinator,
+        item_pointer: Arc<dyn ItemPointer>,
+        source_item: &SourceItem,
+        reason: String,
+        advance_pointer: bool,
+    ) -> ScheduleDecision {
+        debug!("[item-filtered] {} {:?} ", reason, source_item);
+        if !advance_pointer {
+            return ScheduleDecision::Continue;
+        }
+        if let Err(err) = self
+            .on_item_filtered(p, coordinator, source_item, item_pointer.as_ref())
+            .await
+        {
+            coordinator.listener_context.has_error = true;
+            self.on_item_error(p, coordinator, source_item, &err).await;
+            if p.options.item_error_continue {
+                self.persist_item_failure(p, source_item, &err, None, None).await;
+                warn!("[item-continue-on-error] {} {}", err.message(), source_item);
+            } else {
+                return ScheduleDecision::Stop;
+            }
+        }
+        ScheduleDecision::Continue
+    }
+
+    async fn settle_error_item(
+        &self,
+        p: &SourceProcessor,
+        item_runtime: &ItemProcessRuntime,
+        coordinator: &mut ProcessCoordinator,
+        source_item: &SourceItem,
+        err: ProcessingError,
+    ) -> ScheduleDecision {
+        item_runtime.processed_inc();
+        coordinator.listener_context.has_error = true;
+        self.on_item_error(p, coordinator, source_item, &err).await;
+        let skippable = matches!(&err, ProcessingError::NonRetryable { skip: true, .. });
+        if skippable || p.options.item_error_continue {
+            self.persist_item_failure(p, source_item, &err, None, None).await;
+            warn!("[item-continue-on-error] {} {}", err.message(), source_item);
+            ScheduleDecision::Continue
+        } else {
+            warn!("[item-stop-on-error] {}, 停止提交新 Item", err.message());
+            ScheduleDecision::Stop
+        }
+    }
+
+    async fn settle_success_item(
+        &self,
+        p: &SourceProcessor,
+        item_runtime: &ItemProcessRuntime,
+        coordinator: &mut ProcessCoordinator,
+        item_pointer: Arc<dyn ItemPointer>,
+        source_item: SourceItem,
+        files: Vec<FileContent>,
+        item_variables: PatternVariables,
+        rename_times: u32,
+        mut status: ProcessingStatus,
+        failure_reason: Option<String>,
+        advance_pointer: bool,
+    ) -> ScheduleDecision {
+        let item_hash = source_item.hashing();
+        if item_runtime.is_cancelled(&item_hash) {
+            status = ProcessingStatus::Cancelled;
+        }
+        let mut content = ProcessingContent {
+            id: None,
+            processor_name: p.name.clone(),
+            item_hash,
+            item_identity: source_item.identity.clone(),
+            item_content: ItemContentLite { source_item, item_variables },
+            rename_times,
+            status,
+            failure_reason,
+            created_at: OffsetDateTime::now_utc(),
+            updated_at: None,
+        };
+        match self.on_item_process_complete(p, &content, &files).await {
+            Ok(content_id) => {
+                content.id = content_id;
+                item_runtime.processed_inc();
+                let continued_failure = p.options.item_error_continue.then(|| {
+                    (
+                        content.id,
+                        content.created_at,
+                        content.item_content.source_item.clone(),
+                    )
+                });
+                match self
+                    .on_item_success(
+                        p,
+                        advance_pointer,
+                        coordinator,
+                        item_pointer.as_ref(),
+                        content,
+                        files,
+                    )
+                    .await
+                {
+                    Ok(()) => ScheduleDecision::Continue,
+                    Err(err) => {
+                        if let Some((content_id, created_at, source_item)) =
+                            continued_failure
+                        {
+                            self.persist_item_failure(
+                                p,
+                                &source_item,
+                                &err,
+                                content_id,
+                                Some(created_at),
+                            )
+                            .await;
+                            warn!("[item-continue-on-error] {}", err.message());
+                            ScheduleDecision::Continue
+                        } else {
+                            ScheduleDecision::Stop
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                item_runtime.processed_inc();
+                coordinator.listener_context.has_error = true;
+                let source_item = &content.item_content.source_item;
+                self.on_item_error(p, coordinator, source_item, &err).await;
+                let skippable =
+                    matches!(&err, ProcessingError::NonRetryable { skip: true, .. });
+                if skippable || p.options.item_error_continue {
+                    warn!("[item-continue-on-error] {} {}", err.message(), source_item);
+                    ScheduleDecision::Continue
+                } else {
+                    warn!("[item-stop-on-error] {}, 停止提交新 Item", err.message());
+                    ScheduleDecision::Stop
+                }
+            }
+        }
+    }
+
+    async fn settle_completed_item(
+        &self,
+        p: &SourceProcessor,
+        item_runtime: &ItemProcessRuntime,
+        coordinator: &mut ProcessCoordinator,
+        completed: CompletedItem,
+        advance_pointer: bool,
+    ) -> ScheduleDecision {
+        let CompletedItem { item_pointer, source_item, action } = completed;
+        match action {
+            ItemAction::Skip(reason) => self.settle_skipped_item(&source_item, reason),
+            ItemAction::Filtered(reason) => {
+                self.settle_filtered_item(
+                    p,
+                    coordinator,
+                    item_pointer,
+                    &source_item,
+                    reason,
+                    advance_pointer,
+                )
+                .await
+            }
+            ItemAction::Error(err) => {
+                self.settle_error_item(p, item_runtime, coordinator, &source_item, err)
+                    .await
+            }
+            ItemAction::Success {
+                files,
+                item_variables,
+                rename_times,
+                status,
+                failure_reason,
+            } => {
+                self.settle_success_item(
+                    p,
+                    item_runtime,
+                    coordinator,
+                    item_pointer,
+                    source_item,
+                    files,
+                    item_variables,
+                    rename_times,
+                    status,
+                    failure_reason,
+                    advance_pointer,
+                )
+                .await
+            }
+        }
+    }
+
     async fn execute(&self, p: &SourceProcessor) -> Result<(), ProcessingError> {
         let span_exec = tracing::info_span!("", processor = p.name);
         let start_time = Instant::now();
@@ -1427,11 +1647,11 @@ trait Process {
                 move |item: source_downloader_sdk::component::PointedItem| async move {
                     let item_pointer = item.item_pointer;
                     let source_item = item.source_item;
-                    let item_action = process
+                    let action = process
                         .process_item(&source_item, item_runtime, processor)
                         .await
                         .unwrap_or_else(ItemAction::Error);
-                    (item_pointer, source_item, item_action)
+                    CompletedItem { item_pointer, source_item, action }
                 };
             let mut remaining_items = items.into_iter();
             let mut item_results = FuturesOrdered::new();
@@ -1440,181 +1660,19 @@ trait Process {
             }
 
             let mut stop_scheduling = false;
-            while let Some((item_pointer, source_item, item_action)) =
-                item_results.next().await
-            {
+            while let Some(completed) = item_results.next().await {
                 let advance_pointer = !stop_scheduling;
-                let mut stop_after_item = false;
-                match item_action {
-                    ItemAction::Skip(reason) => {
-                        debug!("[item-skip] {} {:?} ", reason, source_item);
-                    }
-                    ItemAction::Filtered(reason) => {
-                        debug!("[item-filtered] {} {:?} ", reason, source_item);
-                        if advance_pointer
-                            && let Err(err) = self
-                                .on_item_filtered(
-                                    p,
-                                    &mut p_rt.coordinator,
-                                    &source_item,
-                                    item_pointer.as_ref(),
-                                )
-                                .await
-                        {
-                            p_rt.coordinator.listener_context.has_error = true;
-                            self.on_item_error(
-                                p,
-                                &mut p_rt.coordinator,
-                                &source_item,
-                                &err,
-                            )
-                            .await;
-                            if p.options.item_error_continue {
-                                self.persist_item_failure(
-                                    p,
-                                    &source_item,
-                                    &err,
-                                    None,
-                                    None,
-                                )
-                                .await;
-                                warn!(
-                                    "[item-continue-on-error] {} {}",
-                                    err.message(),
-                                    source_item
-                                );
-                            } else {
-                                stop_after_item = true;
-                            }
-                        }
-                    }
-                    ItemAction::Error(err) => {
-                        item_runtime.processed_inc();
-                        p_rt.coordinator.listener_context.has_error = true;
-                        self.on_item_error(p, &mut p_rt.coordinator, &source_item, &err)
-                            .await;
-                        let skippable = matches!(
-                            err,
-                            ProcessingError::NonRetryable { skip: true, .. }
-                        );
-                        if skippable || p.options.item_error_continue {
-                            self.persist_item_failure(p, &source_item, &err, None, None)
-                                .await;
-                            warn!(
-                                "[item-continue-on-error] {} {}",
-                                err.message(),
-                                source_item
-                            );
-                        } else {
-                            warn!(
-                                "[item-stop-on-error] {}, 停止提交新 Item",
-                                err.message()
-                            );
-                            stop_after_item = true;
-                        }
-                    }
-                    ItemAction::Success {
-                        files,
-                        item_variables,
-                        rename_times,
-                        mut status,
-                        failure_reason,
-                    } => {
-                        let item_hash = source_item.hashing();
-                        if item_runtime.is_cancelled(&item_hash) {
-                            status = ProcessingStatus::Cancelled;
-                        }
-                        let mut content = ProcessingContent {
-                            id: None,
-                            processor_name: p.name.clone(),
-                            item_hash,
-                            item_identity: source_item.identity.clone(),
-                            item_content: ItemContentLite { source_item, item_variables },
-                            rename_times,
-                            status,
-                            failure_reason,
-                            created_at: OffsetDateTime::now_utc(),
-                            updated_at: None,
-                        };
-                        match self.on_item_process_complete(p, &content, &files).await {
-                            Ok(content_id) => {
-                                content.id = content_id;
-                                item_runtime.processed_inc();
-                                let continued_failure =
-                                    p.options.item_error_continue.then(|| {
-                                        (
-                                            content.id,
-                                            content.created_at,
-                                            content.item_content.source_item.clone(),
-                                        )
-                                    });
-                                match self
-                                    .on_item_success(
-                                        p,
-                                        advance_pointer,
-                                        &mut p_rt.coordinator,
-                                        item_pointer.as_ref(),
-                                        content,
-                                        files,
-                                    )
-                                    .await
-                                {
-                                    Ok(()) => {}
-                                    Err(err) if p.options.item_error_continue => {
-                                        let (content_id, created_at, source_item) =
-                                            continued_failure.expect(
-                                                "continued failure context is available",
-                                            );
-                                        self.persist_item_failure(
-                                            p,
-                                            &source_item,
-                                            &err,
-                                            content_id,
-                                            Some(created_at),
-                                        )
-                                        .await;
-                                        warn!(
-                                            "[item-continue-on-error] {}",
-                                            err.message()
-                                        );
-                                    }
-                                    Err(_) => stop_after_item = true,
-                                }
-                            }
-                            Err(err) => {
-                                item_runtime.processed_inc();
-                                p_rt.coordinator.listener_context.has_error = true;
-                                let source_item = &content.item_content.source_item;
-                                self.on_item_error(
-                                    p,
-                                    &mut p_rt.coordinator,
-                                    source_item,
-                                    &err,
-                                )
-                                .await;
-                                let skippable = matches!(
-                                    err,
-                                    ProcessingError::NonRetryable { skip: true, .. }
-                                );
-                                if skippable || p.options.item_error_continue {
-                                    warn!(
-                                        "[item-continue-on-error] {} {}",
-                                        err.message(),
-                                        source_item
-                                    );
-                                } else {
-                                    warn!(
-                                        "[item-stop-on-error] {}, 停止提交新 Item",
-                                        err.message()
-                                    );
-                                    stop_after_item = true;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if stop_after_item {
+                if self
+                    .settle_completed_item(
+                        p,
+                        item_runtime,
+                        &mut p_rt.coordinator,
+                        completed,
+                        advance_pointer,
+                    )
+                    .await
+                    .should_stop()
+                {
                     stop_scheduling = true;
                 }
                 if !stop_scheduling && let Some(item) = remaining_items.next() {
