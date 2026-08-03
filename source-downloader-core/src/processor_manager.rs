@@ -740,7 +740,8 @@ mod test {
         let component_manager = Arc::new(ComponentManager::new(Arc::new(
             YamlConfigOperator::new("./tests/resources/config.yaml"),
         )));
-        let _ = component_manager.register_suppliers(get_build_in_component_supplier());
+        let _ = component_manager
+            .register_suppliers(get_build_in_component_supplier(&component_manager));
         let manager = ProcessorManager::new(
             component_manager.clone(),
             Arc::new(MemoryProcessingStorage::new()),
@@ -805,7 +806,9 @@ mod test {
         let component_manager = Arc::new(ComponentManager::new(Arc::new(
             YamlConfigOperator::new("./tests/resources/config.yaml"),
         )));
-        component_manager.register_suppliers(get_build_in_component_supplier()).unwrap();
+        component_manager
+            .register_suppliers(get_build_in_component_supplier(&component_manager))
+            .unwrap();
         let manager = ProcessorManager::new(
             component_manager.clone(),
             Arc::new(MemoryProcessingStorage::new()),
@@ -846,12 +849,14 @@ mod test {
         use std::collections::HashMap;
         use std::path::PathBuf;
 
-        let component_manager = ComponentManager::new(Arc::new(YamlConfigOperator::new(
-            "./tests/resources/config.yaml",
+        let component_manager = Arc::new(ComponentManager::new(Arc::new(
+            YamlConfigOperator::new("./tests/resources/config.yaml"),
         )));
-        component_manager.register_suppliers(get_build_in_component_supplier()).unwrap();
+        component_manager
+            .register_suppliers(get_build_in_component_supplier(&component_manager))
+            .unwrap();
         let manager = ProcessorManager::new(
-            Arc::new(component_manager),
+            component_manager,
             Arc::new(MemoryProcessingStorage::new()),
         );
         let mut options = ProcessorOptionConfig::default();
@@ -947,7 +952,9 @@ mod test {
         let component_manager = Arc::new(ComponentManager::new(Arc::new(
             YamlConfigOperator::new("./tests/resources/config.yaml"),
         )));
-        component_manager.register_suppliers(get_build_in_component_supplier()).unwrap();
+        component_manager
+            .register_suppliers(get_build_in_component_supplier(&component_manager))
+            .unwrap();
         let manager = ProcessorManager::new(
             component_manager.clone(),
             Arc::new(MemoryProcessingStorage::new()),

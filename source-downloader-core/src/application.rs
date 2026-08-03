@@ -54,7 +54,7 @@ impl CoreApplication {
 
     fn register_component_supplier(&self) {
         self.component_manager
-            .register_suppliers(get_build_in_component_supplier())
+            .register_suppliers(get_build_in_component_supplier(&self.component_manager))
             .unwrap();
 
         self.plugin_manager.with_plugins(|plugins| {

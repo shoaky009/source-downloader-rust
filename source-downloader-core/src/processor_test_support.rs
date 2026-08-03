@@ -63,7 +63,7 @@ pub mod test_support {
     fn component_manager() -> &'static Arc<ComponentManager> {
         _CM.get_or_init(|| {
             let m = Arc::new(ComponentManager::new(cfg().clone()));
-            m.register_suppliers(get_build_in_component_supplier()).unwrap();
+            m.register_suppliers(get_build_in_component_supplier(&m)).unwrap();
             m.register_suppliers(get_mock_component_suppliers()).unwrap();
             m.register_supplier(Arc::new(VFS_RESOLVER_SUPPLIER)).unwrap();
             m

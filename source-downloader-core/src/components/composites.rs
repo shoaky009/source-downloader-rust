@@ -1,11 +1,18 @@
-use crate::expression::{source_item_variables, CompiledExpression};
-use async_trait::async_trait;
-use source_downloader_sdk::component::{
-    ComponentError, DownloadTask, Downloader, ItemFileResolver, SdComponent, SourceFile,
+use crate::component_manager::ComponentManager;
+use crate::expression::cel::FACTORY;
+use crate::expression::{
+    CompiledExpression, CompiledExpressionFactory, source_item_variables,
 };
+use async_trait::async_trait;
+use serde::Deserialize;
 use source_downloader_sdk::SourceItem;
+use source_downloader_sdk::component::{
+    ComponentError, ComponentRootType, ComponentSupplier, ComponentType, DownloadTask,
+    Downloader, ItemFileResolver, SdComponent, SdComponentMetadata, SourceFile,
+};
+use source_downloader_sdk::serde_json::{Map, Value};
 use std::fmt::{Debug, Display, Formatter};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 /// Selects one component using the first expression that evaluates to true.
 pub struct ComponentSelector<T: ?Sized + SdComponent> {
@@ -37,6 +44,134 @@ impl<T: ?Sized + SdComponent> ComponentSelectRule<T> {
     pub fn new(expression: Arc<dyn CompiledExpression<bool>>, component: Arc<T>) -> Self {
         Self { expression, component }
     }
+}
+
+#[derive(Deserialize)]
+struct CompositeComponentConfig {
+    default: String,
+    #[serde(default)]
+    rules: Vec<CompositeComponentRuleConfig>,
+}
+
+#[derive(Deserialize)]
+struct CompositeComponentRuleConfig {
+    expression: String,
+    component: String,
+}
+
+pub struct CompositeDownloaderSupplier {
+    component_manager: Weak<ComponentManager>,
+}
+
+impl CompositeDownloaderSupplier {
+    pub fn new(component_manager: &Arc<ComponentManager>) -> Self {
+        Self { component_manager: Arc::downgrade(component_manager) }
+    }
+}
+
+impl ComponentSupplier for CompositeDownloaderSupplier {
+    fn supply_types(&self) -> Vec<ComponentType> {
+        vec![ComponentType::downloader("composite".to_owned())]
+    }
+
+    fn apply(
+        &self,
+        props: &Map<String, Value>,
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
+        let config = parse_config(props)?;
+        let component_manager = require_component_manager(&self.component_manager)?;
+        let default = resolve_downloader(&component_manager, &config.default)?;
+        let mut rules = Vec::with_capacity(config.rules.len());
+        for rule in config.rules {
+            rules.push(ComponentSelectRule::new(
+                compile_expression(&rule.expression)?,
+                resolve_downloader(&component_manager, &rule.component)?,
+            ));
+        }
+        let selector = ComponentSelector::new(default, rules);
+        Ok(Arc::new(CompositeDownloaderComponent(CompositeDownloader::new(selector)?)))
+    }
+
+    fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
+        None
+    }
+}
+
+pub struct CompositeItemFileResolverSupplier {
+    component_manager: Weak<ComponentManager>,
+}
+
+impl CompositeItemFileResolverSupplier {
+    pub fn new(component_manager: &Arc<ComponentManager>) -> Self {
+        Self { component_manager: Arc::downgrade(component_manager) }
+    }
+}
+
+impl ComponentSupplier for CompositeItemFileResolverSupplier {
+    fn supply_types(&self) -> Vec<ComponentType> {
+        vec![ComponentType::file_resolver("composite".to_owned())]
+    }
+
+    fn apply(
+        &self,
+        props: &Map<String, Value>,
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
+        let config = parse_config(props)?;
+        let component_manager = require_component_manager(&self.component_manager)?;
+        let default = resolve_item_file_resolver(&component_manager, &config.default)?;
+        let mut rules = Vec::with_capacity(config.rules.len());
+        for rule in config.rules {
+            rules.push(ComponentSelectRule::new(
+                compile_expression(&rule.expression)?,
+                resolve_item_file_resolver(&component_manager, &rule.component)?,
+            ));
+        }
+        let selector = ComponentSelector::new(default, rules);
+        Ok(Arc::new(CompositeItemFileResolverComponent(CompositeItemFileResolver::new(
+            selector,
+        ))))
+    }
+
+    fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
+        None
+    }
+}
+
+fn parse_config(
+    props: &Map<String, Value>,
+) -> Result<CompositeComponentConfig, ComponentError> {
+    serde_json::from_value(Value::Object(props.clone()))
+        .map_err(|error| ComponentError::new(format!("Failed to parse config: {error}")))
+}
+
+fn require_component_manager(
+    component_manager: &Weak<ComponentManager>,
+) -> Result<Arc<ComponentManager>, ComponentError> {
+    component_manager
+        .upgrade()
+        .ok_or_else(|| ComponentError::new("Component manager is no longer available"))
+}
+
+fn compile_expression(
+    expression: &str,
+) -> Result<Arc<dyn CompiledExpression<bool>>, ComponentError> {
+    FACTORY.create::<bool>(expression).map(Arc::from).map_err(ComponentError::from)
+}
+
+fn resolve_downloader(
+    component_manager: &ComponentManager,
+    component_ref: &str,
+) -> Result<Arc<dyn Downloader>, ComponentError> {
+    let id = ComponentRootType::Downloader.parse_component_id(component_ref);
+    component_manager.get_component(&id)?.require_component()?.as_downloader()
+}
+
+fn resolve_item_file_resolver(
+    component_manager: &ComponentManager,
+    component_ref: &str,
+) -> Result<Arc<dyn ItemFileResolver>, ComponentError> {
+    let id = ComponentRootType::ItemFileResolver.parse_component_id(component_ref);
+    component_manager.get_component(&id)?.require_component()?.as_item_file_resolver()
 }
 
 pub struct CompositeDownloader {
@@ -178,29 +313,114 @@ impl<T: ?Sized + SdComponent> Debug for ComponentSelectRule<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::expression::CompiledExpression;
-    use source_downloader_sdk::component::ComponentSupplier;
-    use source_downloader_sdk::serde_json::Value;
+    use crate::components::get_build_in_component_supplier;
+    use crate::config::YamlConfigOperator;
+    use source_downloader_sdk::component::ProcessingError;
+    use tempfile::TempDir;
 
     struct ConstantExpression(bool);
 
     impl CompiledExpression<bool> for ConstantExpression {
-        fn execute(
-            &self,
-            _: &source_downloader_sdk::serde_json::Map<String, Value>,
-        ) -> Result<bool, String> {
+        fn execute(&self, _: &Map<String, Value>) -> Result<bool, String> {
             Ok(self.0)
         }
     }
 
+    #[derive(Debug, source_downloader_sdk::SdComponent)]
+    #[component(Downloader)]
+    struct TestDownloader {
+        path: String,
+    }
+
+    impl Display for TestDownloader {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            f.write_str("test")
+        }
+    }
+
+    #[async_trait]
+    impl Downloader for TestDownloader {
+        async fn submit(&self, _: &DownloadTask) -> Result<(), ProcessingError> {
+            Ok(())
+        }
+
+        fn default_download_path(&self) -> &str {
+            &self.path
+        }
+
+        async fn cancel(
+            &self,
+            _: &SourceItem,
+            _: &[SourceFile],
+        ) -> Result<(), ProcessingError> {
+            Ok(())
+        }
+    }
+
+    struct TelegramDownloaderSupplier;
+
+    impl ComponentSupplier for TelegramDownloaderSupplier {
+        fn supply_types(&self) -> Vec<ComponentType> {
+            vec![ComponentType::downloader("telegram".to_owned())]
+        }
+
+        fn apply(
+            &self,
+            _: &Map<String, Value>,
+        ) -> Result<Arc<dyn SdComponent>, ComponentError> {
+            Ok(Arc::new(TestDownloader { path: "downloads".to_owned() }))
+        }
+
+        fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
+            None
+        }
+    }
+
     fn downloader(path: &str) -> Arc<dyn Downloader> {
-        let props =
-            serde_json::json!({"download-path": path}).as_object().unwrap().clone();
-        crate::components::mock_downloader::SUPPLIER
-            .apply(&props)
-            .unwrap()
-            .as_downloader()
-            .unwrap()
+        Arc::new(TestDownloader { path: path.to_owned() })
+    }
+
+    fn configured_component_manager() -> (TempDir, Arc<ComponentManager>) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.yaml");
+        std::fs::write(
+            &config_path,
+            r#"
+instances: []
+components:
+  downloader:
+    - name: telegram
+      type: telegram
+      props: {}
+    - name: http
+      type: http
+      props:
+        download-path: downloads
+    - name: telegram-message
+      type: composite
+      props:
+        default: telegram
+        rules:
+          - expression: "has(item.attrs.site) && item.attrs.site == 'Telegraph'"
+            component: http
+  item-file-resolver:
+    - name: selected-resolver
+      type: composite
+      props:
+        default: url
+        rules:
+          - expression: "has(item.attrs.site)"
+            component: url
+processors: []
+"#,
+        )
+        .unwrap();
+        let manager = Arc::new(ComponentManager::new(Arc::new(
+            YamlConfigOperator::new_path(&config_path),
+        )));
+        manager.register_suppliers(get_build_in_component_supplier(&manager)).unwrap();
+        manager.register_supplier(Arc::new(TelegramDownloaderSupplier)).unwrap();
+        (temp_dir, manager)
     }
 
     #[test]
@@ -221,6 +441,30 @@ mod tests {
     }
 
     #[test]
+    fn selector_matches_configured_source_item_attribute_expression() {
+        let default = downloader("downloads");
+        let selected = downloader("downloads");
+        let selector = ComponentSelector::new(
+            default,
+            vec![ComponentSelectRule::new(
+                compile_expression(
+                    "has(item.attrs.site) && item.attrs.site == 'Telegraph'",
+                )
+                .unwrap(),
+                Arc::clone(&selected),
+            )],
+        );
+        let mut source_item = SourceItem::default();
+        source_item
+            .attrs
+            .insert("site".to_owned(), Value::String("Telegraph".to_owned()));
+
+        let actual = selector.select(&source_item);
+
+        assert!(Arc::ptr_eq(&actual, &selected));
+    }
+
+    #[test]
     fn composite_downloader_rejects_mismatched_download_paths() {
         let selector = ComponentSelector::new(
             downloader("downloads"),
@@ -233,5 +477,38 @@ mod tests {
         let error = CompositeDownloader::new(selector).unwrap_err();
 
         assert_eq!(error.to_string(), "Downloaders must have the same download path");
+    }
+
+    #[test]
+    fn downloader_supplier_builds_component_from_configured_references() {
+        let (_temp_dir, manager) = configured_component_manager();
+        let id = ComponentRootType::Downloader
+            .parse_component_id("composite:telegram-message");
+
+        let downloader = manager
+            .get_component(&id)
+            .unwrap()
+            .require_component()
+            .unwrap()
+            .as_downloader()
+            .unwrap();
+
+        assert_eq!(downloader.default_download_path(), "downloads");
+    }
+
+    #[test]
+    fn item_file_resolver_supplier_builds_component_from_configured_references() {
+        let (_temp_dir, manager) = configured_component_manager();
+        let id = ComponentRootType::ItemFileResolver
+            .parse_component_id("composite:selected-resolver");
+
+        let resolver = manager
+            .get_component(&id)
+            .unwrap()
+            .require_component()
+            .unwrap()
+            .as_item_file_resolver();
+
+        assert!(resolver.is_ok(), "resolver creation failed: {resolver:?}");
     }
 }

@@ -1,45 +1,49 @@
+use crate::component_manager::ComponentManager;
 use source_downloader_sdk::component::ComponentSupplier;
 use std::sync::Arc;
 
+pub mod composites;
+pub mod cron_trigger;
+pub mod delete_empty_directory;
 pub mod expression_file_content_filter;
 pub mod expression_item_content_filter;
 pub mod expression_item_filter;
-pub mod file_replacement_deciders;
-pub mod mapped_file_tagger;
 pub mod file_directory_exists_detector;
+pub mod file_replacement_deciders;
 pub mod fixed_schedule_trigger;
+pub mod fixed_source;
+pub mod force_trimmer;
+pub mod full_width_replacer;
 pub mod general_file_mover;
 pub mod hardlink_file_mover;
 pub mod holding_task_trigger;
-pub mod none_downloader;
 pub mod http_downloader;
+pub mod keyword_integration;
+pub mod mapped_file_tagger;
 pub mod never_replace_decider;
+pub mod none_downloader;
+pub mod regex_trimmer;
+pub mod regex_variable_provider;
+pub mod regex_variable_replacer;
+pub mod run_command;
+pub mod send_http_request;
+pub mod sequence_variable_provider;
 pub mod simple_file_exists_detector;
 pub mod source_item_identity_filter;
 pub mod system_file_mover;
-pub mod sequence_variable_provider;
 pub mod system_file_resolver;
-pub mod regex_variable_provider;
 pub mod system_file_source;
-pub mod force_trimmer;
-pub mod full_width_replacer;
-pub mod regex_trimmer;
-pub mod regex_variable_replacer;
-pub mod windows_path_replacer;
-pub mod delete_empty_directory;
-pub mod cron_trigger;
-pub mod fixed_source;
-pub mod keyword_integration;
-pub mod run_command;
-pub mod send_http_request;
 pub mod touch_item_directory;
 pub mod uri_source;
 pub mod url_downloader;
 pub mod url_file_resolver;
 pub mod webhook_trigger;
+pub mod windows_path_replacer;
 
 #[allow(dead_code)]
-pub fn get_build_in_component_supplier() -> Vec<Arc<dyn ComponentSupplier>> {
+pub fn get_build_in_component_supplier(
+    component_manager: &Arc<ComponentManager>,
+) -> Vec<Arc<dyn ComponentSupplier>> {
     vec![
         Arc::new(fixed_schedule_trigger::SUPPLIER),
         Arc::new(expression_item_filter::SUPPLIER),
@@ -76,5 +80,7 @@ pub fn get_build_in_component_supplier() -> Vec<Arc<dyn ComponentSupplier>> {
         Arc::new(url_downloader::SUPPLIER),
         Arc::new(url_file_resolver::SUPPLIER),
         Arc::new(webhook_trigger::SUPPLIER),
+        Arc::new(composites::CompositeDownloaderSupplier::new(component_manager)),
+        Arc::new(composites::CompositeItemFileResolverSupplier::new(component_manager)),
     ]
 }

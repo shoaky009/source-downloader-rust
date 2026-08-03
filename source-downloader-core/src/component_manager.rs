@@ -90,15 +90,17 @@ impl ComponentManager {
             }
         }
 
-        let guard = self.component_suppliers.read();
         let component_type = &id.component_type;
         let name = &id.name;
-        let supplier = guard.get(component_type).ok_or_else(|| {
-            ComponentError::new(format!(
-                "Supplier not found for type: {}",
-                component_type
-            ))
-        })?;
+        let supplier =
+            self.component_suppliers.read().get(component_type).cloned().ok_or_else(
+                || {
+                    ComponentError::new(format!(
+                        "Supplier not found for type: {}",
+                        component_type
+                    ))
+                },
+            )?;
 
         let types = supplier.supply_types();
         let (pk_type, props) =
