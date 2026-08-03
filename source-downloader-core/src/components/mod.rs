@@ -21,8 +21,11 @@ pub mod sequence_variable_provider;
 pub mod system_file_resolver;
 pub mod regex_variable_provider;
 pub mod system_file_source;
-pub mod trimmers;
-pub mod variable_replacers;
+pub mod force_trimmer;
+pub mod full_width_replacer;
+pub mod regex_trimmer;
+pub mod regex_variable_replacer;
+pub mod windows_path_replacer;
 
 #[allow(dead_code)]
 pub fn get_build_in_component_supplier() -> Vec<Arc<dyn ComponentSupplier>> {
@@ -46,10 +49,10 @@ pub fn get_build_in_component_supplier() -> Vec<Arc<dyn ComponentSupplier>> {
         Arc::new(sequence_variable_provider::SUPPLIER),
         Arc::new(regex_variable_provider::SUPPLIER),
         Arc::new(simple_file_exists_detector::SUPPLIER),
-        Arc::new(trimmers::FORCE_SUPPLIER),
-        Arc::new(trimmers::REGEX_SUPPLIER),
-        Arc::new(variable_replacers::FULL_WIDTH_SUPPLIER),
-        Arc::new(variable_replacers::REGEX_SUPPLIER),
-        Arc::new(variable_replacers::WINDOWS_PATH_SUPPLIER),
+        Arc::new(force_trimmer::SUPPLIER),
+        Arc::new(regex_trimmer::SUPPLIER),
+        Arc::new(full_width_replacer::SUPPLIER),
+        Arc::new(regex_variable_replacer::SUPPLIER),
+        Arc::new(windows_path_replacer::SUPPLIER),
     ]
 }

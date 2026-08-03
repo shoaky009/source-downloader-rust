@@ -8,32 +8,9 @@ use source_downloader_sdk::serde_json::{Map, Value};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
-pub const FORCE_SUPPLIER: ForceTrimmerSupplier = ForceTrimmerSupplier;
-pub const REGEX_SUPPLIER: RegexTrimmerSupplier = RegexTrimmerSupplier;
+pub const SUPPLIER: RegexTrimmerSupplier = RegexTrimmerSupplier;
 
-pub struct ForceTrimmerSupplier;
 pub struct RegexTrimmerSupplier;
-
-impl ComponentSupplier for ForceTrimmerSupplier {
-    fn supply_types(&self) -> Vec<ComponentType> {
-        vec![ComponentType::trimmer("force".to_owned())]
-    }
-
-    fn apply(
-        &self,
-        _: &Map<String, Value>,
-    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        Ok(Arc::new(ForceTrimmer))
-    }
-
-    fn is_support_no_props(&self) -> bool {
-        true
-    }
-
-    fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
-    }
-}
 
 #[derive(Deserialize)]
 struct RegexConfig {
@@ -66,29 +43,6 @@ impl ComponentSupplier for RegexTrimmerSupplier {
 
 #[derive(Debug, source_downloader_sdk::SdComponent)]
 #[component(Trimmer)]
-struct ForceTrimmer;
-
-impl Display for ForceTrimmer {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("force")
-    }
-}
-
-impl Trimmer for ForceTrimmer {
-    fn trim(&self, value: String, expect_size: usize) -> String {
-        if value.len() <= expect_size {
-            return value;
-        }
-        let mut end = expect_size.min(value.len());
-        while !value.is_char_boundary(end) {
-            end -= 1;
-        }
-        value[..end].to_owned()
-    }
-}
-
-#[derive(Debug, source_downloader_sdk::SdComponent)]
-#[component(Trimmer)]
 struct RegexTrimmer {
     regex: Regex,
 }
@@ -110,8 +64,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn built_in_trimmers_match_kotlin_behavior() {
-        assert_eq!("你", ForceTrimmer.trim("你好a".to_owned(), 4));
+    fn removes_regex_matches() {
         let regex = RegexTrimmer { regex: Regex::new("[0-9]+").unwrap() };
         assert_eq!("ab", regex.trim("a123b".to_owned(), 1));
     }
