@@ -41,8 +41,7 @@ impl ComponentSupplier for KeywordIntegrationSupplier {
     fn apply(
         &self,
         props: &Map<String, Value>,
-    ) -> Result<Arc<dyn SdComponent>, ComponentError>
-    {
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let config: KeywordIntegrationConfig =
             serde_json::from_value(Value::Object(props.clone())).map_err(|error| {
                 ComponentError::new(format!("Invalid keyword config: {error}"))
@@ -57,8 +56,6 @@ impl ComponentSupplier for KeywordIntegrationSupplier {
 #[derive(Debug, source_downloader_sdk::SdComponent)]
 #[component(VariableProvider, SourceItemFilter)]
 pub struct KeywordIntegration {
-    keywords: Vec<String>,
-    keyword_file: Option<PathBuf>,
     words: Arc<RwLock<Vec<Word>>>,
     stop: Arc<AtomicBool>,
     watcher: Option<JoinHandle<()>>,
@@ -92,7 +89,7 @@ impl KeywordIntegration {
             let path = path.clone();
             thread::spawn(move || watch_keyword_file(stop, words, keywords, path))
         });
-        Ok(Self { keywords, keyword_file, words, stop, watcher })
+        Ok(Self { words, stop, watcher })
     }
 
     fn match_word(&self, text: &str) -> Option<Word> {
