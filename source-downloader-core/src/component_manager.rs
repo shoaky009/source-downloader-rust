@@ -139,7 +139,7 @@ impl ComponentManager {
                     key
                 )));
             }
-            info!("Component[share] {}", key);
+            debug!("Component[share] {}", key);
             guard.insert(key, wrapper.clone());
 
             if x == component_type {

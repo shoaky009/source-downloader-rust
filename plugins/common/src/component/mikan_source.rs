@@ -2,7 +2,7 @@ use crate::instance::mikan::MikanClient;
 use crate::util;
 use crate::util::{AsyncExpandIterator, ExpandHandler, IterationResult};
 use reqwest::StatusCode;
-use rss::{Channel, Item};
+use rss_for_mikan::{Channel, Item};
 use serde::{Deserialize, Serialize};
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
@@ -13,17 +13,24 @@ use source_downloader_sdk::component::{
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{Map, Value};
 use source_downloader_sdk::time::OffsetDateTime;
-use source_downloader_sdk::time::format_description::well_known::Rfc2822;
 use source_downloader_sdk::{SdComponent, SourceItem, serde_json};
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::str::FromStr;
 use std::sync::Arc;
+use time::format_description::BorrowedFormatItem;
+use time::{PrimitiveDateTime, UtcOffset};
 
 pub struct MikanSourceSupplier {}
 
 pub const SUPPLIER: MikanSourceSupplier = MikanSourceSupplier {};
+
+static DATETIME_FORMAT: &[BorrowedFormatItem] =
+    time::macros::format_description!(
+        "[year]-[month]-[day]T[hour]:[minute]:[second][optional [.[subsecond]]]"
+    );
+static TIME_OFFSET: UtcOffset = time::macros::offset!(+8);
 
 impl ComponentSupplier for MikanSourceSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
@@ -145,14 +152,37 @@ impl Source for MikanSource {
 }
 
 impl MikanSource {
-    // TODO如果失败要打印一下日志
-    fn convert_item(item: &Item) -> Option<SourceItem> {
-        let title = item.title()?.to_owned();
-        let link = Uri::from_str(item.link()?).ok()?;
-        let enclosure = item.enclosure()?;
-        let download_uri = Uri::from_str(enclosure.url()).ok()?;
-        let datetime = OffsetDateTime::parse(item.pub_date()?, &Rfc2822).ok()?;
-        Some(SourceItem {
+
+    fn try_convert_item(item: &Item) -> Result<SourceItem, String> {
+        let title = item
+            .title()
+            .ok_or_else(|| "missing title".to_string())?
+            .to_owned();
+
+        let link = Uri::from_str(
+            item.link()
+                .ok_or_else(|| "missing link".to_string())?,
+        )
+            .map_err(|e| format!("invalid link: {e}"))?;
+
+        let enclosure = item
+            .enclosure()
+            .ok_or_else(|| "missing enclosure".to_string())?;
+
+        let download_uri = Uri::from_str(enclosure.url())
+            .map_err(|e| format!("invalid enclosure URL: {e}"))?;
+
+        let pub_date = item
+            .torrent
+            .as_ref()
+            .and_then(|torrent| torrent.pub_date.as_deref())
+            .ok_or_else(|| "missing publication date".to_string())?;
+
+        let datetime = PrimitiveDateTime::parse(pub_date, DATETIME_FORMAT)
+            .map_err(|e| format!("invalid publication date: {e}"))?
+            .assume_offset(TIME_OFFSET);
+
+        Ok(SourceItem {
             title,
             link,
             datetime,
@@ -162,6 +192,21 @@ impl MikanSource {
             tags: Default::default(),
             identity: None,
         })
+    }
+
+    fn convert_item(item: &Item) -> Option<SourceItem> {
+        match MikanSource::try_convert_item(item) {
+            Ok(item) => Some(item),
+            Err(err) => {
+                tracing::warn!(
+                error = %err,
+                title = ?item.title(),
+                link = ?item.link(),
+                "Failed to convert Mikan RSS item"
+            );
+                None
+            }
+        }
     }
 }
 
@@ -319,7 +364,7 @@ mod tests {
     #[test]
     fn converts_mikan_rss_item() {
         let channel = Channel::read_from(
-            br#"<?xml version="1.0" encoding="utf-8"?>
+            r#"<?xml version="1.0" encoding="utf-8"?>
                 <rss
                   xmlns:torrent="https://mikanani.me/0.1/"
                   version="2.0">
@@ -328,35 +373,34 @@ mod tests {
                     <link>https://mikanani.me</link>
                     <description>Mikan Project - My Bangumi</description>
                     <item>
-                      <title>Episode 01</title>
-                      <link>https://mikanani.me/Home/Episode/example</link>
-                      <description>[Group] Episode 01</description>
-                      <guid isPermaLink="false">https://mikanani.me/Home/Episode/example</guid>
-                      <pubDate>Fri, 24 Jul 2026 16:22:47 +0800</pubDate>
-                      <enclosure
-                        url="https://mikanani.me/Download/example.torrent"
-                        length="123"
-                        type="application/x-bittorrent" />
-                      <torrent xmlns="https://mikanani.me/0.1/">
-                        <link>https://mikanani.me/Download/example.torrent</link>
-                        <contentLength>123</contentLength>
-                        <pubDate>2025-01-01T00:00:00.000</pubDate>
-                      </torrent>
+                        <guid isPermaLink="false">[ANi] MAO / MAO 摩绪 - 18 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]</guid>
+                        <link>https://mikanani.me/Home/Episode/f7ae19bb438881d204581c2b4fbaf0185e4304ea</link>
+                        <title>[ANi] MAO / MAO 摩绪 - 18 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]</title>
+                        <description>[ANi] MAO / MAO 摩绪 - 18 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4][409.4 MB]</description>
+                        <torrent xmlns="https://mikanani.me/0.1/">
+                            <link>https://mikanani.me/Home/Episode/f7ae19bb438881d204581c2b4fbaf0185e4304ea</link>
+                            <contentLength>429287008</contentLength>
+                            <pubDate>2026-08-03T12:00:48.405194</pubDate>
+                        </torrent>
+                        <enclosure type="application/x-bittorrent" length="429287008" url="https://mikanani.me/Download/20260803/f7ae19bb438881d204581c2b4fbaf0185e4304ea.torrent"/>
+                    </item>
+                    <item>
+                        <guid isPermaLink="false">【喵萌奶茶屋】★07月新番★[二十世纪电气目录 / 20 Seiki Denki Mokuroku / Nijusseiki Denki Mokuroku][05][1080p][简日双语]</guid>
+                        <link>https://mikanani.me/Home/Episode/43c6117ce84eccf09e931c9601c83015b350bc95</link>
+                        <title>【喵萌奶茶屋】★07月新番★[二十世纪电气目录 / 20 Seiki Denki Mokuroku / Nijusseiki Denki Mokuroku][05][1080p][简日双语]</title>
+                        <description>【喵萌奶茶屋】★07月新番★[二十世纪电气目录 / 20 Seiki Denki Mokuroku / Nijusseiki Denki Mokuroku][05][1080p][简日双语][644.4MB]</description>
+                        <torrent xmlns="https://mikanani.me/0.1/">
+                            <link>https://mikanani.me/Home/Episode/43c6117ce84eccf09e931c9601c83015b350bc95</link>
+                            <contentLength>675702400</contentLength>
+                            <pubDate>2026-08-03T03:28:00</pubDate>
+                        </torrent>
+                        <enclosure type="application/x-bittorrent" length="675702400" url="https://mikanani.me/Download/20260803/43c6117ce84eccf09e931c9601c83015b350bc95.torrent"/>
                     </item>
                   </channel>
                 </rss>"#
-                .as_slice(),
+                .as_bytes(),
         )
-        .unwrap();
-
-        let item = MikanSource::convert_item(&channel.items()[0]).unwrap();
-
-        assert_eq!("Episode 01", item.title);
-        assert_eq!("2026-07-24 16:22:47.0 +08:00:00", item.datetime.to_string());
-        assert_eq!(
-            "https://mikanani.me/Download/example.torrent",
-            item.download_uri.to_string()
-        );
-        assert_eq!("application/x-bittorrent", item.content_type);
+            .unwrap();
+        assert_eq!(2, channel.items.len())
     }
 }

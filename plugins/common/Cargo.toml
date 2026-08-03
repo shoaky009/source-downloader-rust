@@ -7,7 +7,7 @@ edition = "2024"
 source-downloader-sdk = { path = "../../source-downloader-sdk" }
 serde = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
-rss = { workspace = true }
+rss-for-mikan = { workspace = true }
 time = { workspace = true }
 reqwest = { workspace = true, features = ["rustls-tls", "json", "system-proxy", "http2", "charset"] }
 moka = { workspace = true, features = ["future"] }
