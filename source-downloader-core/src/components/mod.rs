@@ -26,6 +26,17 @@ pub mod full_width_replacer;
 pub mod regex_trimmer;
 pub mod regex_variable_replacer;
 pub mod windows_path_replacer;
+pub mod delete_empty_directory;
+pub mod cron_trigger;
+pub mod fixed_source;
+pub mod keyword_integration;
+pub mod run_command;
+pub mod send_http_request;
+pub mod touch_item_directory;
+pub mod uri_source;
+pub mod url_downloader;
+pub mod url_file_resolver;
+pub mod webhook_trigger;
 
 #[allow(dead_code)]
 pub fn get_build_in_component_supplier() -> Vec<Arc<dyn ComponentSupplier>> {
@@ -54,5 +65,16 @@ pub fn get_build_in_component_supplier() -> Vec<Arc<dyn ComponentSupplier>> {
         Arc::new(full_width_replacer::SUPPLIER),
         Arc::new(regex_variable_replacer::SUPPLIER),
         Arc::new(windows_path_replacer::SUPPLIER),
+        Arc::new(delete_empty_directory::SUPPLIER),
+        Arc::new(cron_trigger::SUPPLIER),
+        Arc::new(fixed_source::SUPPLIER),
+        Arc::new(keyword_integration::SUPPLIER),
+        Arc::new(run_command::SUPPLIER),
+        Arc::new(send_http_request::SUPPLIER),
+        Arc::new(touch_item_directory::SUPPLIER),
+        Arc::new(uri_source::SUPPLIER),
+        Arc::new(url_downloader::SUPPLIER),
+        Arc::new(url_file_resolver::SUPPLIER),
+        Arc::new(webhook_trigger::SUPPLIER),
     ]
 }

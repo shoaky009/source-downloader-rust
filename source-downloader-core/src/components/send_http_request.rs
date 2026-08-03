@@ -40,7 +40,7 @@ impl ComponentSupplier for SendHttpRequestSupplier {
     fn apply(
         &self,
         props: &Map<String, Value>,
-    ) -> Result<Arc<dyn source_downloader_sdk::component::SdComponent>, ComponentError>
+    ) -> Result<Arc<dyn SdComponent>, ComponentError>
     {
         let config: HttpRequestConfig =
             serde_json::from_value(Value::Object(props.clone())).map_err(|error| {
