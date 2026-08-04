@@ -9,7 +9,8 @@ pub mod expression_file_content_filter;
 pub mod expression_item_content_filter;
 pub mod expression_item_filter;
 pub mod file_directory_exists_detector;
-pub mod file_replacement_deciders;
+pub mod file_replacement_decider_always;
+pub mod file_replacement_decider_size;
 pub mod fixed_schedule_trigger;
 pub mod fixed_source;
 pub mod force_trimmer;
@@ -50,8 +51,8 @@ pub fn get_build_in_component_supplier(
         Arc::new(expression_item_content_filter::SUPPLIER),
         Arc::new(expression_file_content_filter::SUPPLIER),
         Arc::new(never_replace_decider::SUPPLIER),
-        Arc::new(file_replacement_deciders::ALWAYS_SUPPLIER),
-        Arc::new(file_replacement_deciders::SIZE_SUPPLIER),
+        Arc::new(file_replacement_decider_always::SUPPLIER),
+        Arc::new(file_replacement_decider_size::SUPPLIER),
         Arc::new(system_file_source::SUPPLIER),
         Arc::new(system_file_resolver::SUPPLIER),
         Arc::new(http_downloader::SUPPLIER),
