@@ -357,9 +357,9 @@ mod tests {
         }
     }
 
-    struct TelegramDownloaderSupplier;
+    struct TestDownloaderSupplier;
 
-    impl ComponentSupplier for TelegramDownloaderSupplier {
+    impl ComponentSupplier for TestDownloaderSupplier {
         fn supply_types(&self) -> Vec<ComponentType> {
             vec![ComponentType::downloader("telegram".to_owned())]
         }
@@ -419,7 +419,7 @@ processors: []
             YamlConfigOperator::new_path(&config_path),
         )));
         manager.register_suppliers(get_build_in_component_supplier(&manager)).unwrap();
-        manager.register_supplier(Arc::new(TelegramDownloaderSupplier)).unwrap();
+        manager.register_supplier(Arc::new(TestDownloaderSupplier)).unwrap();
         (temp_dir, manager)
     }
 

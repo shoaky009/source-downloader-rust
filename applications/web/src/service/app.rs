@@ -1,5 +1,5 @@
 use crate::ApplicationContext;
-use crate::error_handle::error_handler;
+use crate::error_handle::{AppError, error_handler};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
@@ -26,9 +26,11 @@ pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
 }
 
 #[axum::debug_handler]
-async fn reload_core_application(State(core): State<Arc<CoreApplication>>) -> StatusCode {
-    core.reload();
-    StatusCode::NO_CONTENT
+async fn reload_core_application(
+    State(core): State<Arc<CoreApplication>>,
+) -> Result<StatusCode, AppError> {
+    core.reload().map_err(AppError::InternalError)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[axum::debug_handler]

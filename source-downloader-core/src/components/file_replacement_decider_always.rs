@@ -7,7 +7,6 @@ use source_downloader_sdk::{SdComponent, SourceItem};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
-
 pub struct AlwaysReplaceSupplier;
 pub const SUPPLIER: AlwaysReplaceSupplier = AlwaysReplaceSupplier;
 

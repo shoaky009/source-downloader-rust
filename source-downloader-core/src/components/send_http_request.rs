@@ -1,11 +1,11 @@
 use serde::Deserialize;
+use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, FileContentStatus, ItemContent,
     ProcessContext, ProcessListener, ProcessingError, ProcessorInfo, SdComponent,
     SdComponentMetadata,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
-use source_downloader_sdk::SourceItem;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::future::Future;
@@ -40,8 +40,7 @@ impl ComponentSupplier for SendHttpRequestSupplier {
     fn apply(
         &self,
         props: &Map<String, Value>,
-    ) -> Result<Arc<dyn SdComponent>, ComponentError>
-    {
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let config: HttpRequestConfig =
             serde_json::from_value(Value::Object(props.clone())).map_err(|error| {
                 ComponentError::new(format!("Invalid HTTP request config: {error}"))

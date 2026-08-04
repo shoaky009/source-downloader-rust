@@ -1,5 +1,8 @@
-use axum::http::Uri;
-use axum::{Router, http::StatusCode, middleware, response::IntoResponse};
+mod webhook_adapter;
+
+use axum::http::{StatusCode, Uri};
+use axum::{Router, middleware, response::IntoResponse};
+use webhook_adapter::AxumWebhookAdapter;
 use clap::{Args, Parser};
 use problem_details::ProblemDetails;
 use source_downloader_core::application::{CoreApplication, CorePluginContext};
@@ -35,14 +38,17 @@ async fn main() {
 
     let config = init_config();
     let storage = create_storage(&config.db).await;
-    let core = create_core_application(&storage, &config.source_downloader);
+    let mut core = create_core_application(&storage, &config.source_downloader);
+    let webhook_adapter = Arc::new(AxumWebhookAdapter::default());
+    core.set_webhook_adapter(webhook_adapter.clone());
 
     core.plugin_manager.register_plugin(Box::new(common::PLUGIN));
-    core.start();
+    core.start()
+        .unwrap_or_else(|error| panic!("Failed to start core application: {error}"));
 
     let app = Arc::new(core);
     let ctx = Arc::new(ApplicationContext { core: app.clone(), storage });
-    run_web_server(ctx, &config).await;
+    run_web_server(ctx, &config, webhook_adapter).await;
 }
 
 fn init_config() -> ApplicationConfig {
@@ -91,12 +97,14 @@ fn create_core_application(
         plugin_manager,
         data_location: config.data_location.clone(),
         plugin_location: config.plugin_location.clone(),
+        webhook_adapter: None,
     }
 }
 
 async fn run_web_server(
     core_application: Arc<ApplicationContext>,
     config: &ApplicationConfig,
+    webhook_adapter: Arc<AxumWebhookAdapter>,
 ) {
     let app_router = service::app::register_routers(core_application.clone());
     let component_routers =
@@ -114,13 +122,14 @@ async fn run_web_server(
         .merge(path_routers)
         .merge(metadata_routers)
         .layer(middleware::from_fn(error_handle::error_handler));
+    let webhook_router = webhook_adapter.router();
+    let base_router = Router::new().merge(webhook_router).nest("/api", api_routers);
 
     let root_router = match &config.server.static_dir {
-        None => Router::new().nest("/api", api_routers),
+        None => base_router,
         Some(dir) => {
             let dir_path = PathBuf::from(dir);
-            Router::new()
-                .nest("/api", api_routers)
+            base_router
                 .fallback_service(
                     ServeDir::new(&dir_path).precompressed_gzip().precompressed_br(),
                 )

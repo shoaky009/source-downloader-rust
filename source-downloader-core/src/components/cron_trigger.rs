@@ -20,8 +20,7 @@ impl ComponentSupplier for CronTriggerSupplier {
     fn apply(
         &self,
         props: &Map<String, Value>,
-    ) -> Result<Arc<dyn SdComponent>, ComponentError>
-    {
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let expression = props
             .get("expression")
             .and_then(Value::as_str)

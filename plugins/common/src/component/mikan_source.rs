@@ -26,10 +26,9 @@ pub struct MikanSourceSupplier {}
 
 pub const SUPPLIER: MikanSourceSupplier = MikanSourceSupplier {};
 
-static DATETIME_FORMAT: &[BorrowedFormatItem] =
-    time::macros::format_description!(
-        "[year]-[month]-[day]T[hour]:[minute]:[second][optional [.[subsecond]]]"
-    );
+static DATETIME_FORMAT: &[BorrowedFormatItem] = time::macros::format_description!(
+    "[year]-[month]-[day]T[hour]:[minute]:[second][optional [.[subsecond]]]"
+);
 static TIME_OFFSET: UtcOffset = time::macros::offset!(+8);
 
 impl ComponentSupplier for MikanSourceSupplier {
@@ -152,22 +151,14 @@ impl Source for MikanSource {
 }
 
 impl MikanSource {
-
     fn try_convert_item(item: &Item) -> Result<SourceItem, String> {
-        let title = item
-            .title()
-            .ok_or_else(|| "missing title".to_string())?
-            .to_owned();
+        let title = item.title().ok_or_else(|| "missing title".to_string())?.to_owned();
 
-        let link = Uri::from_str(
-            item.link()
-                .ok_or_else(|| "missing link".to_string())?,
-        )
+        let link = Uri::from_str(item.link().ok_or_else(|| "missing link".to_string())?)
             .map_err(|e| format!("invalid link: {e}"))?;
 
-        let enclosure = item
-            .enclosure()
-            .ok_or_else(|| "missing enclosure".to_string())?;
+        let enclosure =
+            item.enclosure().ok_or_else(|| "missing enclosure".to_string())?;
 
         let download_uri = Uri::from_str(enclosure.url())
             .map_err(|e| format!("invalid enclosure URL: {e}"))?;
@@ -199,11 +190,11 @@ impl MikanSource {
             Ok(item) => Some(item),
             Err(err) => {
                 tracing::warn!(
-                error = %err,
-                title = ?item.title(),
-                link = ?item.link(),
-                "Failed to convert Mikan RSS item"
-            );
+                    error = %err,
+                    title = ?item.title(),
+                    link = ?item.link(),
+                    "Failed to convert Mikan RSS item"
+                );
                 None
             }
         }

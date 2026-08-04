@@ -2,17 +2,17 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 use regex::RegexBuilder;
 use serde::Deserialize;
+use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
     SdComponentMetadata, SourceItemFilter, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
-use source_downloader_sdk::SourceItem;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime};
 
