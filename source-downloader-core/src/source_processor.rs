@@ -2522,7 +2522,7 @@ trait Process {
         // </editor-fold>
         let mut result: Vec<FileContent> = vec![];
 
-        let item_var = p.renamer.item_rename_variables(source_item, item_variables);
+        let item_var = p.renamer.item_rename_variables(source_item, item_variables).await;
 
         let empty_vars = &PatternVariables::new();
         let file_count = relative_files.len();
@@ -2556,7 +2556,8 @@ trait Process {
                 filename_pattern: file_filename_pattern,
                 source_file: x,
             };
-            let content = p.renamer.create_file_content(source_item, raw, &item_var);
+            let content =
+                p.renamer.create_file_content(source_item, raw, &item_var).await;
 
             // <editor-fold desc="Stage using FileContentFilter">
             let file_content_filters = file_strategy
@@ -3428,7 +3429,7 @@ mod test {
                 .collect()
         }
 
-        fn extract_from(
+        async fn extract_from(
             &self,
             _: &SourceItem,
             _: &str,
@@ -3469,7 +3470,7 @@ mod test {
             vec![HashMap::new(); files.len()]
         }
 
-        fn extract_from(
+        async fn extract_from(
             &self,
             _: &SourceItem,
             _: &str,

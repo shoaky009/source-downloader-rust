@@ -944,8 +944,8 @@ mod test {
         );
     }
 
-    #[test]
-    fn variable_replacer_components_are_resolved_and_key_filtered() {
+    #[tokio::test]
+    async fn variable_replacer_components_are_resolved_and_key_filtered() {
         use source_downloader_sdk::SourceItem;
         use std::collections::HashMap;
 
@@ -989,7 +989,7 @@ mod test {
         let mut item = SourceItem::default();
         item.title = "series:01".to_owned();
         item.content_type = "video/mp4".to_owned();
-        let variables = renamer.item_rename_variables(&item, &HashMap::new());
+        let variables = renamer.item_rename_variables(&item, &HashMap::new()).await;
 
         assert_eq!("series：01", variables.variables["item"]["title"]);
         assert_eq!("video/mp4", variables.variables["item"]["contentType"]);

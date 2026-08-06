@@ -111,7 +111,11 @@ impl VariableProvider for RegexVariableProvider {
         vec![HashMap::new(); source_files.len()]
     }
 
-    fn extract_from(&self, _: &SourceItem, text: &str) -> Option<HashMap<String, Value>> {
+    async fn extract_from(
+        &self,
+        _: &SourceItem,
+        text: &str,
+    ) -> Option<HashMap<String, Value>> {
         let variables: HashMap<String, Value> = self
             .regexes
             .iter()

@@ -133,7 +133,7 @@ impl VariableProvider for KeywordIntegration {
         vec![PatternVariables::default(); source_files.len()]
     }
 
-    fn extract_from(
+    async fn extract_from(
         &self,
         _: &SourceItem,
         value: &str,

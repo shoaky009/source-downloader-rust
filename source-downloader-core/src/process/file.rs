@@ -94,7 +94,7 @@ pub struct VariableProcessChain {
 }
 
 impl VariableProcessChain {
-    fn process(
+    async fn process(
         &self,
         item: &SourceItem,
         value: &str,
@@ -108,7 +108,7 @@ impl VariableProcessChain {
                 completed = false;
                 break;
             };
-            let Some(values) = provider.extract_from(item, &accumulated) else {
+            let Some(values) = provider.extract_from(item, &accumulated).await else {
                 completed = false;
                 break;
             };
@@ -274,14 +274,14 @@ struct ExpressionWrapper {
 }
 
 impl Renamer {
-    pub fn create_file_content(
+    pub async fn create_file_content(
         &self,
         source_item: &SourceItem,
-        file: RawFileContent,
+        file: RawFileContent<'_>,
         extra_variables: &RenameVariables,
     ) -> FileContent {
         let mut variables =
-            self.file_rename_variables(source_item, &file, extra_variables);
+            self.file_rename_variables(source_item, &file, extra_variables).await;
         let mut dir_result = self.save_directory_path(&file, &variables);
         let mut filename_result = self.target_filename(&file, &variables);
 
@@ -577,10 +577,10 @@ impl Renamer {
         parse
     }
 
-    fn file_rename_variables(
+    async fn file_rename_variables(
         &self,
         source_item: &SourceItem,
-        file: &RawFileContent,
+        file: &RawFileContent<'_>,
         extra: &RenameVariables,
     ) -> RenameVariables {
         let mut vars = Map::new();
@@ -603,7 +603,7 @@ impl Renamer {
         vars.insert("file".to_owned(), file_obj);
 
         let mut processed_variables =
-            self.process_variables(source_item, &mut vars, true);
+            self.process_variables(source_item, &mut vars, true).await;
         for (key, value) in &extra.processed_variables {
             processed_variables.entry(key.clone()).or_insert_with(|| value.clone());
         }
@@ -643,7 +643,7 @@ impl Renamer {
             .collect()
     }
 
-    fn process_variables(
+    async fn process_variables(
         &self,
         item: &SourceItem,
         variables: &mut Map<String, Value>,
@@ -668,7 +668,7 @@ impl Renamer {
             let Some(Value::String(value)) = value else {
                 continue;
             };
-            for (key, value) in process.process(item, &value, variables) {
+            for (key, value) in process.process(item, &value, variables).await {
                 variables.insert(key.clone(), Value::String(value.clone()));
                 processed.insert(key, value);
             }
@@ -676,7 +676,7 @@ impl Renamer {
         processed
     }
 
-    pub fn item_rename_variables(
+    pub async fn item_rename_variables(
         &self,
         item: &SourceItem,
         item_variables: &PatternVariables,
@@ -700,6 +700,7 @@ impl Renamer {
         variables.insert("item".to_owned(), item_variables);
         let processed_variables = self
             .process_variables(item, &mut variables, false)
+            .await
             .into_iter()
             .map(|(key, value)| (key.clone(), self.apply_replacers(&key, value)))
             .collect();
@@ -759,7 +760,7 @@ mod tests {
             Vec::new()
         }
 
-        fn extract_from(
+        async fn extract_from(
             &self,
             _: &SourceItem,
             value: &str,
@@ -826,8 +827,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn variable_replacers_cover_kotlin_rename_inputs() {
+    #[tokio::test]
+    async fn variable_replacers_cover_kotlin_rename_inputs() {
         let renamer = Renamer {
             variable_replacers: vec![Arc::new(KeyEchoReplacer)],
             ..DEFAULT_RENAMER.clone()
@@ -843,7 +844,8 @@ mod tests {
             "series".to_owned() => "Show".to_owned(),
         };
 
-        let item_variables = renamer.item_rename_variables(&item, &item_pattern_vars);
+        let item_variables =
+            renamer.item_rename_variables(&item, &item_pattern_vars).await;
         assert_eq!(json!("series=Show"), item_variables.variables["series"]);
         assert_eq!(json!("series=Show"), item_variables.variables["vars"]["series"]);
         assert_eq!(
@@ -882,7 +884,7 @@ mod tests {
         };
 
         let file_variables =
-            renamer.file_rename_variables(&item, &raw, &RenameVariables::default());
+            renamer.file_rename_variables(&item, &raw, &RenameVariables::default()).await;
         assert_eq!(json!("episode=01"), file_variables.variables["episode"]);
         assert_eq!(json!("01"), file_variables.variables["file"]["vars"]["episode"]);
         assert_eq!(json!("file.name=episode"), file_variables.variables["file"]["name"]);
@@ -896,8 +898,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn trimming_applies_to_filename_and_directory_segments() {
+    #[tokio::test]
+    async fn trimming_applies_to_filename_and_directory_segments() {
         let variables = hashmap! {
             "title".to_owned() => "abcdefghijklmnop".to_owned(),
         };
@@ -917,17 +919,15 @@ mod tests {
             ..DEFAULT_RENAMER.clone()
         };
 
-        let content = renamer.create_file_content(
-            &SourceItem::default(),
-            raw,
-            &RenameVariables::default(),
-        );
+        let content = renamer
+            .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
+            .await;
 
         assert_eq!("abcdef.txt", content.target_filename);
         assert_eq!(SOURCE_SAVE_PATH.join("abcdefghij"), content.target_save_path);
     }
-    #[test]
-    fn variable_process_steps_see_prior_outputs() {
+    #[tokio::test]
+    async fn variable_process_steps_see_prior_outputs() {
         let output = VariableProcessOutput {
             exclude_keys: std::collections::HashSet::from(["primary".to_owned()]),
             ..Default::default()
@@ -950,24 +950,24 @@ mod tests {
             ..DEFAULT_RENAMER.clone()
         };
 
-        let variables = renamer.item_rename_variables(
-            &SourceItem::default(),
-            &hashmap! { "raw".to_owned() => "seed".to_owned() },
-        );
+        let variables = renamer
+            .item_rename_variables(
+                &SourceItem::default(),
+                &hashmap! { "raw".to_owned() => "seed".to_owned() },
+            )
+            .await;
 
         assert_eq!(json!("seed-one-two"), variables.variables["raw"]);
         assert_eq!("seed-one-two", variables.processed_variables["raw"]);
         assert!(!variables.processed_variables.contains_key("primary"));
     }
 
-    #[test]
-    fn given_empty_should_filename_use_origin_name() {
+    #[tokio::test]
+    async fn given_empty_should_filename_use_origin_name() {
         let raw = RawFileContent::default();
-        let content = DEFAULT_RENAMER.create_file_content(
-            &SourceItem::default(),
-            raw,
-            &RenameVariables::default(),
-        );
+        let content = DEFAULT_RENAMER
+            .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
+            .await;
         assert_eq!("1.txt", content.target_filename);
 
         assert_eq!(
@@ -976,24 +976,22 @@ mod tests {
         );
     }
 
-    #[test]
-    fn given_constant_pattern_should_filename_expected() {
+    #[tokio::test]
+    async fn given_constant_pattern_should_filename_expected() {
         let raw = RawFileContent {
             filename_pattern: &PathPattern::new_cel("3".to_owned()),
             save_path_pattern: &PathPattern::new_cel("2".to_owned()),
             ..Default::default()
         };
-        let content = DEFAULT_RENAMER.create_file_content(
-            &SourceItem::default(),
-            raw,
-            &RenameVariables::default(),
-        );
+        let content = DEFAULT_RENAMER
+            .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
+            .await;
         assert_eq!("3.txt", content.target_filename);
         assert_eq!(SOURCE_SAVE_PATH.join("2/3.txt"), *content.target_path());
     }
 
-    #[test]
-    fn given_vars_pattern_should_filename_expected() {
+    #[tokio::test]
+    async fn given_vars_pattern_should_filename_expected() {
         let raw = RawFileContent {
             filename_pattern: &PathPattern::new_cel("{date} - {title}".to_owned()),
             save_path_pattern: &PathPattern::new_cel("{year}/{work}".to_owned()),
@@ -1005,19 +1003,17 @@ mod tests {
             },
             ..Default::default()
         };
-        let content = DEFAULT_RENAMER.create_file_content(
-            &SourceItem::default(),
-            raw,
-            &RenameVariables::default(),
-        );
+        let content = DEFAULT_RENAMER
+            .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
+            .await;
         assert_eq!(
             SOURCE_SAVE_PATH.join("2022/test/2022-01-01 - 123.txt"),
             *content.target_path()
         )
     }
 
-    #[test]
-    fn given_extra_vars() {
+    #[tokio::test]
+    async fn given_extra_vars() {
         let raw = RawFileContent {
             save_path_pattern: &PathPattern::new_cel("{name}/S{season}".to_owned()),
             variables: &hashmap! {
@@ -1027,13 +1023,14 @@ mod tests {
         };
         let mut extra = RenameVariables::default();
         extra.variables.insert("season".to_string(), json!("01"));
-        let content =
-            DEFAULT_RENAMER.create_file_content(&SourceItem::default(), raw, &extra);
+        let content = DEFAULT_RENAMER
+            .create_file_content(&SourceItem::default(), raw, &extra)
+            .await;
         assert_eq!(SOURCE_SAVE_PATH.join("test").join("S01"), content.target_save_path)
     }
 
-    #[test]
-    fn item_provider_variables_are_available_to_path_patterns() {
+    #[tokio::test]
+    async fn item_provider_variables_are_available_to_path_patterns() {
         let filename_pattern =
             PathPattern::new_cel("{vars.providerTitle}-{providerTitle}.txt".to_owned());
         let raw =
@@ -1041,20 +1038,19 @@ mod tests {
         let provider_variables =
             hashmap! { "providerTitle".to_owned() => "provider-value".to_owned() };
         let item_variables = DEFAULT_RENAMER
-            .item_rename_variables(&SourceItem::default(), &provider_variables);
+            .item_rename_variables(&SourceItem::default(), &provider_variables)
+            .await;
 
-        let content = DEFAULT_RENAMER.create_file_content(
-            &SourceItem::default(),
-            raw,
-            &item_variables,
-        );
+        let content = DEFAULT_RENAMER
+            .create_file_content(&SourceItem::default(), raw, &item_variables)
+            .await;
 
         assert_eq!("provider-value-provider-value.txt", content.target_filename);
         assert_eq!(item_variables.pattern_variables, provider_variables);
     }
 
-    #[test]
-    fn file_provider_variables_are_available_under_file_vars_namespace() {
+    #[tokio::test]
+    async fn file_provider_variables_are_available_under_file_vars_namespace() {
         let filename_pattern =
             PathPattern::new_cel("{file.vars.episode}-{episode}.txt".to_owned());
         let file_variables = hashmap! { "episode".to_owned() => "03".to_owned() };
@@ -1064,17 +1060,15 @@ mod tests {
             ..Default::default()
         };
 
-        let content = DEFAULT_RENAMER.create_file_content(
-            &SourceItem::default(),
-            raw,
-            &RenameVariables::default(),
-        );
+        let content = DEFAULT_RENAMER
+            .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
+            .await;
 
         assert_eq!("03-03.txt", content.target_filename);
     }
 
-    #[test]
-    fn given_extension_pattern_should_expected() {
+    #[tokio::test]
+    async fn given_extension_pattern_should_expected() {
         let raw = RawFileContent {
             filename_pattern: &PathPattern::new_cel("{name} - {season}.mp4".to_owned()),
             variables: &hashmap! {
@@ -1097,12 +1091,12 @@ mod tests {
         let mut extra = RenameVariables::default();
         extra.variables.insert("season".to_string(), json!("01"));
         let content =
-            DEFAULT_RENAMER.create_file_content(&Default::default(), raw, &extra);
+            DEFAULT_RENAMER.create_file_content(&Default::default(), raw, &extra).await;
         assert_eq!("test - 01.mp4", content.target_filename);
     }
 
-    #[test]
-    fn test_variable_error_given_stay_strategy() {
+    #[tokio::test]
+    async fn test_variable_error_given_stay_strategy() {
         let mut raw = RawFileContent {
             filename_pattern: &PathPattern::new_cel("{name} - {season}".to_owned()),
             save_path_pattern: &PathPattern::new_cel("{name}/S{season}".to_owned()),
@@ -1111,27 +1105,27 @@ mod tests {
             },
             ..Default::default()
         };
-        let content = DEFAULT_RENAMER.create_file_content(
-            &SourceItem::default(),
-            raw.clone(),
-            &RenameVariables::default(),
-        );
+        let content = DEFAULT_RENAMER
+            .create_file_content(
+                &SourceItem::default(),
+                raw.clone(),
+                &RenameVariables::default(),
+            )
+            .await;
         assert_eq!(content.file_download_path, *content.target_path());
         assert_eq!(2, content.errors.len());
 
         // 1 depth
         let new_pattern = PathPattern::new_cel("S{season}".to_owned());
         raw.save_path_pattern = &new_pattern;
-        let content = DEFAULT_RENAMER.create_file_content(
-            &SourceItem::default(),
-            raw,
-            &RenameVariables::default(),
-        );
+        let content = DEFAULT_RENAMER
+            .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
+            .await;
         assert_eq!(content.file_download_path, *content.target_path());
     }
 
-    #[test]
-    fn test_variable_error_given_original_strategy() {
+    #[tokio::test]
+    async fn test_variable_error_given_original_strategy() {
         let raw = RawFileContent {
             filename_pattern: &PathPattern::new_cel("{name} - {season}".to_owned()),
             save_path_pattern: &PathPattern::new_cel("S{season}".to_owned()),
@@ -1145,18 +1139,16 @@ mod tests {
             ..DEFAULT_RENAMER.clone()
         };
 
-        let content = renamer.create_file_content(
-            &SourceItem::default(),
-            raw,
-            &RenameVariables::default(),
-        );
+        let content = renamer
+            .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
+            .await;
 
         assert_eq!(SOURCE_SAVE_PATH.join("S01").join("1.txt"), *content.target_path());
         assert_eq!(1, content.errors.len());
     }
 
-    #[test]
-    fn test_variable_error_given_pattern_strategy() {
+    #[tokio::test]
+    async fn test_variable_error_given_pattern_strategy() {
         let raw = RawFileContent {
             filename_pattern: &PathPattern::new_cel("{name} - {season}".to_owned()),
             save_path_pattern: &PathPattern::new_cel("{name}/S{season}".to_owned()),
@@ -1167,19 +1159,17 @@ mod tests {
         };
         let renamer =
             Renamer { variable_error_strategy: Pattern, ..DEFAULT_RENAMER.clone() };
-        let content = renamer.create_file_content(
-            &SourceItem::default(),
-            raw,
-            &RenameVariables::default(),
-        );
+        let content = renamer
+            .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
+            .await;
         assert_eq!(
             SOURCE_SAVE_PATH.join("{name}").join("S01").join("{name} - 01.txt"),
             *content.target_path()
         );
     }
 
-    #[test]
-    fn given_unresolved_filename_with_dir_item() {
+    #[tokio::test]
+    async fn given_unresolved_filename_with_dir_item() {
         let raw = RawFileContent {
             save_path_pattern: &PathPattern::new_cel("{title}/S{season}".to_owned()),
             filename_pattern: &PathPattern::new_cel(
@@ -1201,19 +1191,17 @@ mod tests {
             ..DEFAULT_RENAMER.clone()
         };
 
-        let content = renamer.create_file_content(
-            &SourceItem::default(),
-            raw,
-            &RenameVariables::default(),
-        );
+        let content = renamer
+            .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
+            .await;
 
         // 预期路径: test 01/S01/unresolved/1.txt
         let path = PathBuf::from_iter(["test 01", "S01", "unresolved", "1.txt"]);
         assert_eq!(SOURCE_SAVE_PATH.join(path), *content.target_path());
     }
 
-    #[test]
-    fn given_unresolved_save_path_with_dir_item() {
+    #[tokio::test]
+    async fn given_unresolved_save_path_with_dir_item() {
         let raw = RawFileContent {
             source_file: SourceFile {
                 path: PathBuf::from_iter(["FATE", "AAAAA.mp4"]),
@@ -1233,19 +1221,17 @@ mod tests {
             ..DEFAULT_RENAMER.clone()
         };
 
-        let content = renamer.create_file_content(
-            &SourceItem::default(),
-            raw,
-            &RenameVariables::default(),
-        );
+        let content = renamer
+            .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
+            .await;
 
         // {title} 缺失，进入 unresolved 分支
         let path = PathBuf::from_iter(["unresolved", "FATE", "S01E02.mp4"]);
         assert_eq!(SOURCE_SAVE_PATH.join(path), *content.target_path());
     }
 
-    #[test]
-    fn given_both_unresolved_with_dir_item() {
+    #[tokio::test]
+    async fn given_both_unresolved_with_dir_item() {
         let raw = RawFileContent {
             source_file: SourceFile {
                 path: PathBuf::from_iter(["FATE", "AAAAA.mp4"]),
@@ -1265,11 +1251,9 @@ mod tests {
             ..DEFAULT_RENAMER.clone()
         };
 
-        let content = renamer.create_file_content(
-            &SourceItem::default(),
-            raw,
-            &RenameVariables::default(),
-        );
+        let content = renamer
+            .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
+            .await;
 
         // 全部缺失，回退到原始路径
         let path = PathBuf::from_iter(["unresolved", "FATE", "AAAAA.mp4"]);
@@ -1347,13 +1331,13 @@ mod tests {
     //     assert_eq!("111-BD", PathBuf::from(content.target_filename).file_stem().unwrap().to_str().unwrap());
     // }
 
-    #[test]
-    fn given_attr_variables() {
+    #[tokio::test]
+    async fn given_attr_variables() {
         let item = SourceItem {
             attrs: serde_json::from_str(r#"{"creatorId": "Idk111"}"#).unwrap(),
             ..Default::default()
         };
-        let item_vars = DEFAULT_RENAMER.item_rename_variables(&item, &hashmap! {});
+        let item_vars = DEFAULT_RENAMER.item_rename_variables(&item, &hashmap! {}).await;
         let raw = RawFileContent {
             variables: &hashmap! {
                 "date".to_owned() => "2022-01-01".to_owned(),
@@ -1374,14 +1358,15 @@ mod tests {
             ..Default::default()
         };
 
-        let content =
-            DEFAULT_RENAMER.create_file_content(&SourceItem::default(), raw, &item_vars);
+        let content = DEFAULT_RENAMER
+            .create_file_content(&SourceItem::default(), raw, &item_vars)
+            .await;
         let expected = SOURCE_SAVE_PATH.join("Idk111").join("2022-01-01").join("2.txt");
         assert_eq!(expected, *content.target_path());
     }
 
-    #[test]
-    fn given_origin_layout_pattern() {
+    #[tokio::test]
+    async fn given_origin_layout_pattern() {
         // let renamer = Renamer {
         //     variable_replacers: vec![Box::new(WindowsPathReplacer)],
         //     ..renamer().clone()
@@ -1396,18 +1381,16 @@ mod tests {
             ),
             ..Default::default()
         };
-        let content = DEFAULT_RENAMER.create_file_content(
-            &SourceItem::default(),
-            raw,
-            &RenameVariables::default(),
-        );
+        let content = DEFAULT_RENAMER
+            .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
+            .await;
         let expected =
             SOURCE_SAVE_PATH.join("wp-test").join("mp3").join("origin").join("1.mp3");
         assert_eq!(expected, *content.target_path());
     }
 
-    #[test]
-    fn given_dot_filename_should_no_extension() {
+    #[tokio::test]
+    async fn given_dot_filename_should_no_extension() {
         let raw = RawFileContent {
             source_file: SourceFile {
                 path: PathBuf::from_iter([
@@ -1421,11 +1404,9 @@ mod tests {
             ..Default::default()
         };
 
-        let content = DEFAULT_RENAMER.create_file_content(
-            &SourceItem::default(),
-            raw,
-            &RenameVariables::default(),
-        );
+        let content = DEFAULT_RENAMER
+            .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
+            .await;
         assert_eq!("test", content.target_filename);
     }
 }

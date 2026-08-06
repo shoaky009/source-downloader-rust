@@ -66,7 +66,11 @@ impl VariableProvider for SequenceVariableProvider {
             .collect()
     }
 
-    fn extract_from(&self, _: &SourceItem, _: &str) -> Option<HashMap<String, Value>> {
+    async fn extract_from(
+        &self,
+        _: &SourceItem,
+        _: &str,
+    ) -> Option<HashMap<String, Value>> {
         None
     }
 

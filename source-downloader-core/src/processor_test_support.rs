@@ -471,7 +471,7 @@ pub mod test_support {
                 item_variables: &PatternVariables,
                 files: &[SourceFile],
             ) -> Vec<PatternVariables>;
-            fn extract_from(&self, item: &SourceItem, value: &str) -> Option<std::collections::HashMap<String, Value>>;
+            async fn extract_from(&self, item: &SourceItem, value: &str) -> Option<std::collections::HashMap<String, Value>>;
             fn primary_variable_name(&self) -> Option<String>;
         }
         #[async_trait]
