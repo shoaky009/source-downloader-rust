@@ -1045,7 +1045,7 @@ impl SourceProcessor {
         let mut finished = 0;
 
         for mut content in contents {
-            match async_downloader.is_finished(&content.item_content.source_item) {
+            match async_downloader.is_finished(&content.item_content.source_item).await {
                 None => {
                     content.status = ProcessingStatus::DownloadFailed;
                     content.updated_at = Some(OffsetDateTime::now_utc());
@@ -3318,8 +3318,9 @@ mod test {
         }
     }
 
+    #[async_trait]
     impl AsyncDownloader for PointerTestComponent {
-        fn is_finished(&self, _: &SourceItem) -> Option<bool> {
+        async fn is_finished(&self, _: &SourceItem) -> Option<bool> {
             Some(true)
         }
     }
@@ -4862,8 +4863,9 @@ mod test {
         }
     }
 
+    #[async_trait]
     impl AsyncDownloader for NeverFinishedDownloader {
-        fn is_finished(&self, _: &SourceItem) -> Option<bool> {
+        async fn is_finished(&self, _: &SourceItem) -> Option<bool> {
             Some(false)
         }
     }
@@ -4899,8 +4901,9 @@ mod test {
         }
     }
 
+    #[async_trait]
     impl AsyncDownloader for MissingDownloadStateDownloader {
-        fn is_finished(&self, _: &SourceItem) -> Option<bool> {
+        async fn is_finished(&self, _: &SourceItem) -> Option<bool> {
             None
         }
     }

@@ -342,8 +342,9 @@ pub trait Downloader: SdComponent {
     ) -> Result<(), ProcessingError>;
 }
 
+#[async_trait]
 pub trait AsyncDownloader: Downloader {
-    fn is_finished(&self, item: &SourceItem) -> Option<bool>;
+    async fn is_finished(&self, item: &SourceItem) -> Option<bool>;
 }
 
 #[async_trait]
