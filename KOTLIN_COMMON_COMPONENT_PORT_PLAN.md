@@ -31,7 +31,7 @@ Rust SDK 已有 `ComponentSupplier`、`Source`、`ItemFileResolver`、`Downloade
 3. **Resolver 已返回错误**：`ItemFileResolver::resolve_files` 已改为 `Result<Vec<SourceFile>, ProcessingError>`，调用方已迁移；HTTP 和解析失败必须继续向上传播，不能返回空列表伪装成功。
 4. **变量提取已异步化**：`VariableProvider::extract_from` 及变量处理链已改为 async，可直接执行 Anime/BgmTv/Chii/DLsite/TMDB/Season 的 HTTP 查询，不得阻塞 Tokio runtime。
 5. **元数据暂缓**：本轮 Supplier 的 `get_metadata()` 继续返回 `None`，不实现 JSON Schema 或描述信息。
-6. **配置统一 kebab-case**：Rust 所有配置键都使用 kebab-case，不保留 camelCase 特例；`onlyHighResolution` 使用 `only-high-resolution`。配置结构使用 `serde(rename_all = "kebab-case")`，Supplier 不堆叠手工 `Value` 提取。
+6. **配置统一 kebab-case**：Rust 所有配置键都使用 kebab-case，不保留 camelCase 特例；`onlyHighResolution` 使用 `only-high-resolution`。少量标量配置沿用现有 Supplier 风格直接从 `props` 读取并校验；只有嵌套、字段较多或需要复用整体配置时才定义 `serde` 配置结构，避免为每个组件制造低收益类型。
 
 ## 3. HTTP 模块设计与 Mock 策略
 
@@ -63,9 +63,9 @@ Bilibili、Fanbox、Patreon、Pixiv（以及 RSS 的 latest pointer 语义）必
 
 1. 已完成第 2.2 节的 async/Result 接口迁移；组合规则和元数据明确暂缓。
 2. 已建立 `plugins/common/src/http.rs`：统一构建启用 cookie store、10 秒超时的 `reqwest::Client`，集中执行 `error_for_status`，错误包含操作、方法、URL，并按连接/超时/429/408/5xx 分类可重试语义。
-3. 已建立 `component::config::parse` 和 `serde(rename_all = "kebab-case", deny_unknown_fields)` 配置模式；fixture 证明 camelCase 不会被静默接受。
+3. 已固定配置约定：少量标量直接从 `props` 读取并返回带键名的 `ComponentError`；复杂配置使用 `serde(rename_all = "kebab-case", deny_unknown_fields)`。不建立统一配置 parser，也不强制每个 Supplier 定义配置结构。
 4. 已选择 `wiremock` 作为测试依赖并建立真实 HTTP 请求匹配；`test_support::fetch_and_commit` 固定 Source/Pointer fetch→update→dump 的单轮操作，具体 Source 在阶段 D 使用该 helper 完成两轮恢复验证。
-5. `component/mod.rs` 是实现注册入口，`CommonPlugin::get_component_suppliers()` 是运行时注册入口；每个后续模块必须在完成时同时加入两处并测试构造。现有 Mikan Source 已迁移到共享 Client、统一错误映射和配置解析，移除了请求路径中的临时 Client。
+5. `component/mod.rs` 是实现注册入口，`CommonPlugin::get_component_suppliers()` 是运行时注册入口；每个后续模块必须在完成时同时加入两处并测试构造。现有 Mikan Source 已迁移到共享 Client和统一错误映射，简单配置仍沿用直接读取方式，移除了请求路径中的临时 Client。
 
 ### 阶段 B：纯逻辑组件
 
@@ -310,7 +310,7 @@ Bilibili、Fanbox、Patreon、Pixiv（以及 RSS 的 latest pointer 语义）必
 
 每个组件完成时必须同时满足：
 
-1. **Supplier**：正确 `ComponentType`、support-no-props、kebab-case 配置/default、非法配置返回 `ComponentError`；`get_metadata()` 暂时返回 `None`。
+1. **Supplier**：正确 `ComponentType`、support-no-props、kebab-case 配置/default、非法配置返回 `ComponentError`；少量配置直接读取，复杂配置才定义结构；`get_metadata()` 暂时返回 `None`。
 2. **行为**：Kotlin fixture 驱动的单元/集成测试覆盖正常、边界、空结果和错误。
 3. **HTTP**：只出现 reqwest；生产 Client 可复用；base URL 可注入；MockServer 校验 method/path/query/header/body/status。
 4. **Pointer Source**：默认 Pointer、dump/parse/update、两轮 fetch、分页、limit、多 target、恢复执行全部通过。

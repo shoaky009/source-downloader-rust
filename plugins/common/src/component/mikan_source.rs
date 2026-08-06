@@ -40,11 +40,24 @@ impl ComponentSupplier for MikanSourceSupplier {
         &self,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let config: MikanSourceConfig = super::config::parse(props, "Mikan source")?;
+        let url = props
+            .get("url")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ComponentError::new("Missing or invalid 'url' property"))?
+            .to_owned();
+        let all_episode = props
+            .get("all-episode")
+            .map(|value| {
+                value
+                    .as_bool()
+                    .ok_or_else(|| ComponentError::new("Invalid 'all-episode' property"))
+            })
+            .transpose()?
+            .unwrap_or(false);
         let http_client = http::build_client()?;
         Ok(Arc::new(MikanSource {
-            url: config.url,
-            all_episode: config.all_episode,
+            url,
+            all_episode,
             mikan_client: Arc::new(MikanClient::new(None, http_client.clone())),
             http_client,
         }))
@@ -53,14 +66,6 @@ impl ComponentSupplier for MikanSourceSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-struct MikanSourceConfig {
-    url: String,
-    #[serde(default)]
-    all_episode: bool,
 }
 
 #[derive(SdComponent)]
