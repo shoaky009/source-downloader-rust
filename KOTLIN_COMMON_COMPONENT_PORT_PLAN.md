@@ -59,13 +59,13 @@ Bilibili、Fanbox、Patreon、Pixiv（以及 RSS 的 latest pointer 语义）必
 
 ## 4. 分阶段实施顺序
 
-### 阶段 A：SDK seam 与基础设施
+### 阶段 A：SDK seam 与基础设施（已完成）
 
 1. 已完成第 2.2 节的 async/Result 接口迁移；组合规则和元数据明确暂缓。
-2. 建立 `plugins/common/src/http`：共享 `reqwest::Client` 构建、base URL、header/cookie、错误映射。
-3. 建立统一的 kebab-case Supplier 配置解析模式，但不增加元数据生成抽象。
-4. 建立 MockServer 测试基建及 Source/Pointer 两轮迭代 helper。
-5. 为所有新模块预留明确注册点；每完成一个模块立即注册并做配置构造测试。
+2. 已建立 `plugins/common/src/http.rs`：统一构建启用 cookie store、10 秒超时的 `reqwest::Client`，集中执行 `error_for_status`，错误包含操作、方法、URL，并按连接/超时/429/408/5xx 分类可重试语义。
+3. 已建立 `component::config::parse` 和 `serde(rename_all = "kebab-case", deny_unknown_fields)` 配置模式；fixture 证明 camelCase 不会被静默接受。
+4. 已选择 `wiremock` 作为测试依赖并建立真实 HTTP 请求匹配；`test_support::fetch_and_commit` 固定 Source/Pointer fetch→update→dump 的单轮操作，具体 Source 在阶段 D 使用该 helper 完成两轮恢复验证。
+5. `component/mod.rs` 是实现注册入口，`CommonPlugin::get_component_suppliers()` 是运行时注册入口；每个后续模块必须在完成时同时加入两处并测试构造。现有 Mikan Source 已迁移到共享 Client、统一错误映射和配置解析，移除了请求路径中的临时 Client。
 
 ### 阶段 B：纯逻辑组件
 

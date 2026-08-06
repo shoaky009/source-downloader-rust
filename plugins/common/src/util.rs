@@ -101,7 +101,7 @@ impl<'a, T: Send + 'a, U: Send + 'a> AsyncExpandIterator<'a, T, U> {
             }
 
             // 检查是否达到了 limit
-            if self.current_expanded.len() > 0 {
+            if !self.current_expanded.is_empty() {
                 continue;
             }
         }
@@ -177,7 +177,7 @@ impl<T, U> Iterator for ExpandIterator<T, U> {
             }
 
             // 检查是否达到了 limit
-            if self.current_expanded.len() > 0 {
+            if !self.current_expanded.is_empty() {
                 continue;
             }
         }

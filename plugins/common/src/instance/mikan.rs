@@ -3,11 +3,11 @@ use reqwest::{Client, Url};
 use scraper::{Html, Selector};
 use source_downloader_sdk::http::header;
 use std::sync::{Arc, LazyLock};
-use std::time::Duration;
 
 // 常量定义
 const TOKEN_COOKIE: &str = ".AspNetCore.Identity.Application";
 
+#[allow(dead_code)]
 static BANGUMI_CACHE: LazyLock<Cache<UrlKey, BangumiPageInfo>> =
     LazyLock::new(|| Cache::builder().max_capacity(500).build());
 static EPISODE_CACHE: LazyLock<Cache<UrlKey, EpisodePageInfo>> =
@@ -25,11 +25,13 @@ struct UrlKey {
     token: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct BangumiPageInfo {
     pub bgm_tv_subject_id: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct EpisodePageInfo {
     pub bangumi_title: Option<String>,
@@ -38,23 +40,19 @@ pub struct EpisodePageInfo {
 }
 
 impl MikanClient {
-    pub fn new(token: Option<String>) -> Self {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .unwrap_or_default();
-
-        Self { token, http_client: client }
+    pub fn new(token: Option<String>, http_client: Client) -> Self {
+        Self { token, http_client }
     }
 
     /// 获取 Bangumi 页面信息
+    #[allow(dead_code)]
     pub async fn get_bangumi_page_info(
         &self,
         url: &str,
     ) -> Result<BangumiPageInfo, Arc<reqwest::Error>> {
         let key = UrlKey { url: url.to_string(), token: self.token.clone() };
         let future = self.fetch_bangumi_page_info(key.url.clone());
-        Ok(BANGUMI_CACHE.try_get_with(key, future).await?)
+        BANGUMI_CACHE.try_get_with(key, future).await
     }
 
     /// 获取 Episode 页面信息
@@ -75,6 +73,7 @@ impl MikanClient {
 
     // --- 静态抓取逻辑 (Private Static Methods) ---
 
+    #[allow(dead_code)]
     async fn fetch_bangumi_page_info(
         &self,
         url_str: String,
@@ -85,10 +84,11 @@ impl MikanClient {
         let selector = Selector::parse(".bangumi-info a").unwrap();
         let subject_id = document.select(&selector).find_map(|element| {
             let text = element.text().collect::<String>();
-            if !text.is_empty() && text.contains("/subject/") {
-                if let Ok(uri) = Url::parse(&text) {
-                    return uri.path_segments()?.last().map(|s| s.to_string());
-                }
+            if !text.is_empty()
+                && text.contains("/subject/")
+                && let Ok(uri) = Url::parse(&text)
+            {
+                return uri.path_segments()?.next_back().map(str::to_owned);
             }
             None
         });

@@ -9,10 +9,14 @@ serde = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
 rss-for-mikan = { workspace = true }
 time = { workspace = true }
-reqwest = { workspace = true, features = ["rustls-tls", "json", "system-proxy", "http2", "charset"] }
+reqwest = { workspace = true, features = ["rustls-tls", "json", "system-proxy", "http2", "charset", "cookies"] }
 moka = { workspace = true, features = ["future"] }
 scraper = { workspace = true }
 parking_lot = { workspace = true }
+
+[dev-dependencies]
+wiremock = "0.6"
+tokio = { workspace = true }
 
 #[lib]
 #crate-type = ["dylib", "rlib"]

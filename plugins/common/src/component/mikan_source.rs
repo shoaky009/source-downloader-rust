@@ -1,7 +1,7 @@
+use crate::http;
 use crate::instance::mikan::MikanClient;
 use crate::util;
 use crate::util::{AsyncExpandIterator, ExpandHandler, IterationResult};
-use reqwest::StatusCode;
 use rss_for_mikan::{Channel, Item};
 use serde::{Deserialize, Serialize};
 use source_downloader_sdk::async_trait::async_trait;
@@ -40,30 +40,27 @@ impl ComponentSupplier for MikanSourceSupplier {
         &self,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let url = props
-            .get("url")
-            .ok_or_else(|| ComponentError::from("Missing 'url' property"))?
-            .as_str();
-        if url.is_none() {
-            return Err(ComponentError::from("Invalid 'url' property"));
-        }
-        let url = url.unwrap().to_string();
-        let all_episode =
-            props.get("all-episode").map(|v| v.as_bool()).flatten().unwrap_or(false);
+        let config: MikanSourceConfig = super::config::parse(props, "Mikan source")?;
+        let http_client = http::build_client()?;
         Ok(Arc::new(MikanSource {
-            url,
-            all_episode,
-            mikan_client: Arc::new(MikanClient::new(None)),
-            http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
-                .build()
-                .expect("Failed to build client"),
+            url: config.url,
+            all_episode: config.all_episode,
+            mikan_client: Arc::new(MikanClient::new(None, http_client.clone())),
+            http_client,
         }))
     }
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct MikanSourceConfig {
+    url: String,
+    #[serde(default)]
+    all_episode: bool,
 }
 
 #[derive(SdComponent)]
@@ -97,15 +94,16 @@ impl Source for MikanSource {
         source_pointer: &'pointer dyn SourcePointer,
         limit: u32,
     ) -> Result<Vec<PointedItem>, ProcessingError> {
-        let content = self
-            .http_client
-            .get(self.url.as_str())
-            .send()
-            .await
-            .map_err(|e| reqwest_error(&e, "Failed to fetch RSS"))?
+        let response = http::execute(
+            &self.http_client,
+            self.http_client.get(self.url.as_str()),
+            "Fetch Mikan RSS",
+        )
+        .await?;
+        let content = response
             .bytes()
             .await
-            .map_err(|e| reqwest_error(&e, "Failed to read bytes"))?;
+            .map_err(|error| http::map_error(error, "Read Mikan RSS response body"))?;
 
         let channel = Channel::read_from(&content[..]).map_err(|e| {
             ProcessingError::non_retryable(format!("Failed to parse RSS, {}", e))
@@ -129,8 +127,11 @@ impl Source for MikanSource {
             source_pointer.as_any().downcast_ref::<MikanSourcePointer>().ok_or_else(
                 || ProcessingError::non_retryable("Invalid Mikan source pointer"),
             )?;
-        let handler =
-            MikanItemExpandHandler { client: self.mikan_client.clone(), pointer };
+        let handler = MikanItemExpandHandler {
+            client: self.mikan_client.clone(),
+            http_client: self.http_client.clone(),
+            pointer,
+        };
         let expanded_items = AsyncExpandIterator::new(items, limit, Box::new(handler))
             .collect_all()
             .await?;
@@ -203,6 +204,7 @@ impl MikanSource {
 
 struct MikanItemExpandHandler<'a> {
     client: Arc<MikanClient>,
+    http_client: reqwest::Client,
     pointer: &'a MikanSourcePointer,
 }
 
@@ -235,17 +237,20 @@ impl ExpandHandler<SourceItem, PointedItem> for MikanItemExpandHandler<'_> {
         let bangumi_id = bangumi_id.unwrap();
         let subgroup_id = subgroup_id.unwrap();
 
-        let content = reqwest::get(&fansub_rss)
-            .await
-            .map_err(|e| ProcessingError::retryable(e.to_string()))?
-            .bytes()
-            .await
-            .map_err(|e| ProcessingError::retryable(e.to_string()))?;
+        let response = http::execute(
+            &self.http_client,
+            self.http_client.get(&fansub_rss),
+            "Fetch Mikan fansub RSS",
+        )
+        .await?;
+        let content = response.bytes().await.map_err(|error| {
+            http::map_error(error, "Read Mikan fansub RSS response body")
+        })?;
 
         let channel = Channel::read_from(&content[..])
             .map_err(|e| ProcessingError::non_retryable(e.to_string()))?;
         let mut fansub_items: Vec<SourceItem> =
-            channel.items.iter().filter_map(|i| MikanSource::convert_item(i)).collect();
+            channel.items.iter().filter_map(MikanSource::convert_item).collect();
         fansub_items.sort_by(|a, b| a.datetime.cmp(&b.datetime));
         if !fansub_items.contains(&item) {
             tracing::debug!("Item不在RSS列表中: {:?}", item);
@@ -273,28 +278,6 @@ impl ExpandHandler<SourceItem, PointedItem> for MikanItemExpandHandler<'_> {
 
         Ok(IterationResult { items: result, has_next: false })
     }
-}
-
-pub fn reqwest_error(e: &reqwest::Error, prefix: &str) -> ProcessingError {
-    if e.is_timeout() || e.is_connect() {
-        return ProcessingError::retryable(format!("{}, {}", prefix, e));
-    }
-
-    if let Some(status) = e.status() {
-        let retry = matches!(
-            status,
-            StatusCode::REQUEST_TIMEOUT
-                | StatusCode::TOO_MANY_REQUESTS
-                | StatusCode::INTERNAL_SERVER_ERROR
-                | StatusCode::BAD_GATEWAY
-                | StatusCode::SERVICE_UNAVAILABLE
-                | StatusCode::GATEWAY_TIMEOUT
-        );
-        if retry {
-            return ProcessingError::retryable(format!("{}, {}", prefix, e));
-        }
-    }
-    ProcessingError::non_retryable(format!("{}, {}", prefix, e))
 }
 
 #[derive(Debug)]

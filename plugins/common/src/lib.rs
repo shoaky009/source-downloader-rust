@@ -1,5 +1,8 @@
 mod component;
+mod http;
 mod instance;
+#[cfg(test)]
+mod test_support;
 pub mod util;
 
 use crate::component::mikan_source;
