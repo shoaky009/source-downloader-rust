@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, SdComponent,
-    SdComponentMetadata, SourceFile,
+    ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, ProcessingError,
+    SdComponent, SdComponentMetadata, SourceFile,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use source_downloader_sdk::{SdComponent, SourceItem};
@@ -45,7 +45,10 @@ impl Display for UrlFileResolver {
 
 #[async_trait]
 impl ItemFileResolver for UrlFileResolver {
-    async fn resolve_files(&self, source_item: &SourceItem) -> Vec<SourceFile> {
+    async fn resolve_files(
+        &self,
+        source_item: &SourceItem,
+    ) -> Result<Vec<SourceFile>, ProcessingError> {
         let raw_path = source_item.download_uri.path();
         let filename = url::Url::parse(&source_item.download_uri.to_string())
             .ok()
@@ -56,6 +59,6 @@ impl ItemFileResolver for UrlFileResolver {
             .or_else(|| raw_path.rsplit('/').next().map(str::to_owned))
             .filter(|filename| !filename.trim().is_empty())
             .unwrap_or_else(|| source_item.hashing());
-        vec![SourceFile::new(PathBuf::from(filename))]
+        Ok(vec![SourceFile::new(PathBuf::from(filename))])
     }
 }

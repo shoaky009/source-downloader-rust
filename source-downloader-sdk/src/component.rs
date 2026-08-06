@@ -363,10 +363,12 @@ pub trait Source: SdComponent {
         None
     }
 }
-
 #[async_trait]
 pub trait ItemFileResolver: SdComponent {
-    async fn resolve_files(&self, item: &SourceItem) -> Vec<SourceFile>;
+    async fn resolve_files(
+        &self,
+        item: &SourceItem,
+    ) -> Result<Vec<SourceFile>, ProcessingError>;
 }
 
 pub trait FileMover: SdComponent {

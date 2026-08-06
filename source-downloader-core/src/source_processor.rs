@@ -2443,7 +2443,7 @@ trait Process {
         let original_files = p
             .item_file_resolver
             .resolve_files(source_item)
-            .await
+            .await?
             .into_iter()
             .filter(|x| p.options.source_file_filters.iter().all(|y| y.filter(x)))
             .collect::<Vec<_>>();
@@ -3224,7 +3224,10 @@ mod test {
 
     #[async_trait]
     impl ItemFileResolver for PointerTestComponent {
-        async fn resolve_files(&self, item: &SourceItem) -> Vec<SourceFile> {
+        async fn resolve_files(
+            &self,
+            item: &SourceItem,
+        ) -> Result<Vec<SourceFile>, ProcessingError> {
             let sequence = item
                 .title
                 .strip_prefix("item-")
@@ -3240,18 +3243,20 @@ mod test {
             }
             if self.invalid_item == Some(sequence) {
                 let path = PathBuf::from(format!("{sequence}.txt"));
-                return vec![SourceFile::new(path.clone()), SourceFile::new(path)];
+                return Ok(vec![SourceFile::new(path.clone()), SourceFile::new(path)]);
             }
             if let Some(path) = &self.resolved_file {
-                return vec![SourceFile {
+                return Ok(vec![SourceFile {
                     tags: self.resolved_file_tags.clone(),
                     ..SourceFile::new(path.clone())
-                }];
+                }]);
             }
             if self.unique_files {
-                return vec![SourceFile::new(PathBuf::from(format!("{sequence}.txt")))];
+                return Ok(vec![SourceFile::new(PathBuf::from(format!(
+                    "{sequence}.txt"
+                )))]);
             }
-            Vec::new()
+            Ok(Vec::new())
         }
     }
 

@@ -8,7 +8,8 @@ use serde::Deserialize;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
     ComponentError, ComponentRootType, ComponentSupplier, ComponentType, DownloadTask,
-    Downloader, ItemFileResolver, SdComponent, SdComponentMetadata, SourceFile,
+    Downloader, ItemFileResolver, ProcessingError, SdComponent, SdComponentMetadata,
+    SourceFile,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::fmt::{Debug, Display, Formatter};
@@ -285,7 +286,10 @@ impl Display for CompositeItemFileResolverComponent {
 
 #[async_trait]
 impl ItemFileResolver for CompositeItemFileResolverComponent {
-    async fn resolve_files(&self, source_item: &SourceItem) -> Vec<SourceFile> {
+    async fn resolve_files(
+        &self,
+        source_item: &SourceItem,
+    ) -> Result<Vec<SourceFile>, ProcessingError> {
         self.0.selector.select(source_item).resolve_files(source_item).await
     }
 }

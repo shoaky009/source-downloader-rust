@@ -3,7 +3,8 @@ use serde::Deserialize;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, EmptyPointer, ItemFileResolver,
-    PointedItem, SdComponent, SdComponentMetadata, Source, SourceFile, SourcePointer,
+    PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourceFile,
+    SourcePointer,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::fmt::{Debug, Display, Formatter};
@@ -155,12 +156,16 @@ impl Source for FixedSource {
 
 #[async_trait]
 impl ItemFileResolver for FixedSource {
-    async fn resolve_files(&self, source_item: &SourceItem) -> Vec<SourceFile> {
-        self.content
+    async fn resolve_files(
+        &self,
+        source_item: &SourceItem,
+    ) -> Result<Vec<SourceFile>, ProcessingError> {
+        Ok(self
+            .content
             .iter()
             .find(|content| content.item == *source_item)
             .map(|content| content.files.clone())
-            .unwrap_or_default()
+            .unwrap_or_default())
     }
 }
 

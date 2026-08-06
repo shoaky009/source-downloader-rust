@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use serde_json::{Map, Value};
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, SdComponent,
-    SdComponentMetadata, SourceFile,
+    ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, ProcessingError,
+    SdComponent, SdComponentMetadata, SourceFile,
 };
 use source_downloader_sdk::{SdComponent, SourceItem};
 use std::fmt::{Display, Formatter};
@@ -47,13 +47,16 @@ impl Display for SystemFileResolver {
 
 #[async_trait]
 impl ItemFileResolver for SystemFileResolver {
-    async fn resolve_files(&self, source_item: &SourceItem) -> Vec<SourceFile> {
+    async fn resolve_files(
+        &self,
+        source_item: &SourceItem,
+    ) -> Result<Vec<SourceFile>, ProcessingError> {
         let path = Url::parse(&source_item.download_uri.to_string())
             .ok()
             .and_then(|url| url.to_file_path().ok())
             .unwrap_or_else(|| PathBuf::from(source_item.download_uri.to_string()));
         if !path.exists() || !path.is_dir() {
-            return vec![SourceFile::new(path)];
+            return Ok(vec![SourceFile::new(path)]);
         }
 
         let mut entries: Vec<SourceFile> = WalkDir::new(path)
@@ -63,7 +66,7 @@ impl ItemFileResolver for SystemFileResolver {
             .map(|entry| SourceFile::new(entry.into_path()))
             .collect();
         entries.sort_by(|left, right| left.path.cmp(&right.path));
-        entries
+        Ok(entries)
     }
 }
 
@@ -87,7 +90,7 @@ mod tests {
         let item = SourceItem { download_uri, ..Default::default() };
 
         let resolver = INSTANCE;
-        let result = resolver.resolve_files(&item).await;
+        let result = resolver.resolve_files(&item).await.unwrap();
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, file_path);
@@ -117,7 +120,7 @@ mod tests {
         let item = SourceItem { download_uri, ..Default::default() };
 
         let resolver = INSTANCE;
-        let result = resolver.resolve_files(&item).await;
+        let result = resolver.resolve_files(&item).await.unwrap();
 
         // 验证结果数量
         assert_eq!(result.len(), 2);
@@ -143,7 +146,7 @@ mod tests {
             .unwrap();
         let item = SourceItem { download_uri, ..Default::default() };
         let resolver = INSTANCE;
-        let result = resolver.resolve_files(&item).await;
+        let result = resolver.resolve_files(&item).await.unwrap();
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, file_path);
@@ -157,7 +160,7 @@ mod tests {
         let item = SourceItem { download_uri, ..Default::default() };
 
         let resolver = INSTANCE;
-        let result = resolver.resolve_files(&item).await;
+        let result = resolver.resolve_files(&item).await.unwrap();
 
         assert_eq!(result.len(), 1);
     }

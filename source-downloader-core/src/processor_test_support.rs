@@ -124,7 +124,10 @@ pub mod test_support {
 
     #[async_trait]
     impl ItemFileResolver for HardCodeVfsFileResolver {
-        async fn resolve_files(&self, source_item: &SourceItem) -> Vec<SourceFile> {
+        async fn resolve_files(
+            &self,
+            source_item: &SourceItem,
+        ) -> Result<Vec<SourceFile>, ProcessingError> {
             let path = PathBuf::from(
                 source_item
                     .download_uri
@@ -134,12 +137,12 @@ pub mod test_support {
             );
             // case for conflict
             if source_item.title == "conflict" {
-                return vec![
+                return Ok(vec![
                     SourceFile::new(path.clone()),
                     SourceFile::new(path.with_file_name("conflict1")),
-                ];
+                ]);
             }
-            vec![SourceFile::new(path)]
+            Ok(vec![SourceFile::new(path)])
         }
     }
 
@@ -456,7 +459,7 @@ pub mod test_support {
         pub Component {}
         #[async_trait]
         impl ItemFileResolver for Component {
-            async fn resolve_files(&self, item: &SourceItem) -> Vec<SourceFile>;
+            async fn resolve_files(&self, item: &SourceItem) -> Result<Vec<SourceFile>, ProcessingError>;
         }
         #[async_trait]
         impl VariableProvider for Component {
