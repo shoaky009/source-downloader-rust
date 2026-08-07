@@ -6,7 +6,7 @@ mod test_support;
 pub mod util;
 
 use crate::component::{
-    anime_file_filter, anime_replacement_decider, anime_tagger,
+    ai_variable_provider, anime_file_filter, anime_replacement_decider, anime_tagger,
     anime_title_variable_provider, doujin_title_trimmer, emby_image_tagger,
     episode_variable_provider, language_variable_provider, media_type_exists_detector,
     mikan_source, resolution_variable_provider, season_variable_provider,
@@ -44,6 +44,7 @@ impl Plugin for CommonPlugin {
             Arc::new(resolution_variable_provider::SUPPLIER),
             Arc::new(season_variable_provider::SUPPLIER),
             Arc::new(simple_file_tagger::SUPPLIER),
+            Arc::new(ai_variable_provider::SUPPLIER),
         ]
     }
 
