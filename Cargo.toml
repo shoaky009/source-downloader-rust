@@ -58,6 +58,8 @@ regex = "1.12.2"
 imagesize = "0.14"
 lingua = { version = "1.7", default-features = false, features = ["chinese", "japanese"] }
 mimetype-detector = "0.3.11"
+encoding_rs = "0.8"
+chardetng = "0.1"
 criterion = "0.8"
 vfs = "0.12"
 jsonpath-rust = { version = "1.0.4" }

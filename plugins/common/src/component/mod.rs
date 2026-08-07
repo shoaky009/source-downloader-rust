@@ -9,6 +9,7 @@ pub mod dlsite_variable_provider;
 pub mod doujin_title_trimmer;
 pub mod emby_image_tagger;
 pub mod episode_variable_provider;
+pub mod getchu_variable_provider;
 pub mod language_variable_provider;
 pub mod media_type_exists_detector;
 pub mod mikan_source;
