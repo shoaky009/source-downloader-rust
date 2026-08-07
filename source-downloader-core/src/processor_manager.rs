@@ -78,8 +78,42 @@ impl ProcessorManager {
         processor_name: &str,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         self.component_manager
-            .get_component(component_id)?
-            .require_and_mark_ref(processor_name)
+            .get_component(component_id)
+            .and_then(|component| component.require_and_mark_ref(processor_name))
+            .map_err(|error| {
+                ComponentError::new(format!(
+                    "Component '{}' for processor '{}' failed: {}",
+                    component_id.display(),
+                    processor_name,
+                    error
+                ))
+            })
+    }
+
+    fn get_typed_component<T: ?Sized, F>(
+        &self,
+        component_id: &ComponentId,
+        processor_name: &str,
+        role: &str,
+        cast: F,
+    ) -> Result<Arc<T>, ComponentError>
+    where
+        F: FnOnce(Arc<dyn SdComponent>) -> Result<Arc<T>, ComponentError>,
+    {
+        let component = self.get_component_for_processor(component_id, processor_name)?;
+        cast(component).map_err(|error| Self::component_error(component_id, role, error))
+    }
+    fn component_error(
+        component_id: &ComponentId,
+        role: &str,
+        error: ComponentError,
+    ) -> ComponentError {
+        ComponentError::new(format!(
+            "Component '{}' is not a valid {}: {}",
+            component_id.display(),
+            role,
+            error
+        ))
     }
 
     pub fn create_processor(&self, config: &ProcessorConfig) {
@@ -141,26 +175,39 @@ impl ProcessorManager {
         config: &ProcessorConfig,
     ) -> Result<Arc<ProcessorWrapper>, ComponentError> {
         let source_id = ComponentRootType::Source.parse_component_id(&config.source);
-        let source =
-            self.get_component_for_processor(&source_id, &config.name)?.as_source()?;
+        let source = self.get_typed_component(
+            &source_id,
+            &config.name,
+            "source",
+            SdComponent::as_source,
+        )?;
 
         let item_file_resolver_id = ComponentRootType::ItemFileResolver
             .parse_component_id(&config.item_file_resolver);
-        let item_file_resolver = self
-            .get_component_for_processor(&item_file_resolver_id, &config.name)?
-            .as_item_file_resolver()?;
+        let item_file_resolver = self.get_typed_component(
+            &item_file_resolver_id,
+            &config.name,
+            "item file resolver",
+            SdComponent::as_item_file_resolver,
+        )?;
 
         let downloader_id =
             ComponentRootType::Downloader.parse_component_id(&config.downloader);
-        let downloader = self
-            .get_component_for_processor(&downloader_id, &config.name)?
-            .as_downloader()?;
+        let downloader = self.get_typed_component(
+            &downloader_id,
+            &config.name,
+            "downloader",
+            SdComponent::as_downloader,
+        )?;
 
         let file_mover_id =
             ComponentRootType::FileMover.parse_component_id(&config.file_mover);
-        let file_mover = self
-            .get_component_for_processor(&file_mover_id, &config.name)?
-            .as_file_mover()?;
+        let file_mover = self.get_typed_component(
+            &file_mover_id,
+            &config.name,
+            "file mover",
+            SdComponent::as_file_mover,
+        )?;
 
         let task_group = config
             .options
@@ -758,12 +805,9 @@ mod test {
             tags: HashSet::new(),
         });
         assert!(manager.processor_exists(name));
-        let processor_wp = manager.get_processor(name);
-        assert!(processor_wp.is_some());
-        assert!(processor_wp.as_ref().unwrap().error_message.is_none());
-        assert!(processor_wp.as_ref().unwrap().processor.is_some());
-        let processor =
-            processor_wp.as_ref().unwrap().processor.as_ref().unwrap().clone();
+        let processor_wp = manager.get_processor(name).unwrap();
+        assert!(processor_wp.error_message.is_none());
+        let processor = processor_wp.processor.as_ref().unwrap().clone();
         let referenced_ids = [
             ComponentRootType::Source.parse_component_id("system-file:test"),
             ComponentRootType::ItemFileResolver.parse_component_id("system-file:test"),
@@ -825,9 +869,13 @@ mod test {
             category: None,
             tags: HashSet::new(),
         });
-        let processor_wp = manager.get_processor(name);
-        assert!(processor_wp.is_some());
-        assert!(processor_wp.unwrap().error_message.is_some());
+        let processor_wp = manager.get_processor(name).unwrap();
+        assert_eq!(
+            processor_wp.error_message.as_deref(),
+            Some(
+                "Component 'downloader:not-exists:not-exists' for processor 'normal-case' failed: Supplier not found for type: downloader:not-exists"
+            )
+        );
         let source_id = ComponentRootType::Source.parse_component_id("system-file:test");
         assert!(
             component_manager.get_component(&source_id).unwrap().get_refs().is_empty()
