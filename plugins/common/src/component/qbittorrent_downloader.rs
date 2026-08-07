@@ -6,10 +6,12 @@ use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     AsyncDownloader, ComponentError, ComponentSupplier, ComponentType, DownloadTask,
-    Downloader, ProcessingError, SdComponent, SdComponentMetadata, SourceFile,
+    Downloader, FileContent, FileMover, ProcessingError, SdComponent,
+    SdComponentMetadata, SourceFile,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::fmt::{Debug, Display, Formatter};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -18,7 +20,10 @@ pub const SUPPLIER: QbittorrentDownloaderSupplier = QbittorrentDownloaderSupplie
 
 impl ComponentSupplier for QbittorrentDownloaderSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
-        vec![ComponentType::downloader("qbittorrent".to_string())]
+        vec![
+            ComponentType::downloader("qbittorrent".to_string()),
+            ComponentType::file_mover("qbittorrent".to_string()),
+        ]
     }
 
     fn apply(
@@ -82,6 +87,8 @@ fn optional_string(
         .transpose()
 }
 
+#[derive(Debug, source_downloader_sdk::SdComponent)]
+#[component(Downloader, AsyncDownloader, FileMover)]
 struct QbittorrentDownloader {
     client: reqwest::Client,
     endpoint: String,
@@ -92,30 +99,17 @@ struct QbittorrentDownloader {
     always_download_all: bool,
 }
 
-impl Debug for QbittorrentDownloader {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("QbittorrentDownloader")
-            .field("endpoint", &self.endpoint)
-            .field("always_download_all", &self.always_download_all)
-            .finish()
-    }
-}
 impl Display for QbittorrentDownloader {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "qbittorrent")
     }
 }
-impl SdComponent for QbittorrentDownloader {
-    fn as_async_downloader(
-        self: Arc<Self>,
-    ) -> Result<Arc<dyn AsyncDownloader>, ComponentError> {
-        Ok(self)
-    }
-}
 
 #[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
 struct TorrentInfo {
     progress: f64,
+    content_path: Option<PathBuf>,
 }
 #[derive(Deserialize)]
 struct TorrentFile {
@@ -237,6 +231,97 @@ impl QbittorrentDownloader {
         .await?;
         Ok(())
     }
+
+    fn run_sync<T>(
+        &self,
+        future: impl Future<Output = Result<T, ProcessingError>>,
+    ) -> Result<T, ProcessingError> {
+        let handle = tokio::runtime::Handle::try_current().map_err(|_| {
+            ProcessingError::non_retryable(
+                "qBittorrent file operations require a Tokio runtime",
+            )
+        })?;
+        tokio::task::block_in_place(|| handle.block_on(future))
+    }
+
+    async fn rename_file(
+        &self,
+        hash: &str,
+        old_path: &Path,
+        new_path: &Path,
+    ) -> Result<(), ProcessingError> {
+        self.request(
+            self.client
+                .post(format!("{}/api/v2/torrents/renameFile", self.endpoint))
+                .form(&[
+                    ("hash", hash.to_string()),
+                    ("oldPath", torrent_path(old_path)),
+                    ("newPath", torrent_path(new_path)),
+                ]),
+            "Rename qBittorrent file",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn set_location(
+        &self,
+        hash: &str,
+        location: &Path,
+    ) -> Result<(), ProcessingError> {
+        self.request(
+            self.client
+                .post(format!("{}/api/v2/torrents/setLocation", self.endpoint))
+                .form(&[
+                    ("hashes", hash.to_string()),
+                    ("location", location.to_string_lossy().into_owned()),
+                ]),
+            "Set qBittorrent location",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn torrent_files(&self, hash: &str) -> Result<Vec<PathBuf>, ProcessingError> {
+        let response = self
+            .request(
+                self.client
+                    .get(format!("{}/api/v2/torrents/info", self.endpoint))
+                    .query(&[("hashes", hash)]),
+                "Get qBittorrent status",
+            )
+            .await?;
+        let Some(info) = response
+            .json::<Vec<TorrentInfo>>()
+            .await
+            .map_err(|error| http::map_error(error, "Decode qBittorrent status"))?
+            .into_iter()
+            .next()
+        else {
+            return Ok(Vec::new());
+        };
+        let Some(content_path) = info.content_path else {
+            return Ok(Vec::new());
+        };
+        if content_path.extension().is_some() {
+            return Ok(vec![content_path]);
+        }
+        let response = self
+            .request(
+                self.client
+                    .get(format!("{}/api/v2/torrents/files", self.endpoint))
+                    .query(&[("hash", hash)]),
+                "Get qBittorrent files",
+            )
+            .await?;
+        response
+            .json::<Vec<TorrentFile>>()
+            .await
+            .map_err(|error| http::map_error(error, "Decode qBittorrent files"))
+            .map(|files| {
+                files.into_iter().map(|file| content_path.join(file.name)).collect()
+            })
+    }
 }
 
 #[async_trait]
@@ -340,6 +425,109 @@ impl AsyncDownloader for QbittorrentDownloader {
     }
 }
 
+impl FileMover for QbittorrentDownloader {
+    fn move_file(&self, _: &SourceItem, _: &FileContent) -> Result<(), ProcessingError> {
+        Err(ProcessingError::non_retryable("qBittorrent only supports batch file moves"))
+    }
+
+    fn replace(
+        &self,
+        source_item: &SourceItem,
+        files: &[&FileContent],
+    ) -> Result<(), ProcessingError> {
+        let torrent_files = magnet_hash(&source_item.download_uri.to_string())
+            .map(|hash| self.run_sync(self.torrent_files(&hash)))
+            .transpose()?
+            .unwrap_or_default();
+        for file in files {
+            let existing_path =
+                file.exist_target_path.as_ref().unwrap_or_else(|| file.target_path());
+            if !existing_path.exists() {
+                self.batch_move(source_item, files)?;
+                continue;
+            }
+            if torrent_files.iter().any(|path| path == file.target_path()) {
+                tracing::info!(path = %existing_path.display(), "Torrent target is already managed; skipping replacement");
+                continue;
+            }
+            let backup_path = existing_path.with_file_name(format!(
+                "{}.bak",
+                existing_path
+                    .file_name()
+                    .ok_or_else(|| ProcessingError::non_retryable(
+                        "Replacement path has no file name"
+                    ))?
+                    .to_string_lossy(),
+            ));
+            std::fs::rename(existing_path, &backup_path)?;
+            match self.batch_move(source_item, files) {
+                Ok(()) => {
+                    if backup_path.exists() {
+                        std::fs::remove_file(&backup_path)?;
+                    }
+                }
+                Err(error) => {
+                    if !existing_path.exists() && backup_path.exists() {
+                        std::fs::rename(&backup_path, existing_path)?;
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn create_directories(&self, _: &Path) -> Result<(), ProcessingError> {
+        Ok(())
+    }
+
+    fn is_supported_batch_move(&self) -> bool {
+        true
+    }
+
+    fn batch_move(
+        &self,
+        source_item: &SourceItem,
+        files: &[&FileContent],
+    ) -> Result<(), ProcessingError> {
+        let Some(first_file) = files.first() else {
+            return Ok(());
+        };
+        let item_location = first_file
+            .file_save_root_dir()
+            .unwrap_or_else(|| first_file.target_save_path.clone());
+        self.run_sync(async {
+            let hash = self.torrent_hash(source_item).await?;
+            for file in files {
+                let old_path = file
+                    .file_download_path
+                    .strip_prefix(&file.download_path)
+                    .map_err(|_| {
+                        ProcessingError::non_retryable(format!(
+                            "Downloaded file '{}' is outside download path '{}'",
+                            file.file_download_path.display(),
+                            file.download_path.display(),
+                        ))
+                    })?;
+                let new_path =
+                    file.target_path().strip_prefix(&item_location).map_err(|_| {
+                        ProcessingError::non_retryable(format!(
+                            "Target file '{}' is outside item location '{}'",
+                            file.target_path().display(),
+                            item_location.display(),
+                        ))
+                    })?;
+                self.rename_file(&hash, old_path, new_path).await?;
+            }
+            self.set_location(&hash, &item_location).await
+        })
+    }
+}
+
+fn torrent_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
 fn magnet_hash(uri: &str) -> Option<String> {
     let uri = url::Url::parse(uri).ok()?;
     if uri.scheme() != "magnet" {
@@ -419,6 +607,50 @@ fn skip_value(bytes: &[u8], cursor: &mut usize) -> Result<(), ProcessingError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use source_downloader_sdk::component::FileContentStatus;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn form(request: &wiremock::Request) -> HashMap<String, String> {
+        url::form_urlencoded::parse(&request.body).into_owned().collect()
+    }
+
+    fn source_item() -> SourceItem {
+        SourceItem {
+            title: "test".to_string(),
+            link: "https://example.com/item".parse().unwrap(),
+            datetime: time::OffsetDateTime::UNIX_EPOCH,
+            content_type: "application/x-bittorrent".to_string(),
+            download_uri:
+                "magnet://localhost/?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
+                    .parse()
+                    .unwrap(),
+            attrs: Map::new(),
+            tags: vec![],
+            identity: None,
+        }
+    }
+
+    fn file_content() -> FileContent {
+        FileContent {
+            download_path: PathBuf::from("/downloads"),
+            file_download_path: PathBuf::from("/downloads/show/01.mkv"),
+            source_save_path: PathBuf::from("/library"),
+            pattern_variables: HashMap::new(),
+            tags: vec![],
+            attrs: Map::new(),
+            file_uri: None,
+            target_save_path: PathBuf::from("/library/anime"),
+            target_filename: "episode-01.mkv".to_string(),
+            exist_target_path: None,
+            errors: vec![],
+            status: FileContentStatus::Normal,
+            target_path: OnceLock::new(),
+            data: None,
+        }
+    }
 
     #[test]
     fn extracts_hashes() {
@@ -428,6 +660,54 @@ mod tests {
         );
         let torrent = b"d8:announce1:x4:infod4:name1:aee";
         assert_eq!(b"d4:name1:ae", info_slice(torrent).unwrap());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn exposes_file_mover_and_moves_torrent_in_batch() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/torrents/renameFile"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/torrents/setLocation"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let component = SUPPLIER
+            .apply(&Map::from_iter([("endpoint".into(), Value::String(server.uri()))]))
+            .unwrap();
+        let mover = component.as_file_mover().unwrap();
+        let file = file_content();
+        mover.batch_move(&source_item(), &[&file]).unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(2, requests.len());
+        assert_eq!(
+            HashMap::from_iter([
+                (
+                    "hash".to_string(),
+                    "0123456789abcdef0123456789abcdef01234567".to_string(),
+                ),
+                ("oldPath".to_string(), "show/01.mkv".to_string()),
+                ("newPath".to_string(), "episode-01.mkv".to_string()),
+            ]),
+            form(&requests[0]),
+        );
+        assert_eq!(
+            HashMap::from_iter([
+                (
+                    "hashes".to_string(),
+                    "0123456789abcdef0123456789abcdef01234567".to_string(),
+                ),
+                ("location".to_string(), "/library/anime".to_string()),
+            ]),
+            form(&requests[1]),
+        );
     }
 
     #[test]
