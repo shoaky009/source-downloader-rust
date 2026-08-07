@@ -4,4 +4,5 @@ pub mod anime_tagger;
 pub mod anime_title_variable_provider;
 pub mod doujin_title_trimmer;
 pub mod emby_image_tagger;
+pub mod episode_variable_provider;
 pub mod mikan_source;
