@@ -15,6 +15,7 @@ scraper = { workspace = true }
 parking_lot = { workspace = true }
 regex = { workspace = true }
 imagesize = { workspace = true }
+lingua = { workspace = true }
 
 [dev-dependencies]
 wiremock = "0.6"
