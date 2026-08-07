@@ -11,6 +11,7 @@ use std::fmt::{Display, Formatter};
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
+type ItemRequest = (String, HashMap<String, String>, Option<String>);
 
 pub struct SendHttpRequestSupplier;
 pub const SUPPLIER: SendHttpRequestSupplier = SendHttpRequestSupplier;
@@ -138,7 +139,7 @@ impl SendHttpRequest {
         &self,
         context: &dyn ProcessContext,
         item_content: &ItemContent,
-    ) -> Result<(String, HashMap<String, String>, Option<String>), ProcessingError> {
+    ) -> Result<ItemRequest, ProcessingError> {
         let summary = summary_content(item_content);
         let url = self.build_url(&[("summary", &summary)]);
         let mut headers = self.config.headers.clone();

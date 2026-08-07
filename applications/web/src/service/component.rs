@@ -63,16 +63,16 @@ async fn query_components(
     let mut results: Vec<ComponentInfo> = all_configs
         .into_iter()
         .filter(|(root_type_str, _)| {
-            query.root_type.as_ref().map_or(true, |t| t == root_type_str)
+            query.root_type.as_ref().is_none_or(|t| t == root_type_str)
         })
         .flat_map(|(root_type_str, configs)| {
             let all_components = all_components.clone();
             configs
                 .into_iter()
                 .filter(|config| {
-                    query.type_name.as_ref().map_or(true, |t| t == &config.component_type)
+                    query.type_name.as_ref().is_none_or(|t| t == &config.component_type)
                 })
-                .filter(|config| query.name.as_ref().map_or(true, |n| n == &config.name))
+                .filter(|config| query.name.as_ref().is_none_or(|n| n == &config.name))
                 .map(move |config| {
                     let all_components = all_components.clone();
                     let root_type = ComponentRootType::parse(&root_type_str)
@@ -95,7 +95,7 @@ async fn query_components(
                                 .cloned()
                                 .and_then(|c| c.as_stateful())
                                 .and_then(|s| s.get_state_detail())
-                                .map(|m| Value::Object(m))
+                                .map(Value::Object)
                         } else {
                             None
                         }
@@ -119,7 +119,7 @@ async fn query_components(
                         name: config.name,
                         props: config.props,
                         state_detail,
-                        primary: wrapper.as_ref().map_or(true, |w| w.primary),
+                        primary: wrapper.as_ref().is_none_or(|w| w.primary),
                         running,
                         refs,
                         modifiable,
@@ -252,7 +252,7 @@ async fn all_types(
             .get_all_suppliers()
             .iter()
             .flat_map(|x| x.supply_types())
-            .filter(|x| q.root_type.as_ref().map_or(true, |t| *t == x.root_type))
+            .filter(|x| q.root_type.as_ref().is_none_or(|t| *t == x.root_type))
             .map(|x| ComponentTypeInfo { root_type: x.root_type, name: x.name })
             .collect::<Vec<_>>(),
     )

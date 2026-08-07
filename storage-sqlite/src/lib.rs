@@ -338,7 +338,7 @@ impl ProcessingStorage for SeaProcessingStorage {
         let models =
             db_query.all(&self.db).await.map_err(|e| Error { message: e.to_string() })?;
 
-        models.into_iter().map(|model| Self::model_to_content(model)).collect()
+        models.into_iter().map(Self::model_to_content).collect()
     }
 
     async fn save_file_contents(
@@ -425,8 +425,7 @@ impl ProcessingStorage for SeaProcessingStorage {
         let saved = model
             .save(&self.db)
             .await
-            .map(|x| x.try_into_model())
-            .flatten()
+            .and_then(|x| x.try_into_model())
             .map_err(|x| Error { message: x.to_string() })?;
         Ok(Self::model_to_processor_source_state(saved)?)
     }

@@ -53,6 +53,8 @@ static INSTANCE_ID_GENERATOR: AtomicI64 = AtomicI64::new(0);
 static PROCESS_ID_GENERATOR: AtomicI64 = AtomicI64::new(i64::MIN);
 // static EMPTY_FILES: Vec<FileContent> = vec![];
 // static EMPTY_PATTERN_VARIABLES: LazyLock<PatternVariables> = LazyLock::new(|| HashMap::new());
+#[cfg(test)]
+type SubmittedHeaders = Arc<parking_lot::Mutex<Option<HashMap<String, String>>>>;
 
 /// 单个 item 处理后的文件、变量和状态；这里只承载结果，不负责执行处理、
 /// 持久化或通知监听器。
@@ -694,6 +696,7 @@ fn relative_path_from(base: &Path, target: &Path) -> Option<PathBuf> {
 }
 
 impl SourceProcessor {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
         source_id: String,
@@ -1340,7 +1343,7 @@ trait Process {
         &self,
         p: &SourceProcessor,
         processing_content: &ProcessingContent,
-        files: &Vec<FileContent>,
+        files: &[FileContent],
     ) -> Result<Option<i64>, ProcessingError>;
 
     async fn on_item_error(
@@ -1465,6 +1468,7 @@ trait Process {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn settle_success_item(
         &self,
         p: &SourceProcessor,
@@ -2047,8 +2051,7 @@ trait Process {
         let opt = &p.options;
         let mut item_raw_vars = vec![];
         let variable_providers = item_strategy
-            .map(|x| x.variable_providers.as_ref())
-            .flatten()
+            .and_then(|x| x.variable_providers.as_ref())
             .unwrap_or(&opt.variable_providers);
         for x in variable_providers {
             item_raw_vars.push((x.accuracy(), x.item_variables(source_item).await))
@@ -2388,11 +2391,7 @@ trait Process {
         }
 
         // 将并行数组打包返回，并在真正需要时才做 PathBuf 的克隆分配
-        indices
-            .into_iter()
-            .zip(exists_out)
-            .map(|(idx, path_opt)| (idx, path_opt))
-            .collect()
+        indices.into_iter().zip(exists_out).collect()
     }
 
     fn probe_content_status(
@@ -2455,7 +2454,7 @@ trait Process {
                 return Err(ProcessingError::non_retryable(format!(
                     "resolved item:{} duplicated files:{}, It's likely that there's an issue with the component's implementation.",
                     source_item,
-                    &f.path.to_str().unwrap_or_default()
+                    f.path.to_str().unwrap_or_default()
                 )));
             }
         }
@@ -2527,7 +2526,7 @@ trait Process {
         let empty_vars = &PatternVariables::new();
         let file_count = relative_files.len();
         for (idx, x) in relative_files.into_iter().enumerate() {
-            let var = file_vars.get(idx).unwrap_or_else(|| empty_vars);
+            let var = file_vars.get(idx).unwrap_or(empty_vars);
             let file_rule =
                 opt.file_rules.iter().find(|rule| rule.matcher.matches(&x, file_count));
             let file_strategy = file_rule.map(|r| &r.strategy);
@@ -2561,8 +2560,7 @@ trait Process {
 
             // <editor-fold desc="Stage using FileContentFilter">
             let file_content_filters = file_strategy
-                .map(|s| s.file_content_filters.as_ref())
-                .flatten()
+                .and_then(|s| s.file_content_filters.as_ref())
                 .unwrap_or(&opt.file_content_filters);
 
             let mut should_include = true;
@@ -2625,7 +2623,7 @@ impl Process for NormalProcess {
         &self,
         p: &SourceProcessor,
         processing_content: &ProcessingContent,
-        files: &Vec<FileContent>,
+        files: &[FileContent],
     ) -> Result<Option<i64>, ProcessingError> {
         debug!("[item-done] {:?}", &processing_content.item_content.source_item);
         if processing_content.status == ProcessingStatus::Filtered
@@ -2721,23 +2719,20 @@ impl Process for NormalProcess {
 impl NormalProcess {}
 
 pub fn encode_files_and_compress(
-    files: &Vec<FileContent>,
+    files: &[FileContent],
 ) -> Result<Vec<u8>, ProcessingError> {
     let bytes = if files.is_empty() {
         vec![]
     } else {
         let bytes = postcard::to_stdvec(&files).map_err(|x| {
-            ProcessingError::non_retryable(format!(
-                "Failed to desc file content {}",
-                x.to_string()
-            ))
+            ProcessingError::non_retryable(format!("Failed to desc file content {}", x))
         })?;
         // 压缩比待定
         let level = 6;
         zstd::encode_all(Cursor::new(bytes), level).map_err(|x| {
             ProcessingError::non_retryable(format!(
                 "Failed to compress file content {}",
-                x.to_string()
+                x
             ))
         })?
     };
@@ -2752,15 +2747,12 @@ pub fn decode_files_from_compressed(
         return Ok(vec![]);
     }
     let decompressed = zstd::decode_all(bytes).map_err(|x| {
-        ProcessingError::non_retryable(format!(
-            "Failed to decompress file content {}",
-            x.to_string()
-        ))
+        ProcessingError::non_retryable(format!("Failed to decompress file content {}", x))
     })?;
     let files: Vec<FileContent> = postcard::from_bytes(&decompressed).map_err(|x| {
         ProcessingError::non_retryable(format!(
             "Failed to deserialize file content {}",
-            x.to_string()
+            x
         ))
     })?;
     Ok(files)
@@ -2844,7 +2836,7 @@ impl Process for DryRunProcess {
         &self,
         _: &SourceProcessor,
         _: &ProcessingContent,
-        _: &Vec<FileContent>,
+        _: &[FileContent],
     ) -> Result<Option<i64>, ProcessingError> {
         Ok(None)
     }
@@ -2941,7 +2933,7 @@ impl Process for Reprocess {
         &self,
         processor: &SourceProcessor,
         processing_content: &ProcessingContent,
-        files: &Vec<FileContent>,
+        files: &[FileContent],
     ) -> Result<Option<i64>, ProcessingError> {
         if !processor.options.save_processing_content {
             return Ok(None);
@@ -3005,7 +2997,7 @@ impl Process for FixedItemProcess {
         &self,
         processor: &SourceProcessor,
         processing_content: &ProcessingContent,
-        files: &Vec<FileContent>,
+        files: &[FileContent],
     ) -> Result<Option<i64>, ProcessingError> {
         if !processor.options.save_processing_content {
             return Ok(None);
@@ -3150,7 +3142,7 @@ mod test {
         submit_probe: Option<Arc<ParallelismProbe>>,
         replacement_probe: Option<Arc<ReplacementProbe>>,
         source_headers: Option<HashMap<String, String>>,
-        submitted_headers: Option<Arc<ParkingMutex<Option<HashMap<String, String>>>>>,
+        submitted_headers: Option<SubmittedHeaders>,
         resolved_file_tags: Vec<String>,
         download_path: String,
     }
@@ -3704,7 +3696,7 @@ mod test {
         fail_next_content_save: bool,
         replacement_probe: Option<Arc<ReplacementProbe>>,
         source_headers: Option<HashMap<String, String>>,
-        submitted_headers: Option<Arc<ParkingMutex<Option<HashMap<String, String>>>>>,
+        submitted_headers: Option<SubmittedHeaders>,
         resolved_file_tags: Vec<String>,
         download_path: String,
         save_path: PathBuf,
@@ -5345,7 +5337,7 @@ mod test {
         storage
             .stored_file_contents
             .lock()
-            .insert(2, encode_files_and_compress(&vec![file]).unwrap());
+            .insert(2, encode_files_and_compress(&[file]).unwrap());
         let each_listener = Arc::new(RecordingListener::default());
         let batch_listener = Arc::new(RecordingListener::default());
         processor
@@ -5415,7 +5407,7 @@ mod test {
         storage
             .stored_file_contents
             .lock()
-            .insert(1, encode_files_and_compress(&vec![file]).unwrap());
+            .insert(1, encode_files_and_compress(&[file]).unwrap());
         let each_listener = Arc::new(RecordingListener::default());
         let batch_listener = Arc::new(RecordingListener::default());
         processor
@@ -5484,7 +5476,7 @@ mod test {
         storage
             .stored_file_contents
             .lock()
-            .insert(3, encode_files_and_compress(&vec![file]).unwrap());
+            .insert(3, encode_files_and_compress(&[file]).unwrap());
         let each_listener = Arc::new(RecordingListener::default());
         let batch_listener = Arc::new(RecordingListener::default());
         processor
@@ -5632,7 +5624,7 @@ mod test {
         storage
             .save_file_contents(
                 content_id,
-                encode_files_and_compress(&vec![file, replacement_file]).unwrap(),
+                encode_files_and_compress(&[file, replacement_file]).unwrap(),
             )
             .await
             .unwrap();

@@ -142,13 +142,13 @@ mod test {
             file_download_path: PathBuf::from("1.txt"),
             ..Default::default()
         };
-        assert_eq!(false, filter.filter(&test_file_content1));
+        assert!(!filter.filter(&test_file_content1));
 
         let test_file_content2 = FileContent {
             file_download_path: PathBuf::from("2.txt"),
             ..Default::default()
         };
-        assert_eq!(true, filter.filter(&test_file_content2));
+        assert!(filter.filter(&test_file_content2));
     }
 
     #[test]
@@ -162,13 +162,13 @@ mod test {
             file_download_path: PathBuf::from("1.txt"),
             ..Default::default()
         };
-        assert_eq!(true, filter.filter(&test_file_content1));
+        assert!(filter.filter(&test_file_content1));
 
         let test_file_content2 = FileContent {
             file_download_path: PathBuf::from("2.txt"),
             ..Default::default()
         };
-        assert_eq!(false, filter.filter(&test_file_content2));
+        assert!(!filter.filter(&test_file_content2));
     }
 
     #[test]
@@ -193,7 +193,7 @@ mod test {
             attrs: serde_json::Map::from_str(r#"{"size":1}"#).unwrap(),
             ..Default::default()
         };
-        assert_eq!(true, filter.filter(&test_file_content1));
+        assert!(filter.filter(&test_file_content1));
     }
 
     #[test]
@@ -220,7 +220,7 @@ mod test {
             },
             ..Default::default()
         };
-        assert_eq!(true, filter.filter(&test_file_content1));
+        assert!(filter.filter(&test_file_content1));
     }
 
     #[test]
@@ -236,12 +236,12 @@ mod test {
             download_path: download_path.clone(),
             ..Default::default()
         };
-        assert_eq!(false, filter.filter(&test_file_content1));
+        assert!(!filter.filter(&test_file_content1));
         let test_file_content2 = FileContent {
             file_download_path: download_path.join("sps").join("test.txt"),
             ..test_file_content1
         };
-        assert_eq!(true, filter.filter(&test_file_content2));
+        assert!(filter.filter(&test_file_content2));
 
         // ignore_case
         let filter = ExpressionFileContentFilter::expressions(
@@ -252,7 +252,7 @@ mod test {
             file_download_path: download_path.join("SP").join("test.txt"),
             ..test_file_content2
         };
-        assert_eq!(false, filter.filter(&test_file_content3));
+        assert!(!filter.filter(&test_file_content3));
     }
 
     impl ExpressionFileContentFilter {

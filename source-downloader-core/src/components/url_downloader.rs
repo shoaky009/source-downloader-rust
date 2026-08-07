@@ -75,6 +75,7 @@ impl Downloader for UrlDownloader {
             let mut target = tokio::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
+                .truncate(true)
                 .open(file.path)
                 .await?;
             target.seek(std::io::SeekFrom::Start(0)).await?;

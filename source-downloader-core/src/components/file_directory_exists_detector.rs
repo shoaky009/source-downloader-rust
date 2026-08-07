@@ -98,10 +98,12 @@ mod tests {
         let target_root = source_root.join("season");
         std::fs::create_dir_all(&target_root).unwrap();
 
-        let mut file = FileContent::default();
-        file.source_save_path = source_root;
-        file.target_save_path = target_root;
-        file.target_filename = String::from("episode.txt");
+        let file = FileContent {
+            source_save_path: source_root,
+            target_save_path: target_root,
+            target_filename: String::from("episode.txt"),
+            ..Default::default()
+        };
 
         let files = [file];
         let mover = crate::components::system_file_mover::SUPPLIER
@@ -112,8 +114,8 @@ mod tests {
         let source_item = SourceItem::default();
         let result =
             FileDirectoryExistsDetector.exists(mover.as_ref(), &source_item, &files);
-        let existing_target = result.values().next().copied().flatten();
+        let existing_target = result.values().next().cloned().flatten();
 
-        assert_eq!(existing_target, Some(files[0].target_path()));
+        assert_eq!(existing_target.as_ref(), Some(files[0].target_path()));
     }
 }

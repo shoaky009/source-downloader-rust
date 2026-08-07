@@ -164,15 +164,11 @@ pub struct FileRuleConfig {
 
 #[derive(Debug, Deserialize, Clone, Copy, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[derive(Default)]
 pub enum ListenerMode {
+    #[default]
     Each,
     Batch,
-}
-
-impl Default for ListenerMode {
-    fn default() -> Self {
-        Self::Each
-    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -370,13 +366,9 @@ pub struct DownloadOptionsConfig {
     pub headers: Option<HashMap<String, String>>,
 }
 
-impl Into<DownloadOptions> for DownloadOptionsConfig {
-    fn into(self) -> DownloadOptions {
-        DownloadOptions {
-            category: self.category,
-            tags: self.tags,
-            headers: self.headers,
-        }
+impl From<DownloadOptionsConfig> for DownloadOptions {
+    fn from(val: DownloadOptionsConfig) -> Self {
+        DownloadOptions { category: val.category, tags: val.tags, headers: val.headers }
     }
 }
 
@@ -724,9 +716,9 @@ mod test {
         let load_result = operator.load_yaml();
         assert!(load_result.is_ok());
         let config = load_result.unwrap();
-        assert!(config.processors.len() > 0);
-        assert!(config.components.len() > 0);
-        assert!(config.instances.len() > 0);
+        assert!(!config.processors.is_empty());
+        assert!(!config.components.is_empty());
+        assert!(!config.instances.is_empty());
     }
 
     #[test]

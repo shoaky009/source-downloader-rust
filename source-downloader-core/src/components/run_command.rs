@@ -215,9 +215,11 @@ mod tests {
     fn summary_reports_a_single_completed_file() {
         let source_item =
             SourceItem { title: String::from("episode"), ..SourceItem::default() };
-        let mut file = FileContent::default();
-        file.status = FileContentStatus::Normal;
-        file.target_filename = String::from("episode.txt");
+        let file = FileContent {
+            status: FileContentStatus::Normal,
+            target_filename: String::from("episode.txt"),
+            ..Default::default()
+        };
         let files = vec![file];
         let variables = HashMap::new();
         let item_content = ItemContent {

@@ -142,7 +142,7 @@ async fn run_web_server(
 
     let addr = format!("{}:{}", config.server.host, config.server.port);
     let listener = TcpListener::bind(&addr).await.unwrap();
-    log::info!("Web服务器已启动，监听 {}", &addr);
+    log::info!("Web服务器已启动，监听 {}", addr);
     axum::serve(listener, root_router).await.unwrap();
 }
 

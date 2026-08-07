@@ -189,27 +189,27 @@ pub mod test_support {
         identity: Option<String>,
     }
 
-    impl Into<SourceItem> for SourceItemConfig {
-        fn into(self) -> SourceItem {
+    impl From<SourceItemConfig> for SourceItem {
+        fn from(val: SourceItemConfig) -> Self {
             SourceItem {
-                title: self.title.unwrap_or_default(),
-                link: self.link.unwrap_or_default(),
-                download_uri: self.download_uri.unwrap_or_default(),
-                content_type: self.content_type.unwrap_or_default(),
-                attrs: self.attrs.unwrap_or_default(),
-                tags: self.tags.unwrap_or_default(),
-                datetime: self.datetime.unwrap_or(OffsetDateTime::now_utc()),
-                identity: self.identity,
+                title: val.title.unwrap_or_default(),
+                link: val.link.unwrap_or_default(),
+                download_uri: val.download_uri.unwrap_or_default(),
+                content_type: val.content_type.unwrap_or_default(),
+                attrs: val.attrs.unwrap_or_default(),
+                tags: val.tags.unwrap_or_default(),
+                datetime: val.datetime.unwrap_or(OffsetDateTime::now_utc()),
+                identity: val.identity,
             }
         }
     }
 
-    impl Into<PointedItem> for PointedItemConfig {
-        fn into(self) -> PointedItem {
+    impl From<PointedItemConfig> for PointedItem {
+        fn from(val: PointedItemConfig) -> Self {
             PointedItem {
-                source_item: self.source_item.into(),
+                source_item: val.source_item.into(),
                 item_pointer: Arc::new(MockItemPointer {
-                    value: self.item_pointer.unwrap_or(Value::Object(Map::new())),
+                    value: val.item_pointer.unwrap_or(Value::Object(Map::new())),
                 }),
             }
         }
@@ -571,7 +571,7 @@ pub mod test_support {
 
     pub fn apply_case_files(root_path: &VfsPath, files: &[CaseFile]) {
         root_path.create_dir_all().unwrap();
-        for file in files.into_iter() {
+        for file in files.iter() {
             let path = root_path.join(&file.path).unwrap();
             let parent = path.parent();
             if !parent.exists().unwrap() {
@@ -608,13 +608,13 @@ pub mod test_support {
                 node
             };
 
-            if let Some(expected) = &assert.equals {
-                if target != expected {
-                    return Err(AssertionError::new(format!(
-                        "equals failed, expected {}, got {}",
-                        expected, target
-                    )));
-                }
+            if let Some(expected) = &assert.equals
+                && target != expected
+            {
+                return Err(AssertionError::new(format!(
+                    "equals failed, expected {}, got {}",
+                    expected, target
+                )));
             }
 
             if let Some(expected) = &assert.path_equals {
@@ -648,10 +648,10 @@ pub mod test_support {
                 }
             }
 
-            if let Some(true) = assert.exists {
-                if target.is_null() {
-                    return Err(AssertionError::new("expected value to exist"));
-                }
+            if let Some(true) = assert.exists
+                && target.is_null()
+            {
+                return Err(AssertionError::new("expected value to exist"));
             }
         }
         Ok(())
@@ -691,7 +691,7 @@ pub mod test_support {
             None => {
                 panic!(
                     "Processor instance not found cause {}",
-                    w.error_message.as_ref().unwrap().to_string()
+                    w.error_message.as_ref().unwrap()
                 )
             }
             Some(p) => p,

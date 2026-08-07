@@ -40,7 +40,7 @@ impl<'a> RawFileContent<'a> {
         let path = if self.source_file.path.is_absolute() {
             self.source_file
                 .path
-                .strip_prefix(&self.download_path)
+                .strip_prefix(self.download_path)
                 .unwrap_or(&self.source_file.path)
         } else {
             &self.source_file.path
@@ -320,7 +320,7 @@ impl Renamer {
         }
         if !self.trimming.is_empty() {
             // 校验文件名长度 (UTF-8 bytes)
-            if filename_result.path.as_bytes().len() > self.path_name_length_limit {
+            if filename_result.path.len() > self.path_name_length_limit {
                 let mut trim_vars = variables.trim_variables.clone();
                 self.execute_trim(
                     &file.filename_pattern.pattern,
@@ -334,20 +334,20 @@ impl Renamer {
 
             // 校验目录段长度
             let rel_path = Path::new(&dir_result.path)
-                .strip_prefix(&file.save_path)
+                .strip_prefix(file.save_path)
                 .unwrap_or(Path::new(""));
             let mut current_trim_vars = variables.trim_variables.clone();
             let mut needs_recalc_dir = false;
 
             for (index, component) in rel_path.components().enumerate() {
                 let segment_name = component.as_os_str().to_str().unwrap_or("");
-                if segment_name.as_bytes().len() > self.path_name_length_limit {
+                if segment_name.len() > self.path_name_length_limit {
                     let segments =
                         file.save_path_pattern.pattern.split("/").collect::<Vec<_>>();
                     if let Some(pattern_part) = segments.get(index) {
                         self.execute_trim(
                             pattern_part,
-                            &segment_name,
+                            segment_name,
                             &variables.variables,
                             &mut current_trim_vars,
                         );
@@ -410,13 +410,8 @@ impl Renamer {
         too_long_path: &str,
         variable_val: &str,
     ) -> usize {
-        let without_variable_size =
-            too_long_path.replace(variable_val, "").as_bytes().len();
-        if self.path_name_length_limit > without_variable_size {
-            self.path_name_length_limit - without_variable_size
-        } else {
-            0
-        }
+        let without_variable_size = too_long_path.replace(variable_val, "").len();
+        self.path_name_length_limit.saturating_sub(without_variable_size)
     }
 
     fn parse(
@@ -434,7 +429,6 @@ impl Renamer {
 
         let mut failed_expressions = Vec::new();
         let mut success = true;
-        let mut expression_index = 0;
         let mut last_match_end = 0;
         // TODO 要从上游引用表达式
         let expressions = &path_pattern.expressions;
@@ -442,7 +436,8 @@ impl Renamer {
 
         // 遍历所有匹配项
         let raw_pattern = &path_pattern.pattern;
-        for mat in EXPRESSION_REGEX.find_iter(raw_pattern) {
+        for (expression_index, mat) in EXPRESSION_REGEX.find_iter(raw_pattern).enumerate()
+        {
             let expression = &expressions[expression_index];
             let value = expression.expression.execute(variables.all_variables());
             // 1. 添加当前匹配项之前的普通文本 (类似 matcher.appendReplacement 的非替换部分)
@@ -468,7 +463,6 @@ impl Renamer {
             }
 
             last_match_end = mat.end();
-            expression_index += 1;
         }
 
         // 3. 添加剩余的文本 (类似 matcher.appendTail)
@@ -496,7 +490,7 @@ impl Renamer {
             };
         }
 
-        let mut result = self.parse(&variables, &file.filename_pattern);
+        let mut result = self.parse(variables, file.filename_pattern);
 
         let file_name =
             file_download_path.file_name().and_then(|s| s.to_str()).unwrap().to_owned();
@@ -511,10 +505,10 @@ impl Renamer {
                 .and_then(|c| c.get(1))
                 .map(|m| m.as_str());
 
-            if let Some(e) = ext {
-                if !result.path.ends_with(e) {
-                    result.path = format!("{}.{}", result.path, e);
-                }
+            if let Some(e) = ext
+                && !result.path.ends_with(e)
+            {
+                result.path = format!("{}.{}", result.path, e);
             }
             return result;
         }
@@ -542,13 +536,13 @@ impl Renamer {
         file: &RawFileContent,
         variables: &RenameVariables,
     ) -> ParseResult {
-        let mut parse = self.parse(&variables, &file.save_path_pattern);
+        let mut parse = self.parse(variables, file.save_path_pattern);
         let source_path = &file.save_path;
 
         if parse.success {
             let mut final_path = source_path.join(&parse.path);
             if self.variable_error_strategy == VariableErrorStrategy::ToUnresolved {
-                let file_parse = self.parse(&variables, &file.filename_pattern);
+                let file_parse = self.parse(variables, file.filename_pattern);
                 if !file_parse.success {
                     final_path = final_path.join("unresolved");
                 }
@@ -565,7 +559,7 @@ impl Renamer {
             VariableErrorStrategy::ToUnresolved => {
                 let rel = file
                     .file_download_path()
-                    .strip_prefix(&file.download_path)
+                    .strip_prefix(file.download_path)
                     .map(|p| p.parent().unwrap_or(Path::new("")))
                     .unwrap_or(Path::new(""))
                     .to_path_buf();
@@ -584,7 +578,7 @@ impl Renamer {
         extra: &RenameVariables,
     ) -> RenameVariables {
         let mut vars = Map::new();
-        let file_pattern_vars = self.apply_replacers_to_map(&file.variables);
+        let file_pattern_vars = self.apply_replacers_to_map(file.variables);
         for (key, value) in &file_pattern_vars {
             vars.insert(key.clone(), Value::String(value.clone()));
         }
@@ -797,7 +791,7 @@ mod tests {
         }
     }
 
-    static DEFAULT_RENAMER: LazyLock<Renamer> = LazyLock::new(|| Renamer::default());
+    static DEFAULT_RENAMER: LazyLock<Renamer> = LazyLock::new(Renamer::default);
     static SOURCE_SAVE_PATH: LazyLock<&Path> =
         LazyLock::new(|| Path::new("src/test/resources/target"));
     static DOWNLOAD_PATH: LazyLock<&Path> =
@@ -811,8 +805,7 @@ mod tests {
         tags: Default::default(),
         data: None,
     });
-    static PATTERN: LazyLock<PatternVariables> =
-        LazyLock::new(|| PatternVariables::new());
+    static PATTERN: LazyLock<PatternVariables> = LazyLock::new(PatternVariables::new);
 
     impl<'a> Default for RawFileContent<'a> {
         fn default() -> Self {
@@ -833,9 +826,11 @@ mod tests {
             variable_replacers: vec![Arc::new(KeyEchoReplacer)],
             ..DEFAULT_RENAMER.clone()
         };
-        let mut item = SourceItem::default();
-        item.title = "Example".to_owned();
-        item.content_type = "video".to_owned();
+        let mut item = SourceItem {
+            title: "Example".to_owned(),
+            content_type: "video".to_owned(),
+            ..Default::default()
+        };
         item.attrs.insert("score".to_owned(), json!(10));
         let expected_date = item.datetime.date().to_string();
         let expected_year = item.datetime.year().to_string();

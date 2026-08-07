@@ -167,7 +167,7 @@ impl ProcessorManager {
             .task_group
             .clone()
             .or(source.group())
-            .unwrap_or_else(|| source_id.component_type.name);
+            .unwrap_or(source_id.component_type.name);
         let processor = Arc::new(SourceProcessor::new(
             config.name.to_owned(),
             config.source.to_owned(),
@@ -180,7 +180,7 @@ impl ProcessorManager {
             config.category.to_owned(),
             config.tags.to_owned(),
             self.create_renamer(config)?,
-            self.create_options(&config, task_group)?,
+            self.create_options(config, task_group)?,
         ));
         let instance_id = processor.instance_id();
         processor.start_rename_task();
@@ -263,7 +263,6 @@ impl ProcessorManager {
             trimming,
             path_name_length_limit: config.options.path_name_length_limit,
             variable_process_chain,
-            ..Renamer::default()
         })
     }
 
@@ -285,7 +284,7 @@ impl ProcessorManager {
         }
 
         for x in &opt.item_filters {
-            let component_id = ComponentRootType::SourceItemFilter.parse_component_id(&x);
+            let component_id = ComponentRootType::SourceItemFilter.parse_component_id(x);
             item_filters.push(
                 self.get_component_for_processor(&component_id, &config.name)?
                     .as_source_item_filter()?,
@@ -295,7 +294,7 @@ impl ProcessorManager {
         // ===
         let mut source_file_filters: Vec<Arc<dyn SourceFileFilter>> = vec![];
         for x in &opt.source_file_filters {
-            let component_id = ComponentRootType::SourceFileFilter.parse_component_id(&x);
+            let component_id = ComponentRootType::SourceFileFilter.parse_component_id(x);
             source_file_filters.push(
                 self.get_component_for_processor(&component_id, &config.name)?
                     .as_source_file_filter()?,
@@ -305,7 +304,7 @@ impl ProcessorManager {
         // ===
         let mut variable_providers: Vec<Arc<dyn VariableProvider>> = vec![];
         for x in &opt.variable_providers {
-            let component_id = ComponentRootType::VariableProvider.parse_component_id(&x);
+            let component_id = ComponentRootType::VariableProvider.parse_component_id(x);
             variable_providers.push(
                 self.get_component_for_processor(&component_id, &config.name)?
                     .as_variable_provider()?,
@@ -323,7 +322,7 @@ impl ProcessorManager {
         // ===
         let mut file_taggers: Vec<Arc<dyn FileTagger>> = vec![];
         for x in &opt.file_taggers {
-            let component_id = ComponentRootType::FileTagger.parse_component_id(&x);
+            let component_id = ComponentRootType::FileTagger.parse_component_id(x);
             file_taggers.push(
                 self.get_component_for_processor(&component_id, &config.name)?
                     .as_file_tagger()?,
@@ -343,8 +342,7 @@ impl ProcessorManager {
         }
 
         for x in &opt.file_content_filters {
-            let component_id =
-                ComponentRootType::FileContentFilter.parse_component_id(&x);
+            let component_id = ComponentRootType::FileContentFilter.parse_component_id(x);
             file_content_filters.push(
                 self.get_component_for_processor(&component_id, &config.name)?
                     .as_file_content_filter()?,
@@ -364,8 +362,7 @@ impl ProcessorManager {
         }
 
         for x in &opt.item_content_filters {
-            let component_id =
-                ComponentRootType::ItemContentFilter.parse_component_id(&x);
+            let component_id = ComponentRootType::ItemContentFilter.parse_component_id(x);
             item_content_filters.push(
                 self.get_component_for_processor(&component_id, &config.name)?
                     .as_item_content_filter()?,
@@ -589,16 +586,16 @@ impl ProcessorManager {
                     None
                 };
 
-            if opt.save_processing_content {
-                if let Some(filters) = item_filters.as_mut() {
-                    filters.push(identity_filter.clone());
-                }
+            if opt.save_processing_content
+                && let Some(filters) = item_filters.as_mut()
+            {
+                filters.push(identity_filter.clone());
             }
             // ===
             let expression_matching = item_opt_cfg
                 .expression_matching
                 .as_ref()
-                .map(|x| FACTORY.create(&x))
+                .map(|x| FACTORY.create(x))
                 .transpose()?;
             let matcher = ExpressionAndTagMatcher::new(
                 expression_matching,
@@ -685,7 +682,7 @@ impl ProcessorManager {
             let expression_matching = file_opt_cfg
                 .expression_matching
                 .as_ref()
-                .map(|x| FACTORY.create(&x))
+                .map(|x| FACTORY.create(x))
                 .transpose()?;
             let matcher = ExpressionAndTagMatcher::new(
                 expression_matching,
@@ -859,11 +856,15 @@ mod test {
             component_manager,
             Arc::new(MemoryProcessingStorage::new()),
         );
-        let mut options = ProcessorOptionConfig::default();
-        options.file_content_expression_exclusions =
-            vec!["file.name == 'blocked.txt'".to_owned()];
-        options.item_content_expression_exclusions =
-            vec!["item.title == 'blocked'".to_owned()];
+        let options = ProcessorOptionConfig {
+            file_content_expression_exclusions: vec![
+                "file.name == 'blocked.txt'".to_owned(),
+            ],
+            item_content_expression_exclusions: vec![
+                "item.title == 'blocked'".to_owned(),
+            ],
+            ..Default::default()
+        };
         let config = ProcessorConfig {
             name: "filter-options".to_owned(),
             enabled: true,
@@ -986,9 +987,11 @@ mod test {
         };
 
         let renamer = manager.create_renamer(&config).unwrap();
-        let mut item = SourceItem::default();
-        item.title = "series:01".to_owned();
-        item.content_type = "video/mp4".to_owned();
+        let item = SourceItem {
+            title: "series:01".to_owned(),
+            content_type: "video/mp4".to_owned(),
+            ..Default::default()
+        };
         let variables = renamer.item_rename_variables(&item, &HashMap::new()).await;
 
         assert_eq!("series：01", variables.variables["item"]["title"]);

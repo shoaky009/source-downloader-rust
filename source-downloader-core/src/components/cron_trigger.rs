@@ -141,9 +141,10 @@ impl Drop for CronTrigger {
         self.stop();
     }
 }
+type TaskGroups = Vec<(Option<String>, Vec<Arc<dyn ProcessTask>>)>;
 
 fn group_tasks(tasks: Vec<Arc<dyn ProcessTask>>) -> Vec<Vec<Arc<dyn ProcessTask>>> {
-    let mut groups: Vec<(Option<String>, Vec<Arc<dyn ProcessTask>>)> = Vec::new();
+    let mut groups: TaskGroups = Vec::new();
     for task in tasks {
         let group = task.group();
         if let Some((_, grouped)) = groups.iter_mut().find(|(known, _)| known == &group) {

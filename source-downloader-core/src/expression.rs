@@ -60,8 +60,7 @@ pub fn source_file_variables(file: &SourceFile) -> Map<String, Value> {
         Value::from(
             file.path
                 .file_name()
-                .map(|x| x.to_str())
-                .flatten()
+                .and_then(|x| x.to_str())
                 .map(|x| x.to_string())
                 .unwrap_or("".to_string()),
         ),
@@ -71,8 +70,7 @@ pub fn source_file_variables(file: &SourceFile) -> Map<String, Value> {
         Value::from(
             file.path
                 .extension()
-                .map(|x| x.to_str())
-                .flatten()
+                .and_then(|x| x.to_str())
                 .map(|x| x.to_string())
                 .unwrap_or("".to_string()),
         ),
@@ -97,8 +95,7 @@ pub fn file_content_variables(file: &FileContent) -> Map<String, Value> {
         "name".to_owned(),
         Value::from(
             path.file_name()
-                .map(|x| x.to_str())
-                .flatten()
+                .and_then(|x| x.to_str())
                 .map(|x| x.to_string())
                 .unwrap_or("".to_string()),
         ),
@@ -107,8 +104,7 @@ pub fn file_content_variables(file: &FileContent) -> Map<String, Value> {
         "extension".to_owned(),
         Value::from(
             path.extension()
-                .map(|x| x.to_str())
-                .flatten()
+                .and_then(|x| x.to_str())
                 .map(|x| x.to_string())
                 .unwrap_or("".to_string()),
         ),
@@ -125,8 +121,7 @@ pub fn file_content_variables(file: &FileContent) -> Map<String, Value> {
     let path_segments: Vec<Value> = path
         .strip_prefix(&file.download_path)
         .ok()
-        .map(|x| x.parent())
-        .flatten()
+        .and_then(|x| x.parent())
         .into_iter()
         .flat_map(get_path_segments)
         .map(Value::String)
@@ -148,7 +143,7 @@ fn pattern_variables_value(pattern_variables: &PatternVariables) -> Value {
 }
 
 pub fn item_content_variables(item: &ItemContent) -> Map<String, Value> {
-    let mut variables: Map<String, Value> = source_item_variables(&item.source_item);
+    let mut variables: Map<String, Value> = source_item_variables(item.source_item);
     if let Some(Value::Object(item_obj)) = variables.get_mut("item") {
         // 添加 vars
         let vars: Map<String, Value> = item
@@ -160,7 +155,7 @@ pub fn item_content_variables(item: &ItemContent) -> Map<String, Value> {
         let b = item
             .file_contents
             .iter()
-            .map(|x| Value::Object(file_content_variables(&x)))
+            .map(|x| Value::Object(file_content_variables(x)))
             .collect::<Vec<_>>();
         item_obj.insert("files".to_string(), Value::Array(b));
     }

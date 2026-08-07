@@ -12,6 +12,7 @@ use std::time::Duration;
 use tokio::task::AbortHandle;
 use tokio::time::MissedTickBehavior;
 use tracing::{debug, info};
+type TaskGroups = Vec<(Option<String>, Vec<Arc<dyn ProcessTask>>)>;
 
 pub struct FixedScheduleTriggerSupplier;
 pub const SUPPLIER: FixedScheduleTriggerSupplier = FixedScheduleTriggerSupplier {};
@@ -173,7 +174,7 @@ impl FixedScheduleTrigger {
     }
 
     async fn run_tasks_once(tasks: Vec<Arc<dyn ProcessTask>>) {
-        let mut groups: Vec<(Option<String>, Vec<Arc<dyn ProcessTask>>)> = Vec::new();
+        let mut groups: TaskGroups = Vec::new();
         for task in tasks {
             let group = task.group();
             if let Some((_, grouped)) =

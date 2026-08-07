@@ -227,7 +227,7 @@ impl Downloader for CompositeDownloaderComponent {
         &self,
         task: &DownloadTask,
     ) -> Result<(), source_downloader_sdk::component::ProcessingError> {
-        self.0.selector.select(&task.source_item).submit(task).await
+        self.0.selector.select(task.source_item).submit(task).await
     }
 
     fn default_download_path(&self) -> &str {

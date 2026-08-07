@@ -278,8 +278,8 @@ pub struct ComponentWrapper {
 
 impl ComponentWrapper {
     pub fn require_component(&self) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        if self.component.is_some() {
-            return Ok(self.component.as_ref().unwrap().clone());
+        if let Some(component) = &self.component {
+            return Ok(component.clone());
         }
         Err(ComponentError::new(
             self.creation_error.clone().unwrap_or_else(|| {
@@ -359,12 +359,12 @@ mod tests {
 
         // multiple time get a component case, the component should be the same instance
         let component_wp2 = manager.get_component(id).unwrap();
-        assert!(Arc::ptr_eq(&component_arc, &component_wp2.component.as_ref().unwrap()));
+        assert!(Arc::ptr_eq(component_arc, component_wp2.component.as_ref().unwrap()));
 
         // to destroy a component case, the component should be recreated so that the instance is different
         manager.destroy(id);
         let component_wp3 = manager.get_component(id).unwrap();
-        assert!(!Arc::ptr_eq(&component_arc, &component_wp3.component.as_ref().unwrap()));
+        assert!(!Arc::ptr_eq(component_arc, component_wp3.component.as_ref().unwrap()));
     }
 
     #[test]

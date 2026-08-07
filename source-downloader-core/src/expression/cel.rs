@@ -37,7 +37,7 @@ where
         context.add_function("containsAny", contains_any);
         for (k, v) in vars.iter() {
             // 预期不应该错误
-            let _ = context.add_variable(k.as_str(), Self::json_to_cel(v)).unwrap();
+            context.add_variable(k.as_str(), Self::json_to_cel(v)).unwrap();
         }
         let value = self.program.execute(&context).map_err(|e| e.to_string())?;
         T::from_value(&value)

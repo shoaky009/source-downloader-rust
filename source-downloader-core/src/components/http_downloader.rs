@@ -242,11 +242,7 @@ impl Stateful for HttpDownloader {
         for (path, download) in self.downloads.lock().iter() {
             let elapsed_seconds = download.started_at.elapsed().as_secs();
             let downloaded = download.downloaded_bytes.load(Ordering::Relaxed);
-            let speed = if elapsed_seconds == 0 {
-                downloaded
-            } else {
-                downloaded / elapsed_seconds
-            };
+            let speed = downloaded.checked_div(elapsed_seconds).unwrap_or(downloaded);
             state.insert(
                 path.to_string_lossy().into_owned(),
                 serde_json::json!({
@@ -320,12 +316,12 @@ mod tests {
     }
 
     fn create_downloader(path: &Path) -> Arc<dyn Downloader> {
-        let props = serde_json::from_value::<Map<String, Value>>(serde_json::json!({
-            "download-path": path,
-            "parallelism": 2
-        }))
-        .unwrap();
-        SUPPLIER.apply(&props).unwrap().as_downloader().unwrap()
+        Arc::new(HttpDownloader {
+            path: path.to_string_lossy().into_owned(),
+            client: reqwest::Client::builder().no_proxy().build().unwrap(),
+            parallelism: 2,
+            downloads: Mutex::new(HashMap::new()),
+        })
     }
 
     #[tokio::test]
@@ -346,12 +342,7 @@ mod tests {
             tags: None,
             headers: Some(headers.iter().collect()),
         };
-        let props = serde_json::from_value::<Map<String, Value>>(serde_json::json!({
-            "download-path": directory.path(),
-            "parallelism": 2
-        }))
-        .unwrap();
-        let downloader = SUPPLIER.apply(&props).unwrap().as_downloader().unwrap();
+        let downloader = create_downloader(directory.path());
 
         downloader.submit(&task).await.unwrap();
 
