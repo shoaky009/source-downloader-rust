@@ -1,0 +1,416 @@
+use crate::client::TelegramClientInstance;
+use grammers_client::media::Media;
+use serde::{Deserialize, Serialize};
+use source_downloader_sdk::SourceItem;
+use source_downloader_sdk::async_trait::async_trait;
+use source_downloader_sdk::component::{
+    ComponentCreateContext, ComponentError, ComponentSupplier, ComponentType,
+    ItemPointer, PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source,
+    SourcePointer,
+};
+use source_downloader_sdk::http::Uri;
+use source_downloader_sdk::serde_json::{self, Map, Value};
+use source_downloader_sdk::time::{Date, OffsetDateTime, Time};
+use std::any::{Any, TypeId};
+use std::collections::{HashMap, HashSet};
+use std::fmt::{Display, Formatter};
+use std::str::FromStr;
+use std::sync::Arc;
+
+pub const MEDIA_TYPE_ATTR: &str = "mediaType";
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct ChatConfig {
+    chat_id: i64,
+    #[serde(default)]
+    begin_date: Option<Date>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct TelegramSourceConfig {
+    client: String,
+    chats: Vec<ChatConfig>,
+    #[serde(default = "default_sites")]
+    sites: HashSet<String>,
+    #[serde(default)]
+    include_non_media: bool,
+}
+
+fn default_sites() -> HashSet<String> {
+    HashSet::from(["Telegraph".to_string()])
+}
+
+pub struct TelegramSourceSupplier;
+pub const SOURCE_SUPPLIER: TelegramSourceSupplier = TelegramSourceSupplier;
+
+impl ComponentSupplier for TelegramSourceSupplier {
+    fn supply_types(&self) -> Vec<ComponentType> {
+        vec![ComponentType::source("telegram".into())]
+    }
+
+    fn apply(
+        &self,
+        context: &dyn ComponentCreateContext,
+        props: &Map<String, Value>,
+    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
+        let config =
+            serde_json::from_value::<TelegramSourceConfig>(Value::Object(props.clone()))
+                .map_err(|error| {
+                    ComponentError::new(format!(
+                        "Invalid Telegram source config: {error}"
+                    ))
+                })?;
+        if config.chats.is_empty() {
+            return Err(ComponentError::new("Telegram 'chats' must not be empty"));
+        }
+        let instance = context
+            .get_instance(&config.client, TypeId::of::<TelegramClientInstance>())?;
+        let client = instance.downcast::<TelegramClientInstance>().map_err(|_| {
+            ComponentError::new(format!(
+                "Telegram instance '{}' has an incompatible type",
+                config.client
+            ))
+        })?;
+        Ok(Arc::new(TelegramSource {
+            client,
+            chats: config.chats,
+            sites: config.sites,
+            include_non_media: config.include_non_media,
+        }))
+    }
+
+    fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
+        None
+    }
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TelegramPointer {
+    #[serde(default)]
+    chat_last_message_ids: HashMap<i64, i32>,
+}
+
+#[derive(Debug)]
+struct ChatPointer {
+    chat_id: i64,
+    message_id: i32,
+}
+
+impl ItemPointer for ChatPointer {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl SourcePointer for TelegramPointer {
+    fn dump(&self) -> Value {
+        serde_json::to_value(self).unwrap_or_default()
+    }
+
+    fn update(&mut self, _: &SourceItem, pointer: &dyn ItemPointer) {
+        if let Some(pointer) = pointer.as_any().downcast_ref::<ChatPointer>() {
+            self.chat_last_message_ids.insert(pointer.chat_id, pointer.message_id);
+        }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+#[derive(source_downloader_sdk::SdComponent)]
+#[component(Source)]
+struct TelegramSource {
+    client: Arc<TelegramClientInstance>,
+    chats: Vec<ChatConfig>,
+    sites: HashSet<String>,
+    include_non_media: bool,
+}
+
+impl std::fmt::Debug for TelegramSource {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TelegramSource")
+            .field("chats", &self.chats)
+            .field("sites", &self.sites)
+            .field("include_non_media", &self.include_non_media)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Display for TelegramSource {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("telegram")
+    }
+}
+
+#[async_trait]
+impl Source for TelegramSource {
+    async fn fetch<'pointer>(
+        &self,
+        pointer: &'pointer dyn SourcePointer,
+        limit: u32,
+    ) -> Result<Vec<PointedItem>, ProcessingError> {
+        let pointer =
+            pointer.as_any().downcast_ref::<TelegramPointer>().ok_or_else(|| {
+                ProcessingError::non_retryable("Invalid Telegram source pointer")
+            })?;
+        let client = self.client.client().await?;
+        let mut items = Vec::new();
+        for chat in &self.chats {
+            if items.len() >= limit as usize {
+                break;
+            }
+            let (peer, chat_name) = self.client.chat(chat.chat_id).await?;
+            let offset = pointer
+                .chat_last_message_ids
+                .get(&chat.chat_id)
+                .copied()
+                .unwrap_or_default();
+            let mut messages = client.iter_messages(peer).offset_id(offset).reverse(true);
+            if offset == 0
+                && let Some(begin_date) = chat.begin_date
+            {
+                let timestamp = i32::try_from(
+                    begin_date.with_time(Time::MIDNIGHT).assume_utc().unix_timestamp(),
+                )
+                .map_err(|_| {
+                    ProcessingError::non_retryable(
+                        "Telegram begin-date is outside the supported range",
+                    )
+                })?;
+                messages = messages.offset_date(timestamp);
+            }
+            let mut messages = messages.limit(limit as usize - items.len());
+            while let Some(message) =
+                messages.next().await.map_err(crate::client::telegram_error)?
+            {
+                if let Some(begin_date) = chat.begin_date
+                    && message.date().timestamp()
+                        < begin_date
+                            .with_time(Time::MIDNIGHT)
+                            .assume_utc()
+                            .unix_timestamp()
+                {
+                    continue;
+                }
+                let message_id = message.id();
+                if let Some(source_item) =
+                    self.convert_message(chat.chat_id, &chat_name, &message)?
+                {
+                    items.push(PointedItem {
+                        source_item,
+                        item_pointer: Arc::new(ChatPointer {
+                            chat_id: chat.chat_id,
+                            message_id,
+                        }),
+                    });
+                }
+                if items.len() >= limit as usize {
+                    break;
+                }
+            }
+        }
+        Ok(items)
+    }
+
+    fn default_pointer(&self) -> Box<dyn SourcePointer> {
+        let chat_last_message_ids =
+            self.chats.iter().map(|chat| (chat.chat_id, 0)).collect();
+        Box::new(TelegramPointer { chat_last_message_ids })
+    }
+
+    fn parse_raw_pointer(&self, value: Value) -> Box<dyn SourcePointer> {
+        let mut pointer =
+            serde_json::from_value::<TelegramPointer>(value).unwrap_or_default();
+        pointer
+            .chat_last_message_ids
+            .retain(|id, _| self.chats.iter().any(|chat| chat.chat_id == *id));
+        for chat in &self.chats {
+            pointer.chat_last_message_ids.entry(chat.chat_id).or_default();
+        }
+        Box::new(pointer)
+    }
+}
+
+impl TelegramSource {
+    fn convert_message(
+        &self,
+        configured_chat_id: i64,
+        chat_name: &str,
+        message: &grammers_client::message::Message,
+    ) -> Result<Option<SourceItem>, ProcessingError> {
+        let message_id = message.id();
+        let chat_id = configured_chat_id.unsigned_abs();
+        let link = uri(format!("tg://privatepost?channel={chat_id}&post={message_id}"))?;
+        let download_uri = uri(format!(
+            "tg://privatepost?channel={configured_chat_id}&post={message_id}"
+        ))?;
+        let datetime = OffsetDateTime::from_unix_timestamp(message.date().timestamp())
+            .map_err(|error| ProcessingError::non_retryable(error.to_string()))?;
+        let mut attrs = Map::from_iter([
+            ("messageId".into(), Value::from(message_id)),
+            ("chatId".into(), Value::from(chat_id)),
+            ("chatName".into(), Value::String(chat_name.to_string())),
+        ]);
+        if let Some(sender_id) = message.sender_id().and_then(|id| id.bare_id()) {
+            attrs.insert("fromId".into(), Value::from(sender_id));
+        }
+
+        let Some(media) = message.media() else {
+            return Ok(self.include_non_media.then(|| SourceItem {
+                title: format!("message-{message_id}"),
+                link,
+                datetime,
+                content_type: "message".into(),
+                download_uri,
+                attrs,
+                tags: vec![],
+                identity: None,
+            }));
+        };
+        match media {
+            Media::Photo(photo) => {
+                attrs.insert(MEDIA_TYPE_ATTR.into(), Value::String("photo".into()));
+                if let Some(size) = Media::Photo(photo).size() {
+                    attrs.insert("size".into(), Value::from(size));
+                }
+                Ok(Some(SourceItem {
+                    title: format!("{chat_id}-{message_id}.jpg"),
+                    link,
+                    datetime,
+                    content_type: "image/jpeg".into(),
+                    download_uri,
+                    attrs,
+                    tags: vec![],
+                    identity: None,
+                }))
+            }
+            Media::Document(document) => {
+                let title = document
+                    .name()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("{chat_id}-{message_id}"));
+                let content_type = document
+                    .mime_type()
+                    .unwrap_or("application/octet-stream")
+                    .to_string();
+                let identity = Some(document.id().to_string());
+                attrs.insert(MEDIA_TYPE_ATTR.into(), Value::String("document".into()));
+                if let Some(size) = document.size() {
+                    attrs.insert("size".into(), Value::from(size));
+                }
+                Ok(Some(SourceItem {
+                    title,
+                    link,
+                    datetime,
+                    content_type,
+                    download_uri,
+                    attrs,
+                    tags: vec![],
+                    identity,
+                }))
+            }
+            Media::Sticker(sticker) => {
+                let document = sticker.document;
+                attrs.insert(MEDIA_TYPE_ATTR.into(), Value::String("document".into()));
+                Ok(Some(SourceItem {
+                    title: document
+                        .name()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| format!("{chat_id}-{message_id}.webp")),
+                    link,
+                    datetime,
+                    content_type: document
+                        .mime_type()
+                        .unwrap_or("image/webp")
+                        .to_string(),
+                    download_uri,
+                    attrs,
+                    tags: vec![],
+                    identity: Some(document.id().to_string()),
+                }))
+            }
+            Media::WebPage(webpage) => self.convert_webpage(
+                webpage,
+                message.text(),
+                link,
+                datetime,
+                download_uri,
+                attrs,
+            ),
+            _ => Ok(None),
+        }
+    }
+
+    fn convert_webpage(
+        &self,
+        webpage: grammers_client::media::WebPage,
+        message_text: &str,
+        link: Uri,
+        datetime: OffsetDateTime,
+        fallback_download_uri: Uri,
+        mut attrs: Map<String, Value>,
+    ) -> Result<Option<SourceItem>, ProcessingError> {
+        let grammers_client::tl::enums::WebPage::Page(page) = webpage.raw.webpage else {
+            return Ok(None);
+        };
+        let Some(site_name) = page.site_name else {
+            return Ok(None);
+        };
+        if !self.sites.contains(&site_name) {
+            tracing::debug!(site = site_name, "Ignoring Telegram web page site");
+            return Ok(None);
+        }
+        attrs.insert(MEDIA_TYPE_ATTR.into(), Value::String("webpage".into()));
+        attrs.insert("site".into(), Value::String(site_name));
+        Ok(Some(SourceItem {
+            title: page.title.unwrap_or_else(|| message_text.to_string()),
+            link,
+            datetime,
+            content_type: page.r#type.unwrap_or_else(|| "webpage".into()),
+            download_uri: Uri::from_str(&page.url).unwrap_or(fallback_download_uri),
+            attrs,
+            tags: vec![],
+            identity: None,
+        }))
+    }
+}
+
+fn uri(value: String) -> Result<Uri, ProcessingError> {
+    Uri::from_str(&value).map_err(|error| {
+        ProcessingError::non_retryable(format!("Invalid Telegram URI: {error}"))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pointer_round_trips_and_refreshes_configured_chats() {
+        let source = TelegramSource {
+            client: Arc::new(TelegramClientInstance::disconnected(
+                crate::client::TelegramClientConfig {
+                    api_id: 1,
+                    api_hash: "hash".into(),
+                    metadata_path: "session".into(),
+                    proxy: None,
+                    timeout: 5,
+                },
+            )),
+            chats: vec![ChatConfig { chat_id: -7, begin_date: None }],
+            sites: default_sites(),
+            include_non_media: false,
+        };
+        let pointer =
+            source.parse_raw_pointer(source_downloader_sdk::serde_json::json!({
+                "chatLastMessageIds": {"-7": 12, "9": 2}
+            }));
+        assert_eq!(pointer.dump()["chatLastMessageIds"]["-7"], 12);
+        assert!(pointer.dump()["chatLastMessageIds"].get("9").is_none());
+    }
+}
