@@ -13,6 +13,7 @@ reqwest = { workspace = true, features = ["rustls-tls", "json", "system-proxy", 
 moka = { workspace = true, features = ["future"] }
 scraper = { workspace = true }
 parking_lot = { workspace = true }
+regex = { workspace = true }
 
 [dev-dependencies]
 wiremock = "0.6"
