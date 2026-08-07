@@ -177,14 +177,11 @@ impl PixivClient {
         &self,
         url: &str,
     ) -> Result<RemoteFile, ProcessingError> {
-        let response = self
+        let bytes = self
             .http
-            .send(self.authenticated(self.http.get(url)), "Fetch Pixiv file")
+            .bytes(self.authenticated(self.http.get(url)), "Fetch Pixiv file")
             .await?;
-        let size = response.content_length();
-        let bytes = response.bytes().await.map_err(|error| {
-            ProcessingError::non_retryable(format!("Read Pixiv file: {error}"))
-        })?;
+        let size = Some(bytes.len() as u64);
         let name = reqwest::Url::parse(url)
             .ok()
             .and_then(|url| url.path_segments()?.next_back().map(str::to_string))
