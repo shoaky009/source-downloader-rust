@@ -20,6 +20,7 @@ pub mod mikan_source;
 pub mod mikan_variable_provider;
 pub mod patreon_integration;
 pub mod pixiv_integration;
+pub mod qbittorrent_downloader;
 pub mod resolution_variable_provider;
 pub mod rss_source;
 pub mod season_variable_provider;

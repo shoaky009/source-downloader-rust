@@ -61,6 +61,7 @@ mimetype-detector = "0.3.11"
 encoding_rs = "0.8"
 chardetng = "0.1"
 quick-xml = "0.41"
+sha1 = "0.10"
 criterion = "0.8"
 vfs = "0.12"
 jsonpath-rust = { version = "1.0.4" }

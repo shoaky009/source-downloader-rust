@@ -735,6 +735,7 @@ dependencies = [
  "rss-for-mikan",
  "scraper",
  "serde",
+ "sha1",
  "source-downloader-sdk",
  "tempfile",
  "time",

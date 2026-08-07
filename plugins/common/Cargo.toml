@@ -21,6 +21,7 @@ url = { workspace = true }
 encoding_rs = { workspace = true }
 chardetng = { workspace = true }
 quick-xml = { workspace = true }
+sha1 = { workspace = true }
 
 [dev-dependencies]
 wiremock = "0.6"
