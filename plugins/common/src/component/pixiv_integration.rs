@@ -1,4 +1,5 @@
-use crate::http;
+use crate::api::pixiv::{Illustration, PixivClient};
+use crate::http::{self, HttpClient};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use source_downloader_sdk::SourceItem;
@@ -53,24 +54,20 @@ impl ComponentSupplier for PixivIntegrationSupplier {
             .unwrap_or("https://www.pixiv.net")
             .trim_end_matches('/')
             .to_string();
-        let client = if base.starts_with("http://127.0.0.1:") {
-            http::client_builder()
-                .no_proxy()
-                .build()
-                .map_err(|e| ComponentError::new(e.to_string()))?
+        let http = if base.starts_with("http://127.0.0.1:") {
+            HttpClient::from_reqwest(
+                http::client_builder()
+                    .no_proxy()
+                    .build()
+                    .map_err(|error| ComponentError::new(error.to_string()))?,
+            )
         } else {
-            http::build_client()?
+            HttpClient::new()?
         };
-        let headers = HashMap::from([
-            ("Cookie".into(), format!("PHPSESSID={sid}; ")),
-            ("Referer".into(), "https://www.pixiv.net/".into()),
-        ]);
         Ok(Arc::new(PixivIntegration {
             user,
             bookmark: mode == "bookmark",
-            base,
-            client,
-            headers,
+            client: PixivClient::new(http, base, sid)?,
         }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
@@ -80,9 +77,7 @@ impl ComponentSupplier for PixivIntegrationSupplier {
 struct PixivIntegration {
     user: i64,
     bookmark: bool,
-    base: String,
-    client: reqwest::Client,
-    headers: HashMap<String, String>,
+    client: PixivClient,
 }
 impl Debug for PixivIntegration {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -159,75 +154,7 @@ impl SourcePointer for PixivPointer {
         self
     }
 }
-#[derive(Deserialize)]
-struct Response<T> {
-    body: T,
-    error: bool,
-    message: Option<String>,
-}
-#[derive(Deserialize)]
-struct Bookmarks {
-    #[serde(default)]
-    works: Vec<Illustration>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Illustration {
-    id: i64,
-    title: String,
-    illust_type: i64,
-    #[serde(default)]
-    tags: Vec<String>,
-    user_id: i64,
-    user_name: String,
-    url: String,
-    x_restrict: i64,
-    create_date: String,
-    bookmark_data: Option<Bookmark>,
-    #[serde(default)]
-    is_masked: bool,
-}
-#[derive(Deserialize)]
-struct Bookmark {
-    id: String,
-}
-#[derive(Deserialize)]
-struct Page {
-    urls: HashMap<String, String>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Ugoira {
-    original_src: String,
-}
 impl PixivIntegration {
-    fn req(&self, path: &str) -> reqwest::RequestBuilder {
-        self.headers
-            .iter()
-            .fold(self.client.get(format!("{}{}", self.base, path)), |r, (k, v)| {
-                r.header(k, v)
-            })
-    }
-    async fn json<T: for<'de> Deserialize<'de>>(
-        &self,
-        r: reqwest::RequestBuilder,
-        op: &str,
-    ) -> Result<T, ProcessingError> {
-        let v = http::execute(&self.client, r, op)
-            .await?
-            .json::<Response<T>>()
-            .await
-            .map_err(|e| {
-                ProcessingError::non_retryable(format!("Invalid Pixiv response: {e}"))
-            })?;
-        if v.error {
-            Err(ProcessingError::non_retryable(
-                v.message.unwrap_or_else(|| "Pixiv API error".into()),
-            ))
-        } else {
-            Ok(v.body)
-        }
-    }
     fn item(i: &Illustration) -> Result<SourceItem, ProcessingError> {
         let link = Uri::from_str(&format!("https://www.pixiv.net/artworks/{}", i.id))
             .map_err(|e| ProcessingError::non_retryable(e.to_string()))?;
@@ -272,19 +199,7 @@ impl Source for PixivIntegration {
         let mut out = Vec::new();
         let mut offset = 0;
         loop {
-            let body: Bookmarks = self
-                .json(
-                    self.req(&format!("/ajax/user/{}/illusts/bookmarks", self.user))
-                        .query(&[
-                            ("tag", ""),
-                            ("offset", &offset.to_string()),
-                            ("limit", "50"),
-                            ("rest", "show"),
-                            ("lang", "zh"),
-                        ]),
-                    "Fetch Pixiv bookmarks",
-                )
-                .await?;
+            let body = self.client.bookmarks(self.user, offset, 50).await?;
             let bottom = body.works.len() < 50;
             if body.works.is_empty() {
                 break;
@@ -323,7 +238,7 @@ impl Source for PixivIntegration {
         Box::new(serde_json::from_value::<PixivPointer>(v).unwrap_or_default())
     }
     fn headers(&self, _: &SourceItem) -> Option<HashMap<String, String>> {
-        Some(self.headers.clone())
+        Some(self.client.headers())
     }
 }
 impl PixivIntegration {
@@ -332,16 +247,7 @@ impl PixivIntegration {
         p: &PixivPointer,
         limit: u32,
     ) -> Result<Vec<PointedItem>, ProcessingError> {
-        let value: Value = self
-            .json(
-                self.req(&format!("/ajax/user/{}/following", self.user)).query(&[
-                    ("offset", "0"),
-                    ("limit", "50"),
-                    ("rest", "show"),
-                ]),
-                "Fetch Pixiv followings",
-            )
-            .await?;
+        let value = self.client.following(self.user, 0, 50).await?;
         let users =
             value.get("users").and_then(Value::as_array).cloned().unwrap_or_default();
         let mut out = Vec::new();
@@ -389,45 +295,27 @@ impl ItemFileResolver for PixivIntegration {
                 || ProcessingError::non_retryable("Pixiv illustrationType missing"),
             )?;
         if kind != 2 {
-            let pages: Vec<Page> = self
-                .json(self.req(&format!("/ajax/illust/{id}/pages")), "Fetch Pixiv pages")
-                .await?;
-            return pages
+            return self
+                .client
+                .pages(id)
+                .await?
                 .into_iter()
-                .filter_map(|p| p.urls.get("original").cloned())
+                .filter_map(|page| page.urls.get("original").cloned())
                 .map(remote)
                 .collect();
         }
-        let meta: Ugoira = self
-            .json(
-                self.req(&format!("/ajax/illust/{id}/ugoira_meta")),
-                "Fetch Pixiv ugoira metadata",
-            )
-            .await?;
-        let request = self
-            .headers
-            .iter()
-            .fold(self.client.get(&meta.original_src), |r, (k, v)| r.header(k, v));
-        let response = http::execute(&self.client, request, "Fetch Pixiv ugoira").await?;
-        let size = response.content_length();
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| http::map_error(e, "Read Pixiv ugoira"))?;
+        let metadata = self.client.ugoira_metadata(id).await?;
+        let file = self.client.download(&metadata.original_src).await?;
         let mut attrs = Map::new();
-        if let Some(size) = size {
+        if let Some(size) = file.size {
             attrs.insert("size".into(), Value::from(size));
         }
-        let name = reqwest::Url::parse(&meta.original_src)
-            .ok()
-            .and_then(|u| u.path_segments()?.next_back().map(str::to_string))
-            .unwrap_or_else(|| format!("{id}.zip"));
         Ok(vec![SourceFile {
-            path: PathBuf::from(name),
+            path: PathBuf::from(file.name),
             attrs,
             download_uri: None,
             tags: vec![],
-            data: Some(Arc::from(bytes.as_ref())),
+            data: Some(Arc::from(file.bytes.as_ref())),
         }])
     }
 }
