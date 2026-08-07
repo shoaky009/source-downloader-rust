@@ -9,3 +9,4 @@ pub mod language_variable_provider;
 pub mod media_type_exists_detector;
 pub mod mikan_source;
 pub mod resolution_variable_provider;
+pub mod season_variable_provider;
