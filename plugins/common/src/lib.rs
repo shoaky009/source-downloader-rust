@@ -11,7 +11,7 @@ use crate::component::{
     chii_variable_provider, dlsite_variable_provider, doujin_title_trimmer,
     emby_image_tagger, episode_variable_provider, fanbox_integration,
     getchu_variable_provider, html_file_resolver, language_variable_provider,
-    media_type_exists_detector, mikan_source, patreon_integration,
+    media_type_exists_detector, mikan_source, patreon_integration, pixiv_integration,
     resolution_variable_provider, rss_source, season_variable_provider,
     simple_file_tagger, tmdb_variable_provider,
 };
@@ -58,6 +58,7 @@ impl Plugin for CommonPlugin {
             Arc::new(bilibili_source::SUPPLIER),
             Arc::new(fanbox_integration::SUPPLIER),
             Arc::new(patreon_integration::SUPPLIER),
+            Arc::new(pixiv_integration::SUPPLIER),
         ]
     }
 
