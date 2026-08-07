@@ -37,7 +37,8 @@ async fn main() {
         .init();
 
     let config = init_config();
-    let storage = create_storage(&config.db).await;
+    let storage =
+        create_storage(&config.db, &config.source_downloader.data_location).await;
     let mut core = create_core_application(&storage, &config.source_downloader);
     let webhook_adapter = Arc::new(AxumWebhookAdapter::default());
     core.set_webhook_adapter(webhook_adapter.clone());
@@ -63,12 +64,21 @@ fn init_config() -> ApplicationConfig {
     }
 }
 
-async fn create_storage(config: &Db) -> Arc<dyn ProcessingStorage> {
-    let url = config.url.clone().unwrap_or_else(|| "sqlite::memory:".to_string());
-    let url = &url;
+async fn create_storage(config: &Db, data_location: &Path) -> Arc<dyn ProcessingStorage> {
+    let url = match &config.url {
+        Some(url) => url.clone(),
+        None => {
+            tokio::fs::create_dir_all(data_location).await.unwrap();
+            default_database_url(data_location)
+        }
+    };
     info!("Using database url={}", url);
-    let storage = SeaProcessingStorage::new(url).await.unwrap();
+    let storage = SeaProcessingStorage::new_with_wal(&url).await.unwrap();
     Arc::new(storage)
+}
+
+fn default_database_url(data_location: &Path) -> String {
+    format!("sqlite:{}", data_location.join("source-downloader.db").display())
 }
 
 fn create_core_application(
@@ -238,4 +248,17 @@ struct Server {
     port: u16,
     #[arg(long = "server.static_dir", env = "SOURCE_DOWNLOADER_SERVER_STATIC_DIR")]
     static_dir: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_database_is_stored_in_data_location() {
+        assert_eq!(
+            default_database_url(Path::new("/var/lib/source-downloader")),
+            "sqlite:/var/lib/source-downloader/source-downloader.db"
+        );
+    }
 }

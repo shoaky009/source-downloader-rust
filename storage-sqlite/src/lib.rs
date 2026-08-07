@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use sea_orm::SqlxSqliteConnector;
 use sea_orm::entity::prelude::*;
 use sea_orm::sea_query::OnConflict;
-use sea_orm::sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sea_orm::sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sea_orm::*;
 use serde_json::json;
 use source_downloader_sdk::storage::{
@@ -21,10 +21,21 @@ pub struct SeaProcessingStorage {
 #[allow(dead_code)]
 impl SeaProcessingStorage {
     pub async fn new(database_url: &str) -> Result<Self, Error> {
+        Self::connect(database_url, false).await
+    }
+
+    pub async fn new_with_wal(database_url: &str) -> Result<Self, Error> {
+        Self::connect(database_url, true).await
+    }
+
+    async fn connect(database_url: &str, enable_wal: bool) -> Result<Self, Error> {
         let db = if database_url.starts_with("sqlite") {
-            let opts = SqliteConnectOptions::from_str(database_url)
+            let mut opts = SqliteConnectOptions::from_str(database_url)
                 .map_err(|x| Error { message: x.to_string() })?
                 .create_if_missing(true);
+            if enable_wal {
+                opts = opts.journal_mode(SqliteJournalMode::Wal);
+            }
             let sqlx_pool = SqlitePoolOptions::new()
                 .connect_with(opts)
                 .await
@@ -524,6 +535,7 @@ impl ProcessingStorage for SeaProcessingStorage {
 #[cfg(test)]
 mod test {
     use crate::SeaProcessingStorage;
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
     use source_downloader_sdk::SourceItem;
     use source_downloader_sdk::storage::{
         ItemContentCondition, ItemContentLite, ProcessingContent, ProcessingContentQuery,
@@ -550,6 +562,7 @@ mod test {
                     content_type: "text/html".to_string(),
                     download_uri: "https://example.com/download".parse().unwrap(),
                     attrs: Default::default(),
+
                     tags: Default::default(),
                     identity: None,
                 },
@@ -561,6 +574,28 @@ mod test {
             created_at: OffsetDateTime::now_utc(),
             updated_at: None,
         }
+    }
+    #[tokio::test]
+    async fn test_new_with_wal_enables_write_ahead_log() {
+        let database_path = std::env::temp_dir().join(format!("{}.db", Uuid::new_v4()));
+        let database_url = format!("sqlite:{}", database_path.display());
+
+        let storage = SeaProcessingStorage::new_with_wal(&database_url).await.unwrap();
+        let journal_mode: String = storage
+            .db
+            .query_one_raw(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "PRAGMA journal_mode".to_owned(),
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "journal_mode")
+            .unwrap();
+
+        assert_eq!(journal_mode, "wal");
+        drop(storage);
+        std::fs::remove_file(database_path).unwrap();
     }
 
     #[tokio::test]
