@@ -14,7 +14,7 @@ use crate::component::{
     language_variable_provider, media_type_exists_detector, mikan_source,
     mikan_variable_provider, patreon_integration, pixiv_integration,
     resolution_variable_provider, rss_source, season_variable_provider,
-    simple_file_tagger, tmdb_variable_provider,
+    simple_file_tagger, tmdb_variable_provider, torrent_file_resolver,
 };
 use source_downloader_sdk::component::ComponentSupplier;
 use source_downloader_sdk::instance::InstanceFactory;
@@ -57,6 +57,7 @@ impl Plugin for CommonPlugin {
             Arc::new(getchu_variable_provider::SUPPLIER),
             Arc::new(html_file_resolver::SUPPLIER),
             Arc::new(tmdb_variable_provider::SUPPLIER),
+            Arc::new(torrent_file_resolver::SUPPLIER),
             Arc::new(rss_source::SUPPLIER),
             Arc::new(bilibili_source::SUPPLIER),
             Arc::new(fanbox_integration::SUPPLIER),

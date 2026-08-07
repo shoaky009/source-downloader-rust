@@ -25,3 +25,4 @@ pub mod rss_source;
 pub mod season_variable_provider;
 pub mod simple_file_tagger;
 pub mod tmdb_variable_provider;
+pub mod torrent_file_resolver;
