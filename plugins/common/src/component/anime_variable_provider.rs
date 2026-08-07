@@ -1,4 +1,5 @@
-use crate::http;
+use crate::api::bangumi::{BangumiClient, BangumiSubject};
+use crate::http::{self, HttpClient};
 use parking_lot::Mutex;
 use regex::Regex;
 use serde::Deserialize;
@@ -64,21 +65,22 @@ impl ComponentSupplier for AnimeVariableProviderSupplier {
             })
             .transpose()?
             .unwrap_or(false);
-        let client = if anilist_url.starts_with("http://127.0.0.1:")
+        let http = if anilist_url.starts_with("http://127.0.0.1:")
             || bangumi_url.starts_with("http://127.0.0.1:")
         {
-            http::client_builder()
-                .no_proxy()
-                .build()
-                .map_err(|error| ComponentError::new(error.to_string()))?
+            HttpClient::from_reqwest(
+                http::client_builder()
+                    .no_proxy()
+                    .build()
+                    .map_err(|error| ComponentError::new(error.to_string()))?,
+            )
         } else {
-            http::build_client()?
+            HttpClient::new()?
         };
         Ok(Arc::new(AnimeVariableProvider {
-            client,
+            bangumi: BangumiClient::new(http.clone(), bangumi_url, token),
+            http,
             anilist_url,
-            bangumi_url,
-            token,
             prefer_bangumi,
             cache: Mutex::new(Cache::default()),
         }))
@@ -117,10 +119,9 @@ struct Cache {
 }
 
 struct AnimeVariableProvider {
-    client: reqwest::Client,
+    http: HttpClient,
+    bangumi: BangumiClient,
     anilist_url: String,
-    bangumi_url: String,
-    token: Option<String>,
     prefer_bangumi: bool,
     cache: Mutex<Cache>,
 }
@@ -172,15 +173,6 @@ struct AniListTitle {
     romaji: Option<String>,
     native: Option<String>,
 }
-#[derive(Deserialize)]
-struct BangumiResponse {
-    #[serde(default)]
-    data: Vec<BangumiSubject>,
-}
-#[derive(Deserialize)]
-struct BangumiSubject {
-    name: String,
-}
 
 impl AnimeVariableProvider {
     async fn variables(&self, raw_title: &str) -> PatternVariables {
@@ -229,13 +221,12 @@ impl AnimeVariableProvider {
     }
 
     async fn search_anilist(&self, title: &str) -> Option<AniListTitle> {
-        let request = self.client.post(&self.anilist_url).json(&json!({
+        let request = self.http.post(&self.anilist_url).json(&json!({
             "query": "query ($search: String) { Page(page: 1, perPage: 10) { media(search: $search, type: ANIME) { title { romaji native } } } }",
             "variables": { "search": title }
         }));
-        let response =
-            http::execute(&self.client, request, "Search AniList").await.ok()?;
-        let body = response.json::<AniListResponse>().await.ok()?;
+        let body =
+            self.http.json::<AniListResponse>(request, "Search AniList").await.ok()?;
         if !body.errors.is_empty() {
             return None;
         }
@@ -243,16 +234,7 @@ impl AnimeVariableProvider {
     }
 
     async fn search_bangumi(&self, title: &str) -> Option<BangumiSubject> {
-        let mut request = self
-            .client
-            .post(format!("{}/v0/search/subjects", self.bangumi_url))
-            .json(&json!({"keyword": title, "filter": {"type": [2], "nsfw": true}}));
-        if let Some(token) = &self.token {
-            request = request.bearer_auth(token);
-        }
-        let response =
-            http::execute(&self.client, request, "Search Bangumi anime").await.ok()?;
-        response.json::<BangumiResponse>().await.ok()?.data.into_iter().next()
+        self.bangumi.search_subjects(title).await.ok()?.into_iter().next()
     }
 }
 

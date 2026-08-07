@@ -1,8 +1,8 @@
-use crate::http;
+use crate::api::bangumi::BangumiClient;
+use crate::http::{self, HttpClient};
 use parking_lot::Mutex;
 use regex::Regex;
 use scraper::{Html, Selector};
-use serde::Deserialize;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
@@ -55,22 +55,23 @@ impl ComponentSupplier for MikanVariableProviderSupplier {
                     .ok_or_else(|| ComponentError::new("Invalid 'bgmtv-token' property"))
             })
             .transpose()?;
-        let client = if mikan_base.starts_with("http://127.0.0.1:")
+        let http = if mikan_base.starts_with("http://127.0.0.1:")
             || bangumi_base.starts_with("http://127.0.0.1:")
         {
-            http::client_builder()
-                .no_proxy()
-                .build()
-                .map_err(|error| ComponentError::new(error.to_string()))?
+            HttpClient::from_reqwest(
+                http::client_builder()
+                    .no_proxy()
+                    .build()
+                    .map_err(|error| ComponentError::new(error.to_string()))?,
+            )
         } else {
-            http::build_client()?
+            HttpClient::new()?
         };
         Ok(Arc::new(MikanVariableProvider {
-            client,
+            bangumi: BangumiClient::new(http.clone(), bangumi_base, bangumi_token),
+            http,
             mikan_base,
-            bangumi_base,
             token,
-            bangumi_token,
             cache: Mutex::new(Cache::default()),
         }))
     }
@@ -108,11 +109,10 @@ struct Cache {
 }
 
 struct MikanVariableProvider {
-    client: reqwest::Client,
+    http: HttpClient,
+    bangumi: BangumiClient,
     mikan_base: String,
-    bangumi_base: String,
     token: Option<String>,
-    bangumi_token: Option<String>,
     cache: Mutex<Cache>,
 }
 
@@ -136,14 +136,6 @@ impl SdComponent for MikanVariableProvider {
     }
 }
 
-#[derive(Deserialize)]
-struct Subject {
-    name: String,
-    #[serde(default)]
-    name_cn: String,
-    date: Option<String>,
-}
-
 impl MikanVariableProvider {
     fn mikan_request(&self, url: &str) -> reqwest::RequestBuilder {
         let url = if url.starts_with("http://") || url.starts_with("https://") {
@@ -151,7 +143,7 @@ impl MikanVariableProvider {
         } else {
             format!("{}{}", self.mikan_base, url)
         };
-        let request = self.client.get(url);
+        let request = self.http.get(url);
         match &self.token {
             Some(token) => request
                 .header("Cookie", format!(".AspNetCore.Identity.Application={token}")),
@@ -183,15 +175,10 @@ impl MikanVariableProvider {
         &self,
         item: &SourceItem,
     ) -> Result<PatternVariables, source_downloader_sdk::component::ProcessingError> {
-        let episode = http::execute(
-            &self.client,
-            self.mikan_request(&item.link.to_string()),
-            "Fetch Mikan episode",
-        )
-        .await?
-        .text()
-        .await
-        .map_err(|error| http::map_error(error, "Read Mikan episode"))?;
+        let episode = self
+            .http
+            .text(self.mikan_request(&item.link.to_string()), "Fetch Mikan episode")
+            .await?;
         let (mikan_title, href) = {
             let document = Html::parse_document(&episode);
             let title = document.select(&TITLE_SELECTOR).next();
@@ -207,11 +194,7 @@ impl MikanVariableProvider {
             return Ok(HashMap::new());
         };
         let bangumi_page =
-            http::execute(&self.client, self.mikan_request(&href), "Fetch Mikan bangumi")
-                .await?
-                .text()
-                .await
-                .map_err(|error| http::map_error(error, "Read Mikan bangumi"))?;
+            self.http.text(self.mikan_request(&href), "Fetch Mikan bangumi").await?;
         let subject_id = {
             let page = Html::parse_document(&bangumi_page);
             page.select(&SUBJECT_SELECTOR)
@@ -223,16 +206,7 @@ impl MikanVariableProvider {
         let Some(subject_id) = subject_id else {
             return Ok(HashMap::new());
         };
-        let mut request =
-            self.client.get(format!("{}/v0/subjects/{subject_id}", self.bangumi_base));
-        if let Some(token) = &self.bangumi_token {
-            request = request.bearer_auth(token);
-        }
-        let subject = http::execute(&self.client, request, "Fetch Bangumi subject")
-            .await?
-            .json::<Subject>()
-            .await
-            .map_err(|error| http::map_error(error, "Decode Bangumi subject"))?;
+        let subject = self.bangumi.get_subject(&subject_id).await?;
         let name_cn = if subject.name_cn.trim().is_empty() {
             subject.name.clone()
         } else {

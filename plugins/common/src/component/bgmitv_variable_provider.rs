@@ -1,6 +1,6 @@
-use crate::http;
+use crate::api::bangumi::BangumiClient;
+use crate::http::{self, HttpClient};
 use parking_lot::Mutex;
-use serde::Deserialize;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
@@ -37,17 +37,19 @@ impl ComponentSupplier for BgmTvVariableProviderSupplier {
             })
             .transpose()?
             .map(str::to_string);
-        let client = if base_url.starts_with("http://127.0.0.1:") {
-            http::client_builder().no_proxy().build().map_err(|error| {
-                ComponentError::new(format!("Failed to build Bangumi client: {error}"))
-            })?
+        let http = if base_url.starts_with("http://127.0.0.1:") {
+            HttpClient::from_reqwest(http::client_builder().no_proxy().build().map_err(
+                |error| {
+                    ComponentError::new(format!(
+                        "Failed to build Bangumi client: {error}"
+                    ))
+                },
+            )?)
         } else {
-            http::build_client()?
+            HttpClient::new()?
         };
         Ok(Arc::new(BgmTvVariableProvider {
-            client,
-            base_url,
-            token,
+            client: BangumiClient::new(http, base_url, token),
             cache: Mutex::new(Cache::default()),
         }))
     }
@@ -64,14 +66,12 @@ struct Cache {
     order: VecDeque<String>,
 }
 struct BgmTvVariableProvider {
-    client: reqwest::Client,
-    base_url: String,
-    token: Option<String>,
+    client: BangumiClient,
     cache: Mutex<Cache>,
 }
 impl std::fmt::Debug for BgmTvVariableProvider {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BgmTvVariableProvider").field("base_url", &self.base_url).finish()
+        f.debug_struct("BgmTvVariableProvider").finish()
     }
 }
 impl Display for BgmTvVariableProvider {
@@ -86,15 +86,6 @@ impl SdComponent for BgmTvVariableProvider {
         Ok(self)
     }
 }
-#[derive(Deserialize)]
-struct SearchBody {
-    #[serde(default)]
-    list: Vec<SubjectItem>,
-}
-#[derive(Deserialize)]
-struct SubjectItem {
-    name: String,
-}
 impl BgmTvVariableProvider {
     async fn search(&self, title: &str) -> PatternVariables {
         if title.trim().is_empty() {
@@ -103,35 +94,14 @@ impl BgmTvVariableProvider {
         if let Some(value) = self.cache.lock().values.get(title).cloned() {
             return value;
         }
-        let encoded: String =
-            url::form_urlencoded::byte_serialize(title.as_bytes()).collect();
-        let mut request = self
-            .client
-            .get(format!("{}/search/subject/{encoded}", self.base_url))
-            .query(&[("type", 2), ("responseGroup", 0)]);
-        if let Some(token) = &self.token {
-            request = request.bearer_auth(token);
-        }
-        let variables =
-            match http::execute(&self.client, request, "Search Bangumi subject").await {
-                Ok(response) => match response.json::<SearchBody>().await {
-                    Ok(body) => body
-                        .list
-                        .first()
-                        .map(|subject| {
-                            HashMap::from([(
-                                "nativeName".to_string(),
-                                subject.name.clone(),
-                            )])
-                        })
-                        .unwrap_or_default(),
-                    Err(_) => HashMap::new(),
-                },
-                Err(error) => {
-                    tracing::warn!(error = %error, "Bangumi search failed");
-                    HashMap::new()
-                }
-            };
+        let variables = match self.client.search_legacy_subject(title).await {
+            Ok(Some(name)) => HashMap::from([("nativeName".to_string(), name)]),
+            Ok(None) => HashMap::new(),
+            Err(error) => {
+                tracing::warn!(error = %error, "Bangumi search failed");
+                HashMap::new()
+            }
+        };
         let mut cache = self.cache.lock();
         if cache.values.len() == 500
             && let Some(oldest) = cache.order.pop_front()

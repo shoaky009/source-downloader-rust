@@ -1,3 +1,4 @@
+mod api;
 mod component;
 mod http;
 mod instance;
