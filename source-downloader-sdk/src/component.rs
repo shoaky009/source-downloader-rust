@@ -534,7 +534,7 @@ pub trait FileExistsDetector: SdComponent {
         file_mover: &'a dyn FileMover,
         source_item: &'a SourceItem,
         file_contents: &'a [FileContent],
-    ) -> HashMap<&'a PathBuf, Option<&'a PathBuf>>;
+    ) -> HashMap<&'a PathBuf, Option<PathBuf>>;
 }
 
 #[async_trait]

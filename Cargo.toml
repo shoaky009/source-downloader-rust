@@ -57,6 +57,7 @@ zstd = "0.13"
 regex = "1.12.2"
 imagesize = "0.14"
 lingua = { version = "1.7", default-features = false, features = ["chinese", "japanese"] }
+mimetype-detector = "0.3.11"
 criterion = "0.8"
 vfs = "0.12"
 jsonpath-rust = { version = "1.0.4" }

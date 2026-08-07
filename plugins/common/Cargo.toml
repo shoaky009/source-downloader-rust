@@ -16,6 +16,7 @@ parking_lot = { workspace = true }
 regex = { workspace = true }
 imagesize = { workspace = true }
 lingua = { workspace = true }
+mimetype-detector = { workspace = true }
 
 [dev-dependencies]
 wiremock = "0.6"

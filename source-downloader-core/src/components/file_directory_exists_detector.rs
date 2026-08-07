@@ -47,7 +47,7 @@ impl FileExistsDetector for FileDirectoryExistsDetector {
         file_mover: &'a dyn FileMover,
         _: &'a SourceItem,
         file_contents: &'a [FileContent],
-    ) -> HashMap<&'a PathBuf, Option<&'a PathBuf>> {
+    ) -> HashMap<&'a PathBuf, Option<PathBuf>> {
         let mut directories = Vec::new();
         for file in file_contents {
             if let Some(directory) = file_save_root_directory(file)
@@ -71,7 +71,7 @@ impl FileExistsDetector for FileDirectoryExistsDetector {
                     .and_then(|directory| exists_by_directory.get(directory))
                     .copied()
                     .unwrap_or(false);
-                (target, existing.then_some(file.target_path()))
+                (target, existing.then(|| file.target_path().clone()))
             })
             .collect()
     }

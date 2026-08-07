@@ -52,7 +52,7 @@ impl FileExistsDetector for SimpleFileExistsDetector {
         file_mover: &'a dyn FileMover,
         _: &'a SourceItem,
         file_contents: &'a [FileContent],
-    ) -> HashMap<&'a PathBuf, Option<&'a PathBuf>> {
+    ) -> HashMap<&'a PathBuf, Option<PathBuf>> {
         let paths: Vec<&'a PathBuf> =
             file_contents.iter().map(|fc| fc.target_path()).collect();
         let exists = file_mover.exists(&paths);
@@ -60,7 +60,7 @@ impl FileExistsDetector for SimpleFileExistsDetector {
         paths
             .into_iter()
             .zip(exists)
-            .map(|(path, exist)| (path, if exist { Some(path) } else { None }))
+            .map(|(path, exist)| (path, if exist { Some(path.clone()) } else { None }))
             .collect()
     }
 }

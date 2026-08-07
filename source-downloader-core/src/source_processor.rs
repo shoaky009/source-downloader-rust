@@ -2357,10 +2357,10 @@ trait Process {
         let exists_results = p.file_mover.exists(&target_paths);
 
         // 性能优化：使用两个并行数组暂存结果，而不是昂贵的 HashMap
-        let mut exists_out: Vec<Option<&PathBuf>> = target_paths
+        let mut exists_out: Vec<Option<PathBuf>> = target_paths
             .iter()
             .zip(exists_results)
-            .map(|(&path, exists)| if exists { Some(path) } else { None })
+            .map(|(&path, exists)| exists.then(|| path.clone()))
             .collect();
 
         // 如果开启了高级检测器，再进行覆写合并
@@ -2391,7 +2391,7 @@ trait Process {
         indices
             .into_iter()
             .zip(exists_out)
-            .map(|(idx, path_opt)| (idx, path_opt.map(|p| p.to_path_buf())))
+            .map(|(idx, path_opt)| (idx, path_opt))
             .collect()
     }
 
