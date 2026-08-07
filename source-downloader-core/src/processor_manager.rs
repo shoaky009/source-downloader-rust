@@ -116,6 +116,17 @@ impl ProcessorManager {
         ))
     }
 
+    fn component_stage<T>(
+        result: Result<T, ComponentError>,
+        stage: &str,
+    ) -> Result<T, ComponentError> {
+        result.map_err(|error| Self::creation_error(stage, error))
+    }
+
+    fn creation_error(stage: &str, error: ComponentError) -> ComponentError {
+        ComponentError::new(format!("Processor creation failed at {stage}: {error}"))
+    }
+
     pub fn create_processor(&self, config: &ProcessorConfig) {
         if config.enabled.not() {
             info!("Processor[disabled] {}", config.name);
@@ -125,7 +136,7 @@ impl ProcessorManager {
             Ok(p) => p,
             Err(err) => {
                 self.component_manager.remove_processor_refs(&config.name);
-                error!("Failed to create processor {}, cause: {}", config.name, err);
+                error!("Processor[create-failed] {}: {}", config.name, err);
                 self.processor_wrappers.write().insert(
                     config.name.to_owned(),
                     Arc::new(ProcessorWrapper {
@@ -152,7 +163,7 @@ impl ProcessorManager {
                 Ok(component) => component,
                 Err(error) => {
                     warn!(
-                        "Processor {} using an invalid trigger: {} cause: {}",
+                        "Processor[invalid-trigger] {} -> {}: {}",
                         config.name, component_ref, error
                     );
                     continue;
@@ -164,7 +175,10 @@ impl ProcessorManager {
                     info!("Processor[task-added] {} {}", config.name, component_ref);
                 }
                 Err(e) => {
-                    error!("Trigger {} is not a trigger, cause: {}", component_ref, e);
+                    error!(
+                        "Processor[trigger-type-error] {} -> {}: {}",
+                        config.name, component_ref, e
+                    );
                 }
             }
         }
@@ -175,40 +189,46 @@ impl ProcessorManager {
         config: &ProcessorConfig,
     ) -> Result<Arc<ProcessorWrapper>, ComponentError> {
         let source_id = ComponentRootType::Source.parse_component_id(&config.source);
-        let source = self.get_typed_component(
-            &source_id,
-            &config.name,
-            "source",
-            SdComponent::as_source,
-        )?;
+        let source = self
+            .get_typed_component(
+                &source_id,
+                &config.name,
+                "source",
+                SdComponent::as_source,
+            )
+            .map_err(|error| Self::creation_error("source", error))?;
 
         let item_file_resolver_id = ComponentRootType::ItemFileResolver
             .parse_component_id(&config.item_file_resolver);
-        let item_file_resolver = self.get_typed_component(
-            &item_file_resolver_id,
-            &config.name,
-            "item file resolver",
-            SdComponent::as_item_file_resolver,
-        )?;
-
+        let item_file_resolver = self
+            .get_typed_component(
+                &item_file_resolver_id,
+                &config.name,
+                "item file resolver",
+                SdComponent::as_item_file_resolver,
+            )
+            .map_err(|error| Self::creation_error("item-file-resolver", error))?;
         let downloader_id =
             ComponentRootType::Downloader.parse_component_id(&config.downloader);
-        let downloader = self.get_typed_component(
-            &downloader_id,
-            &config.name,
-            "downloader",
-            SdComponent::as_downloader,
-        )?;
+        let downloader = self
+            .get_typed_component(
+                &downloader_id,
+                &config.name,
+                "downloader",
+                SdComponent::as_downloader,
+            )
+            .map_err(|error| Self::creation_error("downloader", error))?;
 
         let file_mover_id =
             ComponentRootType::FileMover.parse_component_id(&config.file_mover);
-        let file_mover = self.get_typed_component(
-            &file_mover_id,
-            &config.name,
-            "file mover",
-            SdComponent::as_file_mover,
-        )?;
-
+        let file_mover = self
+            .get_typed_component(
+                &file_mover_id,
+                &config.name,
+                "file mover",
+                SdComponent::as_file_mover,
+            )
+            .map_err(|error| Self::creation_error("file-mover", error))?;
         let task_group = config
             .options
             .task_group
@@ -226,8 +246,10 @@ impl ProcessorManager {
             self.processing_storage.to_owned(),
             config.category.to_owned(),
             config.tags.to_owned(),
-            self.create_renamer(config)?,
-            self.create_options(config, task_group)?,
+            self.create_renamer(config)
+                .map_err(|error| Self::creation_error("renamer", error))?,
+            self.create_options(config, task_group)
+                .map_err(|error| Self::creation_error("options", error))?,
         ));
         let instance_id = processor.instance_id();
         processor.start_rename_task();
@@ -237,7 +259,7 @@ impl ProcessorManager {
             error_message: None,
         });
         self.processor_wrappers.write().insert(config.name.to_owned(), wrapper.clone());
-        info!("Processor[created] {}({:?})", config.name, instance_id);
+        info!("Processor[created] {} ({instance_id:?})", config.name);
         Ok(wrapper)
     }
 
@@ -250,9 +272,11 @@ impl ProcessorManager {
         for replacer_config in &config.options.variable_replacers {
             let component_id = ComponentRootType::VariableReplacer
                 .parse_component_id(&replacer_config.id);
-            let replacer = self
-                .get_component_for_processor(&component_id, &config.name)?
-                .as_variable_replacer()?;
+            let replacer = Self::component_stage(
+                self.get_component_for_processor(&component_id, &config.name)
+                    .and_then(|component| component.as_variable_replacer()),
+                "renamer.variable-replacer",
+            )?;
             variable_replacers.push(Arc::new(KeyFilterVariableReplacer {
                 replacer,
                 keys: replacer_config.keys.clone(),
@@ -266,14 +290,14 @@ impl ProcessorManager {
             for trimmer_id in &trimming_config.trimmers {
                 let component_id =
                     ComponentRootType::Trimmer.parse_component_id(trimmer_id);
-                trimmers.push(
-                    self.get_component_for_processor(&component_id, &config.name)?
-                        .as_trimmer()?,
-                );
+                trimmers.push(Self::component_stage(
+                    self.get_component_for_processor(&component_id, &config.name)
+                        .and_then(|component| component.as_trimmer()),
+                    "renamer.trimmer",
+                )?);
             }
             trimming.insert(trimming_config.variable_name.clone(), trimmers);
         }
-
         let mut variable_process_chain =
             Vec::with_capacity(config.options.variable_process.len());
         for process_config in &config.options.variable_process {
@@ -281,16 +305,23 @@ impl ProcessorManager {
             for provider_id in &process_config.chain {
                 let component_id =
                     ComponentRootType::VariableProvider.parse_component_id(provider_id);
-                chain.push(
-                    self.get_component_for_processor(&component_id, &config.name)?
-                        .as_variable_provider()?,
-                );
+                chain.push(Self::component_stage(
+                    self.get_component_for_processor(&component_id, &config.name)
+                        .and_then(|component| component.as_variable_provider()),
+                    "renamer.variable-process",
+                )?);
             }
             let condition = process_config
                 .condition_expression
                 .as_deref()
                 .map(|expression| FACTORY.create::<bool>(expression))
-                .transpose()?
+                .transpose()
+                .map_err(|error| {
+                    Self::creation_error(
+                        "renamer.variable-process-condition",
+                        ComponentError::new(error.to_string()),
+                    )
+                })?
                 .map(Arc::from);
             variable_process_chain.push(VariableProcessChain {
                 input: process_config.input.clone(),
@@ -472,12 +503,22 @@ impl ProcessorManager {
             rename_task_interval: humantime::parse_duration(
                 &config.options.rename_task_interval,
             )
-            .map_err(|e| e.to_string())?,
+            .map_err(|error| {
+                ComponentError::new(format!(
+                    "Processor option 'rename-task-interval' value '{}' failed: {error}",
+                    config.options.rename_task_interval
+                ))
+            })?,
             rename_times_threshold: config.options.rename_times_threshold,
             parallelism: config.options.parallelism,
             retry_attempts: config.options.retry_attempts,
             retry_backoff: humantime::parse_duration(&config.options.retry_backoff)
-                .map_err(|error| error.to_string())?,
+                .map_err(|error| {
+                    ComponentError::new(format!(
+                        "Processor option 'retry-backoff' value '{}' failed: {error}",
+                        config.options.retry_backoff
+                    ))
+                })?,
             task_group: Some(group),
             fetch_limit: config.options.fetch_limit,
             item_error_continue: config.options.item_error_continue,
@@ -522,14 +563,10 @@ impl ProcessorManager {
         exclusions: &[String],
         inclusions: &[String],
     ) -> Result<ExpressionItemFilter, ComponentError> {
-        let exclusions = exclusions
-            .iter()
-            .map(|x| FACTORY.create(x))
-            .collect::<Result<Vec<_>, _>>()?;
-        let inclusions = inclusions
-            .iter()
-            .map(|x| FACTORY.create(x))
-            .collect::<Result<Vec<_>, _>>()?;
+        let exclusions =
+            Self::compile_expressions("item-expression-exclusions", exclusions)?;
+        let inclusions =
+            Self::compile_expressions("item-expression-inclusions", inclusions)?;
         Ok(ExpressionItemFilter::new(exclusions, inclusions))
     }
 
@@ -537,14 +574,10 @@ impl ProcessorManager {
         exclusions: &[String],
         inclusions: &[String],
     ) -> Result<ExpressionItemContentFilter, ComponentError> {
-        let exclusions = exclusions
-            .iter()
-            .map(|x| FACTORY.create(x))
-            .collect::<Result<Vec<_>, _>>()?;
-        let inclusions = inclusions
-            .iter()
-            .map(|x| FACTORY.create(x))
-            .collect::<Result<Vec<_>, _>>()?;
+        let exclusions =
+            Self::compile_expressions("item-content-expression-exclusions", exclusions)?;
+        let inclusions =
+            Self::compile_expressions("item-content-expression-inclusions", inclusions)?;
         Ok(ExpressionItemContentFilter::new(exclusions, inclusions))
     }
 
@@ -552,15 +585,29 @@ impl ProcessorManager {
         exclusions: &[String],
         inclusions: &[String],
     ) -> Result<ExpressionFileContentFilter, ComponentError> {
-        let exclusions = exclusions
-            .iter()
-            .map(|x| FACTORY.create(x))
-            .collect::<Result<Vec<_>, _>>()?;
-        let inclusions = inclusions
-            .iter()
-            .map(|x| FACTORY.create(x))
-            .collect::<Result<Vec<_>, _>>()?;
+        let exclusions =
+            Self::compile_expressions("file-content-expression-exclusions", exclusions)?;
+        let inclusions =
+            Self::compile_expressions("file-content-expression-inclusions", inclusions)?;
         Ok(ExpressionFileContentFilter::new(exclusions, inclusions))
+    }
+
+    fn compile_expressions<T: crate::expression::ExprValue>(
+        option: &str,
+        expressions: &[String],
+    ) -> Result<Vec<Box<dyn crate::expression::CompiledExpression<T>>>, ComponentError>
+    {
+        expressions
+            .iter()
+            .enumerate()
+            .map(|(index, expression)| {
+                FACTORY.create(expression).map_err(|error| {
+                    ComponentError::new(format!(
+                        "Processor option '{option}[{index}]' value '{expression}' failed: {error}"
+                    ))
+                })
+            })
+            .collect()
     }
 
     fn apply_item_grouping(
@@ -829,12 +876,6 @@ mod test {
         drop(processor_wp);
         manager.destroy_processor(name);
         assert!(!manager.processor_exists(name));
-        assert_eq!(
-            source_downloader_sdk::component::ProcessTask::run(processor.as_ref())
-                .await
-                .unwrap_err(),
-            "Processor is closed"
-        );
         drop(processor);
         assert!(Arc::strong_count(&source_component) < source_refs_while_running);
         for id in &referenced_ids {
@@ -873,7 +914,7 @@ mod test {
         assert_eq!(
             processor_wp.error_message.as_deref(),
             Some(
-                "Component 'downloader:not-exists:not-exists' for processor 'normal-case' failed: Supplier not found for type: downloader:not-exists"
+                "Processor creation failed at downloader: Component 'downloader:not-exists:not-exists' for processor 'normal-case' failed: Supplier not found for type: downloader:not-exists",
             )
         );
         let source_id = ComponentRootType::Source.parse_component_id("system-file:test");

@@ -105,15 +105,18 @@ impl ComponentManager {
         let types = supplier.supply_types();
         let (pk_type, props) =
             self.get_component_props(&types, name, supplier.is_support_no_props())?;
-
         let (component, creation_error) = match supplier.apply(&props.inner) {
             Ok(c) => {
-                info!("Component[created] {}", instance_name);
+                info!("Component[created] {instance_name}");
                 (Some(c), None)
             }
-            Err(e) => {
-                eprintln!("Failed to create component {}: {}", instance_name, e);
-                (None, Some(e))
+            Err(error) => {
+                let error = ComponentError::new(format!(
+                    "Component '{}' creation failed (type={}, name={}): {}",
+                    instance_name, component_type, name, error
+                ));
+                tracing::error!("Component[create-failed] {instance_name}: {error}");
+                (None, Some(error))
             }
         };
 
