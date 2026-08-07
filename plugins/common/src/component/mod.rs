@@ -17,3 +17,4 @@ pub mod mikan_source;
 pub mod resolution_variable_provider;
 pub mod season_variable_provider;
 pub mod simple_file_tagger;
+pub mod tmdb_variable_provider;
