@@ -1,17 +1,85 @@
-use reqwest::{Client, ClientBuilder, RequestBuilder, Response, StatusCode};
+use reqwest::{Client, ClientBuilder, IntoUrl, RequestBuilder, Response, StatusCode};
+use serde::de::DeserializeOwned;
 use source_downloader_sdk::component::{ComponentError, ProcessingError};
 use std::time::Duration;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Clone, Debug)]
+pub(crate) struct HttpClient {
+    inner: Client,
+}
+
+impl HttpClient {
+    pub(crate) fn new() -> Result<Self, ComponentError> {
+        client_builder().build().map(Self::from_reqwest).map_err(|error| {
+            ComponentError::new(format!("Failed to build common HTTP client: {error}"))
+        })
+    }
+
+    pub(crate) fn from_reqwest(inner: Client) -> Self {
+        Self { inner }
+    }
+
+    pub(crate) fn get<U: IntoUrl>(&self, url: U) -> RequestBuilder {
+        self.inner.get(url)
+    }
+
+    pub(crate) fn post<U: IntoUrl>(&self, url: U) -> RequestBuilder {
+        self.inner.post(url)
+    }
+
+    pub(crate) async fn send(
+        &self,
+        request: RequestBuilder,
+        operation: &str,
+    ) -> Result<Response, ProcessingError> {
+        execute(&self.inner, request, operation).await
+    }
+
+    pub(crate) async fn json<T: DeserializeOwned>(
+        &self,
+        request: RequestBuilder,
+        operation: &str,
+    ) -> Result<T, ProcessingError> {
+        self.send(request, operation)
+            .await?
+            .json()
+            .await
+            .map_err(|error| map_error(error, &format!("Decode {operation} response")))
+    }
+
+    pub(crate) async fn text(
+        &self,
+        request: RequestBuilder,
+        operation: &str,
+    ) -> Result<String, ProcessingError> {
+        self.send(request, operation)
+            .await?
+            .text()
+            .await
+            .map_err(|error| map_error(error, &format!("Read {operation} response")))
+    }
+
+    pub(crate) async fn bytes(
+        &self,
+        request: RequestBuilder,
+        operation: &str,
+    ) -> Result<bytes::Bytes, ProcessingError> {
+        self.send(request, operation)
+            .await?
+            .bytes()
+            .await
+            .map_err(|error| map_error(error, &format!("Read {operation} response")))
+    }
+}
 
 pub(crate) fn client_builder() -> ClientBuilder {
     Client::builder().timeout(DEFAULT_TIMEOUT).cookie_store(true)
 }
 
 pub(crate) fn build_client() -> Result<Client, ComponentError> {
-    client_builder().build().map_err(|error| {
-        ComponentError::new(format!("Failed to build common HTTP client: {error}"))
-    })
+    HttpClient::new().map(|client| client.inner)
 }
 
 pub(crate) async fn execute(
@@ -49,6 +117,7 @@ fn is_retryable_status(status: StatusCode) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use source_downloader_sdk::serde_json;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -95,6 +164,48 @@ mod tests {
         assert!(matches!(error, ProcessingError::Retryable { .. }));
         assert!(error.message().contains("GET"));
         assert!(error.message().contains("/items"));
+    }
+
+    #[tokio::test]
+    async fn helpers_decode_response_bodies() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "value": 7
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/text"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("body"))
+            .expect(2)
+            .mount(&server)
+            .await;
+
+        let client =
+            HttpClient::from_reqwest(client_builder().no_proxy().build().unwrap());
+        let value: serde_json::Value = client
+            .json(client.get(format!("{}/json", server.uri())), "Fetch JSON")
+            .await
+            .unwrap();
+        assert_eq!(value["value"], 7);
+        assert_eq!(
+            client
+                .text(client.get(format!("{}/text", server.uri())), "Fetch text")
+                .await
+                .unwrap(),
+            "body"
+        );
+        assert_eq!(
+            client
+                .bytes(client.get(format!("{}/text", server.uri())), "Fetch bytes")
+                .await
+                .unwrap()
+                .as_ref(),
+            b"body"
+        );
     }
 
     #[tokio::test]
