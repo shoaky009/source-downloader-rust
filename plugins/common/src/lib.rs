@@ -10,6 +10,7 @@ use crate::component::{
     anime_title_variable_provider, doujin_title_trimmer, emby_image_tagger,
     episode_variable_provider, language_variable_provider, media_type_exists_detector,
     mikan_source, resolution_variable_provider, season_variable_provider,
+    simple_file_tagger,
 };
 use source_downloader_sdk::component::ComponentSupplier;
 use source_downloader_sdk::instance::InstanceFactory;
@@ -42,6 +43,7 @@ impl Plugin for CommonPlugin {
             Arc::new(media_type_exists_detector::SUPPLIER),
             Arc::new(resolution_variable_provider::SUPPLIER),
             Arc::new(season_variable_provider::SUPPLIER),
+            Arc::new(simple_file_tagger::SUPPLIER),
         ]
     }
 
