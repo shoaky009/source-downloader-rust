@@ -74,6 +74,8 @@ impl ComponentSupplier for DlsiteVariableProviderSupplier {
         None
     }
 }
+#[derive(Debug, source_downloader_sdk::SdComponent)]
+#[component(VariableProvider)]
 struct DlsiteVariableProvider {
     client: reqwest::Client,
     base: String,
@@ -82,23 +84,13 @@ struct DlsiteVariableProvider {
     prefer: bool,
     cache: Mutex<HashMap<String, PatternVariables>>,
 }
-impl std::fmt::Debug for DlsiteVariableProvider {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DlsiteVariableProvider").field("base", &self.base).finish()
-    }
-}
+
 impl Display for DlsiteVariableProvider {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "dlsite")
     }
 }
-impl SdComponent for DlsiteVariableProvider {
-    fn as_variable_provider(
-        self: Arc<Self>,
-    ) -> Result<Arc<dyn VariableProvider>, ComponentError> {
-        Ok(self)
-    }
-}
+
 static ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:RJ|VJ)\d+").unwrap());
 #[derive(Deserialize)]
 struct Suggest {

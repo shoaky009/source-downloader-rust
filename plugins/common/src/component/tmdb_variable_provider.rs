@@ -57,6 +57,8 @@ impl ComponentSupplier for TmdbVariableProviderSupplier {
         None
     }
 }
+#[derive(Debug, source_downloader_sdk::SdComponent)]
+#[component(VariableProvider)]
 struct TmdbVariableProvider {
     client: reqwest::Client,
     base: String,
@@ -64,23 +66,13 @@ struct TmdbVariableProvider {
     language: String,
     cache: Mutex<HashMap<String, PatternVariables>>,
 }
-impl std::fmt::Debug for TmdbVariableProvider {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TmdbVariableProvider").field("base", &self.base).finish()
-    }
-}
+
 impl Display for TmdbVariableProvider {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "tmdb")
     }
 }
-impl SdComponent for TmdbVariableProvider {
-    fn as_variable_provider(
-        self: Arc<Self>,
-    ) -> Result<Arc<dyn VariableProvider>, ComponentError> {
-        Ok(self)
-    }
-}
+
 #[derive(Deserialize)]
 struct Page {
     #[serde(default)]

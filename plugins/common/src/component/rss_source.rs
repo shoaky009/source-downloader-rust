@@ -81,6 +81,8 @@ fn strings(v: Option<&Value>, name: &str) -> Result<Vec<String>, ComponentError>
     .transpose()
     .map(|v| v.unwrap_or_default())
 }
+#[derive(Debug, source_downloader_sdk::SdComponent)]
+#[component(Source)]
 struct RssSource {
     url: String,
     tags: Vec<String>,
@@ -89,21 +91,13 @@ struct RssSource {
     client: reqwest::Client,
     group: Option<String>,
 }
-impl Debug for RssSource {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RssSource").field("url", &self.url).finish()
-    }
-}
+
 impl Display for RssSource {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "rss")
     }
 }
-impl SdComponent for RssSource {
-    fn as_source(self: Arc<Self>) -> Result<Arc<dyn Source>, ComponentError> {
-        Ok(self)
-    }
-}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 struct LatestPointer {
     #[serde(default)]

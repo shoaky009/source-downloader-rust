@@ -62,31 +62,20 @@ impl ComponentSupplier for PatreonIntegrationSupplier {
         None
     }
 }
+#[derive(Debug, source_downloader_sdk::SdComponent)]
+#[component(Source, ItemFileResolver)]
 struct PatreonIntegration {
     client: reqwest::Client,
     base: String,
     headers: HashMap<String, String>,
 }
-impl Debug for PatreonIntegration {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PatreonIntegration").field("base", &self.base).finish()
-    }
-}
+
 impl Display for PatreonIntegration {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "patreon")
     }
 }
-impl SdComponent for PatreonIntegration {
-    fn as_source(self: Arc<Self>) -> Result<Arc<dyn Source>, ComponentError> {
-        Ok(self)
-    }
-    fn as_item_file_resolver(
-        self: Arc<Self>,
-    ) -> Result<Arc<dyn ItemFileResolver>, ComponentError> {
-        Ok(self)
-    }
-}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct PatreonPointer {
     #[serde(default)]

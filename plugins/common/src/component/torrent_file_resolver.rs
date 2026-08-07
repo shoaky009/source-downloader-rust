@@ -35,7 +35,8 @@ impl ComponentSupplier for TorrentFileResolverSupplier {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, source_downloader_sdk::SdComponent)]
+#[component(ItemFileResolver)]
 struct TorrentFileResolver {
     client: reqwest::Client,
 }
@@ -43,14 +44,6 @@ struct TorrentFileResolver {
 impl Display for TorrentFileResolver {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "torrent")
-    }
-}
-
-impl SdComponent for TorrentFileResolver {
-    fn as_item_file_resolver(
-        self: Arc<Self>,
-    ) -> Result<Arc<dyn ItemFileResolver>, ComponentError> {
-        Ok(self)
     }
 }
 

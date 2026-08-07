@@ -89,6 +89,8 @@ struct Cache {
     values: HashMap<String, PatternVariables>,
     order: VecDeque<String>,
 }
+#[derive(Debug, source_downloader_sdk::SdComponent)]
+#[component(VariableProvider)]
 struct AiVariableProvider {
     client: reqwest::Client,
     endpoint: String,
@@ -100,24 +102,10 @@ struct AiVariableProvider {
     next_key: AtomicUsize,
     cache: Mutex<Cache>,
 }
-impl std::fmt::Debug for AiVariableProvider {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AiVariableProvider")
-            .field("endpoint", &self.endpoint)
-            .field("model", &self.model)
-            .finish()
-    }
-}
+
 impl Display for AiVariableProvider {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "ai")
-    }
-}
-impl SdComponent for AiVariableProvider {
-    fn as_variable_provider(
-        self: Arc<Self>,
-    ) -> Result<Arc<dyn VariableProvider>, ComponentError> {
-        Ok(self)
     }
 }
 

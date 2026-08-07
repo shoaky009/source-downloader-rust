@@ -46,27 +46,19 @@ impl ComponentSupplier for ChiiVariableProviderSupplier {
         None
     }
 }
+#[derive(Debug, source_downloader_sdk::SdComponent)]
+#[component(VariableProvider)]
 struct ChiiVariableProvider {
     client: reqwest::Client,
     endpoint: String,
 }
-impl std::fmt::Debug for ChiiVariableProvider {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ChiiVariableProvider").field("endpoint", &self.endpoint).finish()
-    }
-}
+
 impl Display for ChiiVariableProvider {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "chii")
     }
 }
-impl SdComponent for ChiiVariableProvider {
-    fn as_variable_provider(
-        self: Arc<Self>,
-    ) -> Result<Arc<dyn VariableProvider>, ComponentError> {
-        Ok(self)
-    }
-}
+
 const QUERY: &str = "query SubjectSearch($q: String, $type: String) {\n  querySubjectSearch(q: $q, type: $type) {\n    result {\n      ... on Subject {\n        id\n        name\n        nameCN\n        nsfw\n        date\n      }\n    }\n  }\n}";
 #[derive(Serialize)]
 struct Request<'a> {

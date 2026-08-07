@@ -55,32 +55,21 @@ impl ComponentSupplier for HtmlFileResolverSupplier {
         None
     }
 }
+#[derive(Debug, source_downloader_sdk::SdComponent)]
+#[component(ItemFileResolver)]
 struct HtmlFileResolver {
     client: reqwest::Client,
     selector: Selector,
     attr: String,
     direct: bool,
 }
-impl std::fmt::Debug for HtmlFileResolver {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HtmlFileResolver")
-            .field("attr", &self.attr)
-            .field("direct", &self.direct)
-            .finish()
-    }
-}
+
 impl Display for HtmlFileResolver {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "html")
     }
 }
-impl SdComponent for HtmlFileResolver {
-    fn as_item_file_resolver(
-        self: Arc<Self>,
-    ) -> Result<Arc<dyn ItemFileResolver>, ComponentError> {
-        Ok(self)
-    }
-}
+
 #[async_trait]
 impl ItemFileResolver for HtmlFileResolver {
     async fn resolve_files(

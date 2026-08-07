@@ -112,12 +112,14 @@ fn string_prop(
         .map(|value| value.unwrap_or_else(|| default.to_string()))
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Cache {
     values: HashMap<String, PatternVariables>,
     order: VecDeque<String>,
 }
 
+#[derive(Debug, source_downloader_sdk::SdComponent)]
+#[component(VariableProvider)]
 struct AnimeVariableProvider {
     http: HttpClient,
     bangumi: BangumiClient,
@@ -126,25 +128,9 @@ struct AnimeVariableProvider {
     cache: Mutex<Cache>,
 }
 
-impl Debug for AnimeVariableProvider {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AnimeVariableProvider")
-            .field("prefer_bangumi", &self.prefer_bangumi)
-            .finish()
-    }
-}
-
 impl Display for AnimeVariableProvider {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "anime")
-    }
-}
-
-impl SdComponent for AnimeVariableProvider {
-    fn as_variable_provider(
-        self: Arc<Self>,
-    ) -> Result<Arc<dyn VariableProvider>, ComponentError> {
-        Ok(self)
     }
 }
 

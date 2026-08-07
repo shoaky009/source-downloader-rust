@@ -74,34 +74,20 @@ impl ComponentSupplier for PixivIntegrationSupplier {
         None
     }
 }
+#[derive(Debug, source_downloader_sdk::SdComponent)]
+#[component(Source, ItemFileResolver)]
 struct PixivIntegration {
     user: i64,
     bookmark: bool,
     client: PixivClient,
 }
-impl Debug for PixivIntegration {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PixivIntegration")
-            .field("user", &self.user)
-            .field("bookmark", &self.bookmark)
-            .finish()
-    }
-}
+
 impl Display for PixivIntegration {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "pixiv")
     }
 }
-impl SdComponent for PixivIntegration {
-    fn as_source(self: Arc<Self>) -> Result<Arc<dyn Source>, ComponentError> {
-        Ok(self)
-    }
-    fn as_item_file_resolver(
-        self: Arc<Self>,
-    ) -> Result<Arc<dyn ItemFileResolver>, ComponentError> {
-        Ok(self)
-    }
-}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 struct PixivPointer {
     #[serde(default)]

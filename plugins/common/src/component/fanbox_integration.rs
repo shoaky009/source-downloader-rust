@@ -81,6 +81,8 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
     }
 }
 
+#[derive(Debug, source_downloader_sdk::SdComponent)]
+#[component(Source, ItemFileResolver)]
 struct FanboxIntegration {
     client: reqwest::Client,
     base: String,
@@ -88,27 +90,9 @@ struct FanboxIntegration {
     latest_only: bool,
 }
 
-impl Debug for FanboxIntegration {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FanboxIntegration")
-            .field("base", &self.base)
-            .field("latest_only", &self.latest_only)
-            .finish()
-    }
-}
 impl Display for FanboxIntegration {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "fanbox")
-    }
-}
-impl SdComponent for FanboxIntegration {
-    fn as_source(self: Arc<Self>) -> Result<Arc<dyn Source>, ComponentError> {
-        Ok(self)
-    }
-    fn as_item_file_resolver(
-        self: Arc<Self>,
-    ) -> Result<Arc<dyn ItemFileResolver>, ComponentError> {
-        Ok(self)
     }
 }
 

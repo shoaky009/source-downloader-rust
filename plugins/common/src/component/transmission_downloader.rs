@@ -69,6 +69,8 @@ fn optional(
         .transpose()
 }
 
+#[derive(Debug, source_downloader_sdk::SdComponent)]
+#[component(Downloader, AsyncDownloader)]
 struct TransmissionDownloader {
     client: reqwest::Client,
     endpoint: String,
@@ -78,23 +80,9 @@ struct TransmissionDownloader {
     default_path: OnceLock<String>,
 }
 
-impl Debug for TransmissionDownloader {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TransmissionDownloader")
-            .field("endpoint", &self.endpoint)
-            .finish()
-    }
-}
 impl Display for TransmissionDownloader {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "transmission")
-    }
-}
-impl SdComponent for TransmissionDownloader {
-    fn as_async_downloader(
-        self: Arc<Self>,
-    ) -> Result<Arc<dyn AsyncDownloader>, ComponentError> {
-        Ok(self)
     }
 }
 

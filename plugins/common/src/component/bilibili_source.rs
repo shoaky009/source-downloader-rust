@@ -53,27 +53,21 @@ impl ComponentSupplier for BilibiliSourceSupplier {
         None
     }
 }
+#[derive(Debug, source_downloader_sdk::SdComponent)]
+#[component(Source)]
 struct BilibiliSource {
     favorites: Vec<i64>,
     cookie: Option<String>,
     base: String,
     client: reqwest::Client,
 }
-impl Debug for BilibiliSource {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BilibiliSource").field("favorites", &self.favorites).finish()
-    }
-}
+
 impl Display for BilibiliSource {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "bilibili")
     }
 }
-impl SdComponent for BilibiliSource {
-    fn as_source(self: Arc<Self>) -> Result<Arc<dyn Source>, ComponentError> {
-        Ok(self)
-    }
-}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct BilibiliPointer {
     #[serde(default)]

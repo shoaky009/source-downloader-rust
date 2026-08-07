@@ -65,27 +65,19 @@ struct Cache {
     values: HashMap<String, PatternVariables>,
     order: VecDeque<String>,
 }
+#[derive(Debug, source_downloader_sdk::SdComponent)]
+#[component(VariableProvider)]
 struct BgmTvVariableProvider {
     client: BangumiClient,
     cache: Mutex<Cache>,
 }
-impl std::fmt::Debug for BgmTvVariableProvider {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BgmTvVariableProvider").finish()
-    }
-}
+
 impl Display for BgmTvVariableProvider {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "bgmtv")
     }
 }
-impl SdComponent for BgmTvVariableProvider {
-    fn as_variable_provider(
-        self: Arc<Self>,
-    ) -> Result<Arc<dyn VariableProvider>, ComponentError> {
-        Ok(self)
-    }
-}
+
 impl BgmTvVariableProvider {
     async fn search(&self, title: &str) -> PatternVariables {
         if title.trim().is_empty() {

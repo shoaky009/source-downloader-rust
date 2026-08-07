@@ -52,28 +52,20 @@ impl ComponentSupplier for GetchuVariableProviderSupplier {
         None
     }
 }
+#[derive(Debug, source_downloader_sdk::SdComponent)]
+#[component(VariableProvider)]
 struct GetchuVariableProvider {
     client: reqwest::Client,
     base: String,
     cache: Mutex<HashMap<String, PatternVariables>>,
 }
-impl std::fmt::Debug for GetchuVariableProvider {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GetchuVariableProvider").field("base", &self.base).finish()
-    }
-}
+
 impl Display for GetchuVariableProvider {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "getchu")
     }
 }
-impl SdComponent for GetchuVariableProvider {
-    fn as_variable_provider(
-        self: Arc<Self>,
-    ) -> Result<Arc<dyn VariableProvider>, ComponentError> {
-        Ok(self)
-    }
-}
+
 static ISBN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[a-zA-Z]+-[a-zA-Z0-9]+").unwrap());
 impl GetchuVariableProvider {

@@ -102,12 +102,14 @@ fn prop(
         .map(|value| value.unwrap_or_else(|| default.to_string()))
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Cache {
     values: HashMap<String, PatternVariables>,
     order: VecDeque<String>,
 }
 
+#[derive(Debug, source_downloader_sdk::SdComponent)]
+#[component(VariableProvider)]
 struct MikanVariableProvider {
     http: HttpClient,
     bangumi: BangumiClient,
@@ -116,23 +118,9 @@ struct MikanVariableProvider {
     cache: Mutex<Cache>,
 }
 
-impl Debug for MikanVariableProvider {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MikanVariableProvider")
-            .field("mikan_base", &self.mikan_base)
-            .finish()
-    }
-}
 impl Display for MikanVariableProvider {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "mikan")
-    }
-}
-impl SdComponent for MikanVariableProvider {
-    fn as_variable_provider(
-        self: Arc<Self>,
-    ) -> Result<Arc<dyn VariableProvider>, ComponentError> {
-        Ok(self)
     }
 }
 
