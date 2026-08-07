@@ -711,13 +711,16 @@ checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
 name = "common"
 version = "0.1.0"
 dependencies = [
+ "imagesize",
  "moka",
  "parking_lot",
+ "regex",
  "reqwest",
  "rss-for-mikan",
  "scraper",
  "serde",
  "source-downloader-sdk",
+ "tempfile",
  "time",
  "tokio",
  "tracing",
@@ -1990,6 +1993,12 @@ dependencies = [
  "icu_normalizer",
  "icu_properties",
 ]
+
+[[package]]
+name = "imagesize"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09e54e57b4c48b40f7aec75635392b12b3421fa26fe8b4332e63138ed278459c"
 
 [[package]]
 name = "indexmap"

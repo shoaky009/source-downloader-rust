@@ -14,10 +14,12 @@ moka = { workspace = true, features = ["future"] }
 scraper = { workspace = true }
 parking_lot = { workspace = true }
 regex = { workspace = true }
+imagesize = { workspace = true }
 
 [dev-dependencies]
 wiremock = "0.6"
 tokio = { workspace = true }
+tempfile = { workspace = true }
 
 #[lib]
 #crate-type = ["dylib", "rlib"]
