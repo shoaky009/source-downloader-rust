@@ -58,6 +58,7 @@ rkyv = { version = "0.8" }
 postcard = { version = "1.1", features = ["use-std"] }
 zstd = "0.13"
 regex = "1.12.2"
+anitomy = { git = "https://github.com/Rapptz/anitomy-rs", rev = "c5271be1d9fe71a49e93e98ac3f982b38e6e27b6" }
 imagesize = "0.14"
 lingua = { version = "1.7", default-features = false, features = ["chinese", "japanese"] }
 mimetype-detector = "0.3.11"

@@ -15,6 +15,7 @@ moka = { workspace = true, features = ["future"] }
 scraper = { workspace = true }
 parking_lot = { workspace = true }
 regex = { workspace = true }
+anitomy = { workspace = true }
 imagesize = { workspace = true }
 lingua = { workspace = true }
 mimetype-detector = { workspace = true }
