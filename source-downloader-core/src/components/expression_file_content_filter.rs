@@ -21,9 +21,9 @@ impl ComponentSupplier for ExpressionFileContentFilterSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::file_content_filter("expression".to_string())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let val = serde_json::to_value(props)
@@ -43,7 +43,6 @@ impl ComponentSupplier for ExpressionFileContentFilterSupplier {
 
         Ok(Arc::new(ExpressionFileContentFilter { exclusions, inclusions }))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }

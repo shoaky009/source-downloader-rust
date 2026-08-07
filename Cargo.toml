@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["source-downloader-core", "source-downloader-sdk", "applications/web", "plugins/common", "component-macro", "storage-memory", "storage-sqlite"]
+members = ["source-downloader-core", "source-downloader-sdk", "applications/web", "plugins/common", "plugins/telegram", "component-macro", "storage-memory", "storage-sqlite"]
 
 [profile.release]
 opt-level = "z"
@@ -59,6 +59,10 @@ postcard = { version = "1.1", features = ["use-std"] }
 zstd = "0.13"
 regex = "1.12.2"
 anitomy = { git = "https://github.com/Rapptz/anitomy-rs", rev = "c5271be1d9fe71a49e93e98ac3f982b38e6e27b6" }
+grammers-client = { version = "0.10.0", features = ["proxy", "markdown"] }
+grammers-session = { version = "0.10.0", default-features = false, features = ["serde"] }
+qrcode = "0.14.1"
+base64 = "0.22"
 imagesize = "0.14"
 lingua = { version = "1.7", default-features = false, features = ["chinese", "japanese"] }
 mimetype-detector = "0.3.11"

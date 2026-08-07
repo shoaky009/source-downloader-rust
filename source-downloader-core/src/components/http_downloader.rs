@@ -37,9 +37,9 @@ impl ComponentSupplier for HttpDownloaderSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::downloader("http".to_owned())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let config =
@@ -64,7 +64,6 @@ impl ComponentSupplier for HttpDownloaderSupplier {
             downloads: Mutex::new(HashMap::new()),
         }))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }
@@ -426,7 +425,12 @@ mod tests {
         .unwrap()
         .clone();
 
-        let error = SUPPLIER.apply(&props).unwrap_err();
+        let error = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &props,
+            )
+            .unwrap_err();
 
         assert_eq!(
             error.to_string(),

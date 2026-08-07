@@ -23,6 +23,7 @@ impl ComponentSupplier for GetchuVariableProviderSupplier {
     }
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         p: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let base = p

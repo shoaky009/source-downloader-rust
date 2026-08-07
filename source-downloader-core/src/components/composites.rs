@@ -74,9 +74,9 @@ impl ComponentSupplier for CompositeDownloaderSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::downloader("composite".to_owned())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let config = parse_config(props)?;
@@ -92,7 +92,6 @@ impl ComponentSupplier for CompositeDownloaderSupplier {
         let selector = ComponentSelector::new(default, rules);
         Ok(Arc::new(CompositeDownloaderComponent(CompositeDownloader::new(selector)?)))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }
@@ -112,9 +111,9 @@ impl ComponentSupplier for CompositeItemFileResolverSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::file_resolver("composite".to_owned())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let config = parse_config(props)?;
@@ -132,7 +131,6 @@ impl ComponentSupplier for CompositeItemFileResolverSupplier {
             selector,
         ))))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }
@@ -370,6 +368,7 @@ mod tests {
 
         fn apply(
             &self,
+            _: &dyn source_downloader_sdk::component::ComponentCreateContext,
             _: &Map<String, Value>,
         ) -> Result<Arc<dyn SdComponent>, ComponentError> {
             Ok(Arc::new(TestDownloader { path: "downloads".to_owned() }))

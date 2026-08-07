@@ -19,6 +19,7 @@ impl ComponentSupplier for SequenceVariableProviderSupplier {
 
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         _: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         Ok(Arc::new(SequenceVariableProvider))

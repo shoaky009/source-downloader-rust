@@ -1,8 +1,8 @@
 use crate::config::{ConfigOperator, Properties};
 use parking_lot::RwLock;
-use source_downloader_sdk::component::ComponentError;
+use source_downloader_sdk::component::{ComponentCreateContext, ComponentError};
 use source_downloader_sdk::instance::InstanceFactory;
-use std::any::{Any, TypeId, type_name};
+use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -26,47 +26,48 @@ impl InstanceManager {
         name: &str,
         props: Option<Properties>,
     ) -> Result<Arc<T>, String> {
+        let instance = self.get_instance(name, TypeId::of::<T>(), props)?;
+        instance
+            .downcast::<T>()
+            .map_err(|_| format!("Instance '{}' exists but type mismatch", name))
+    }
+
+    fn get_instance(
+        &self,
+        name: &str,
+        request_type_id: TypeId,
+        props: Option<Properties>,
+    ) -> Result<Arc<dyn Any + Send + Sync>, String> {
         let mut instances = self.instances.write();
-        if let Some(instance_any) = instances.get(name) {
-            return instance_any
-                .clone()
-                .downcast::<T>()
-                .map_err(|_| format!("Instance '{}' exists but type mismatch", name));
+        if let Some(instance) = instances.get(name) {
+            return ((**instance).type_id() == request_type_id)
+                .then(|| instance.clone())
+                .ok_or_else(|| format!("Instance '{}' exists but type mismatch", name));
         }
-        let request_type_id = TypeId::of::<T>();
         let factory_guard = self.factories.read();
         let factory = factory_guard.get(&request_type_id).ok_or_else(|| {
-            format!(
-                "No factory found for typeId {:?} name:{:?}",
-                request_type_id,
-                type_name::<T>()
-            )
+            format!("No factory found for typeId {:?}", request_type_id,)
         })?;
 
         let final_props = match props {
-            Some(p) => p,
+            Some(props) => props,
             None => {
                 self.config_operator.get_instance_props(name).map_err(|e| e.message)?
             }
         };
-
         let new_instance =
             factory.create_instance(&final_props.inner).map_err(|e| e.message)?;
         let instance_type_id = (*new_instance).type_id();
         if request_type_id != instance_type_id {
-            let factory_type_name = factory.factory_name();
-            let request_type_name = type_name::<T>();
             return Err(format!(
-                "Factory implementation error: factory `{}` declared output {} {:?}, but actually created instance of type {:?}.",
-                factory_type_name, request_type_name, request_type_id, instance_type_id,
+                "Factory implementation error: factory `{}` declared output {:?}, but actually created instance of type {:?}.",
+                factory.factory_name(),
+                request_type_id,
+                instance_type_id,
             ));
         }
 
-        let instance_any = instances.entry(name.to_string()).or_insert(new_instance);
-        instance_any
-            .clone()
-            .downcast::<T>()
-            .map_err(|_| format!("Instance '{}' exists but type mismatch", name))
+        Ok(instances.entry(name.to_string()).or_insert(new_instance).clone())
     }
 
     pub fn destroy_instance(&self, name: &str) {
@@ -109,6 +110,15 @@ impl InstanceManager {
         }
         self.factories.write().insert(type_id, factory.clone());
         Ok(true)
+    }
+}
+impl ComponentCreateContext for InstanceManager {
+    fn get_instance(
+        &self,
+        name: &str,
+        type_id: TypeId,
+    ) -> Result<Arc<dyn Any + Send + Sync>, ComponentError> {
+        self.get_instance(name, type_id, None).map_err(ComponentError::new)
     }
 }
 

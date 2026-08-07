@@ -20,6 +20,7 @@ impl ComponentSupplier for BgmTvVariableProviderSupplier {
     }
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let base_url = props
@@ -161,7 +162,14 @@ mod tests {
             ("base-url".to_string(), Value::String(server.uri())),
             ("token".to_string(), Value::String("token".to_string())),
         ]);
-        let provider = SUPPLIER.apply(&props).unwrap().as_variable_provider().unwrap();
+        let provider = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &props,
+            )
+            .unwrap()
+            .as_variable_provider()
+            .unwrap();
         assert_eq!(
             Some("葬送のフリーレン"),
             provider
@@ -184,7 +192,14 @@ mod tests {
         let server = MockServer::start().await;
         let props =
             Map::from_iter([("base-url".to_string(), Value::String(server.uri()))]);
-        let provider = SUPPLIER.apply(&props).unwrap().as_variable_provider().unwrap();
+        let provider = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &props,
+            )
+            .unwrap()
+            .as_variable_provider()
+            .unwrap();
         assert!(provider.item_variables(&item(" ")).await.is_empty());
         assert!(server.received_requests().await.unwrap().is_empty());
     }

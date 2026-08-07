@@ -36,9 +36,9 @@ impl ComponentSupplier for RegexVariableProviderSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::variable_provider("regex".to_owned())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let config: RegexVariableProviderConfig =
@@ -61,7 +61,6 @@ impl ComponentSupplier for RegexVariableProviderSupplier {
         }
         Ok(Arc::new(RegexVariableProvider { regexes, primary: config.primary }))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }

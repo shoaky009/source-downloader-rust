@@ -22,9 +22,9 @@ impl ComponentSupplier for FixedScheduleTriggerSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::trigger("fixed".to_string())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let interval_str = props
@@ -45,7 +45,6 @@ impl ComponentSupplier for FixedScheduleTriggerSupplier {
 
         Ok(Arc::new(FixedScheduleTrigger::new(interval, on_start_run_tasks)))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }

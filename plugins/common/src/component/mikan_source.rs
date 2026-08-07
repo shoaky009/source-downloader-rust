@@ -35,9 +35,9 @@ impl ComponentSupplier for MikanSourceSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::source("mikan".to_string())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let url = props
@@ -62,7 +62,6 @@ impl ComponentSupplier for MikanSourceSupplier {
             http_client,
         }))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }

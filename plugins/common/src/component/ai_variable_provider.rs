@@ -47,6 +47,7 @@ impl ComponentSupplier for AiVariableProviderSupplier {
     }
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let config: AiConfig = serde_json::from_value(Value::Object(props.clone()))
@@ -262,10 +263,20 @@ mod tests {
     }
     #[test]
     fn validates_required_nonempty_keys() {
-        assert!(SUPPLIER.apply(&Map::new()).is_err());
         assert!(
             SUPPLIER
-                .apply(&Map::from_iter([("api-keys".to_string(), serde_json::json!([]))]))
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &Map::new(),
+                )
+                .is_err()
+        );
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &Map::from_iter([("api-keys".to_string(), serde_json::json!([]))]),
+                )
                 .is_err()
         );
     }
@@ -280,8 +291,14 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let provider =
-            SUPPLIER.apply(&props(&server)).unwrap().as_variable_provider().unwrap();
+        let provider = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &props(&server),
+            )
+            .unwrap()
+            .as_variable_provider()
+            .unwrap();
         let variables = provider.item_variables(&item("Show")).await;
         let requests = server.received_requests().await.unwrap();
         assert_eq!(1, requests.len(), "requests={requests:?}");

@@ -19,6 +19,7 @@ impl ComponentSupplier for MediaTypeExistsDetectorSupplier {
     }
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         _: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         Ok(Arc::new(MediaTypeExistsDetector))
@@ -149,7 +150,14 @@ mod tests {
             vec![ComponentType::file_exists_detector("media-type".to_string())]
         );
         assert!(SUPPLIER.is_support_no_props());
-        assert!(SUPPLIER.apply(&Map::new()).is_ok());
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &Map::new(),
+                )
+                .is_ok()
+        );
     }
 
     #[test]

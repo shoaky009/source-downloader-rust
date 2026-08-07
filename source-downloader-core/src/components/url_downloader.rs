@@ -24,9 +24,9 @@ impl ComponentSupplier for UrlDownloaderSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::downloader("url".to_owned())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let config: UrlDownloaderConfig =
@@ -35,7 +35,6 @@ impl ComponentSupplier for UrlDownloaderSupplier {
             })?;
         Ok(Arc::new(UrlDownloader { download_path: config.download_path }))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }

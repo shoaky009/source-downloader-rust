@@ -28,6 +28,7 @@ impl ComponentSupplier for PatreonIntegrationSupplier {
     }
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         p: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let sid = p.get("session-id").and_then(Value::as_str).ok_or_else(|| {
@@ -410,6 +411,13 @@ mod tests {
     }
     #[test]
     fn validates_session() {
-        assert!(SUPPLIER.apply(&Map::new()).is_err());
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &Map::new(),
+                )
+                .is_err()
+        );
     }
 }

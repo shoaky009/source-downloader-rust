@@ -16,9 +16,9 @@ impl ComponentSupplier for NoneDownloaderSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::downloader("none".to_owned())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let path = match props.get("downloadPath") {
@@ -34,7 +34,6 @@ impl ComponentSupplier for NoneDownloaderSupplier {
             download_path: path.to_string_lossy().into_owned(),
         }))
     }
-
     fn is_support_no_props(&self) -> bool {
         true
     }

@@ -89,8 +89,11 @@ fn create_core_application(
     let config_path = config.data_location.join("config.yaml");
     let config_operator = Arc::new(YamlConfigOperator::new_path(config_path.as_path()));
     config_operator.init().unwrap();
-    let component_manager = Arc::new(ComponentManager::new(config_operator.clone()));
     let instance_manager = Arc::new(InstanceManager::new(config_operator.clone()));
+    let component_manager = Arc::new(ComponentManager::with_create_context(
+        config_operator.clone(),
+        instance_manager.clone(),
+    ));
     let plugin_ctx =
         Arc::new(CorePluginContext { data_location: config.data_location.clone() });
 

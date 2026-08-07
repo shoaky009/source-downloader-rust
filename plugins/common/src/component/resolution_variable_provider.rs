@@ -21,6 +21,7 @@ impl ComponentSupplier for ResolutionVariableProviderSupplier {
     }
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let only_high_resolution = props
@@ -170,21 +171,34 @@ mod tests {
             vec![ComponentType::variable_provider("resolution".to_string())]
         );
         assert!(SUPPLIER.is_support_no_props());
-        assert!(SUPPLIER.apply(&Map::new()).is_ok());
         assert!(
             SUPPLIER
-                .apply(&Map::from_iter([(
-                    "onlyHighResolution".to_string(),
-                    Value::Bool(false)
-                )]))
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &Map::new(),
+                )
                 .is_ok()
         );
         assert!(
             SUPPLIER
-                .apply(&Map::from_iter([(
-                    "only-high-resolution".to_string(),
-                    Value::String("true".to_string())
-                )]))
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &Map::from_iter([(
+                        "onlyHighResolution".to_string(),
+                        Value::Bool(false),
+                    )]),
+                )
+                .is_ok()
+        );
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &Map::from_iter([(
+                        "only-high-resolution".to_string(),
+                        Value::String("true".to_string()),
+                    )]),
+                )
                 .is_err()
         );
     }

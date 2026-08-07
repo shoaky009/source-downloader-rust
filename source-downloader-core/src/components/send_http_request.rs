@@ -37,9 +37,9 @@ impl ComponentSupplier for SendHttpRequestSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::listener("http".to_owned())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let config: HttpRequestConfig =
@@ -60,7 +60,6 @@ impl ComponentSupplier for SendHttpRequestSupplier {
         })?;
         Ok(Arc::new(SendHttpRequest { config, client: reqwest::Client::new() }))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }
@@ -411,7 +410,12 @@ mod tests {
         .unwrap()
         .clone();
 
-        let error = SUPPLIER.apply(&props).unwrap_err();
+        let error = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &props,
+            )
+            .unwrap_err();
 
         assert!(error.to_string().contains("Invalid HTTP request method"));
     }
@@ -423,7 +427,12 @@ mod tests {
             .unwrap()
             .clone();
 
-        let component = SUPPLIER.apply(&props).unwrap();
+        let component = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &props,
+            )
+            .unwrap();
 
         assert_eq!(component.to_string(), "http");
     }

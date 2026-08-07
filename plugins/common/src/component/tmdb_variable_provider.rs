@@ -19,6 +19,7 @@ impl ComponentSupplier for TmdbVariableProviderSupplier {
     }
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         p: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let base = p
@@ -185,7 +186,11 @@ mod tests {
             ("base-url".into(), Value::String(s.uri())),
             ("api-key".into(), Value::String("key".into())),
         ]);
-        let v = SUPPLIER.apply(&p).unwrap().as_variable_provider().unwrap();
+        let v = SUPPLIER
+            .apply(&source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT, &p)
+            .unwrap()
+            .as_variable_provider()
+            .unwrap();
         assert_eq!(
             Some("葬送のフリーレン"),
             v.item_variables(&item("Frieren"))
@@ -203,6 +208,13 @@ mod tests {
     }
     #[test]
     fn requires_key() {
-        assert!(SUPPLIER.apply(&Map::new()).is_err());
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &Map::new(),
+                )
+                .is_err()
+        );
     }
 }

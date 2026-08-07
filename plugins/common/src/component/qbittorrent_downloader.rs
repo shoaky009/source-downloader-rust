@@ -25,9 +25,9 @@ impl ComponentSupplier for QbittorrentDownloaderSupplier {
             ComponentType::file_mover("qbittorrent".to_string()),
         ]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let endpoint = props
@@ -66,7 +66,6 @@ impl ComponentSupplier for QbittorrentDownloaderSupplier {
             always_download_all,
         }))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }
@@ -679,7 +678,10 @@ mod tests {
             .await;
 
         let component = SUPPLIER
-            .apply(&Map::from_iter([("endpoint".into(), Value::String(server.uri()))]))
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &Map::from_iter([("endpoint".into(), Value::String(server.uri()))]),
+            )
             .unwrap();
         let mover = component.as_file_mover().unwrap();
         let file = file_content();
@@ -712,6 +714,13 @@ mod tests {
 
     #[test]
     fn validates_endpoint() {
-        assert!(SUPPLIER.apply(&Map::new()).is_err());
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &Map::new(),
+                )
+                .is_err()
+        );
     }
 }

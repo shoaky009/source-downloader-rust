@@ -16,14 +16,13 @@ impl ComponentSupplier for DoujinTitleTrimmerSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::trimmer("doujin".to_string())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         _props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         Ok(Arc::new(DoujinTitleTrimmer))
     }
-
     fn is_support_no_props(&self) -> bool {
         true
     }
@@ -81,7 +80,14 @@ mod tests {
             vec![ComponentType::trimmer("doujin".to_string())]
         );
         assert!(SUPPLIER.is_support_no_props());
-        assert!(SUPPLIER.apply(&Map::new()).is_ok());
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &Map::new(),
+                )
+                .is_ok()
+        );
     }
 
     #[test]

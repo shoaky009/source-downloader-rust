@@ -16,9 +16,9 @@ impl ComponentSupplier for RunCommandSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::listener("command".to_owned())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let raw_command = props
@@ -42,7 +42,6 @@ impl ComponentSupplier for RunCommandSupplier {
         };
         Ok(Arc::new(RunCommand { command, with_subject_summary }))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }
@@ -208,7 +207,14 @@ mod tests {
     fn supplier_rejects_scalar_commands() {
         let props = serde_json::json!({"command": "echo"}).as_object().unwrap().clone();
 
-        assert!(SUPPLIER.apply(&props).is_err());
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &props,
+                )
+                .is_err()
+        );
     }
 
     #[test]

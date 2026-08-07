@@ -19,9 +19,9 @@ impl ComponentSupplier for TransmissionDownloaderSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::downloader("transmission".to_string())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let endpoint = props
@@ -48,7 +48,6 @@ impl ComponentSupplier for TransmissionDownloaderSupplier {
             default_path: OnceLock::new(),
         }))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }
@@ -377,7 +376,14 @@ mod tests {
 
     #[test]
     fn supplier_requires_url() {
-        assert!(SUPPLIER.apply(&Map::new()).is_err());
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &Map::new(),
+                )
+                .is_err()
+        );
     }
 
     #[test]

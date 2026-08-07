@@ -3,8 +3,9 @@
 use crate::config::{ConfigOperator, Properties};
 use parking_lot::RwLock;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentId, ComponentRootType, ComponentSupplier, ComponentType,
-    SdComponent, Trigger,
+    ComponentCreateContext, ComponentError, ComponentId, ComponentRootType,
+    ComponentSupplier, ComponentType, EMPTY_COMPONENT_CREATE_CONTEXT, SdComponent,
+    Trigger,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -14,6 +15,7 @@ use tracing::{debug, info};
 
 pub struct ComponentManager {
     config_operator: Arc<dyn ConfigOperator>,
+    create_context: Arc<dyn ComponentCreateContext>,
     component_suppliers: RwLock<HashMap<ComponentType, Arc<dyn ComponentSupplier>>>,
     component_wrappers: RwLock<HashMap<String, Arc<ComponentWrapper>>>,
 }
@@ -43,8 +45,19 @@ impl Display for ComponentManager {
 
 impl ComponentManager {
     pub fn new(config_operator: Arc<dyn ConfigOperator>) -> Self {
+        Self::with_create_context(
+            config_operator,
+            Arc::new(EMPTY_COMPONENT_CREATE_CONTEXT),
+        )
+    }
+
+    pub fn with_create_context(
+        config_operator: Arc<dyn ConfigOperator>,
+        create_context: Arc<dyn ComponentCreateContext>,
+    ) -> Self {
         Self {
             config_operator,
+            create_context,
             component_suppliers: RwLock::new(HashMap::new()),
             component_wrappers: RwLock::new(HashMap::new()),
         }
@@ -105,20 +118,21 @@ impl ComponentManager {
         let types = supplier.supply_types();
         let (pk_type, props) =
             self.get_component_props(&types, name, supplier.is_support_no_props())?;
-        let (component, creation_error) = match supplier.apply(&props.inner) {
-            Ok(c) => {
-                info!("Component[created] {instance_name}");
-                (Some(c), None)
-            }
-            Err(error) => {
-                let error = ComponentError::new(format!(
-                    "Component '{}' creation failed (type={}, name={}): {}",
-                    instance_name, component_type, name, error
-                ));
-                tracing::error!("Component[create-failed] {instance_name}: {error}");
-                (None, Some(error))
-            }
-        };
+        let (component, creation_error) =
+            match supplier.apply(self.create_context.as_ref(), &props.inner) {
+                Ok(c) => {
+                    info!("Component[created] {instance_name}");
+                    (Some(c), None)
+                }
+                Err(error) => {
+                    let error = ComponentError::new(format!(
+                        "Component '{}' creation failed (type={}, name={}): {}",
+                        instance_name, component_type, name, error
+                    ));
+                    tracing::error!("Component[create-failed] {instance_name}: {error}");
+                    (None, Some(error))
+                }
+            };
 
         let mut guard = self.component_wrappers.write();
         if let Some(existing) = guard.get(&instance_name) {

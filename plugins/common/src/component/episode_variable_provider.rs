@@ -20,6 +20,7 @@ impl ComponentSupplier for EpisodeVariableProviderSupplier {
     }
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         _: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         Ok(Arc::new(EpisodeVariableProvider))
@@ -319,7 +320,14 @@ mod tests {
             vec![ComponentType::variable_provider("episode".to_string())]
         );
         assert!(SUPPLIER.is_support_no_props());
-        assert!(SUPPLIER.apply(&Map::new()).is_ok());
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &Map::new(),
+                )
+                .is_ok()
+        );
     }
 
     #[tokio::test]

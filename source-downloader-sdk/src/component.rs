@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use http::Uri;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::cmp::PartialEq;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -205,6 +205,30 @@ impl Display for ComponentType {
     }
 }
 
+pub trait ComponentCreateContext: Send + Sync {
+    fn get_instance(
+        &self,
+        name: &str,
+        type_id: TypeId,
+    ) -> Result<Arc<dyn Any + Send + Sync>, ComponentError>;
+}
+pub struct EmptyComponentCreateContext;
+
+pub const EMPTY_COMPONENT_CREATE_CONTEXT: EmptyComponentCreateContext =
+    EmptyComponentCreateContext;
+
+impl ComponentCreateContext for EmptyComponentCreateContext {
+    fn get_instance(
+        &self,
+        name: &str,
+        _: TypeId,
+    ) -> Result<Arc<dyn Any + Send + Sync>, ComponentError> {
+        Err(ComponentError::new(format!(
+            "Component instance '{name}' requires a creation context",
+        )))
+    }
+}
+
 pub trait ComponentSupplier: Send + Sync {
     /// 组件的创建类型
     fn supply_types(&self) -> Vec<ComponentType>;
@@ -212,6 +236,7 @@ pub trait ComponentSupplier: Send + Sync {
     /// 创建组件实例
     fn apply(
         &self,
+        context: &dyn ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError>;
 

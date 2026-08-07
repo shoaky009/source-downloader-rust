@@ -34,6 +34,7 @@ impl ComponentSupplier for RssSourceSupplier {
     }
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         p: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let url = p
@@ -394,6 +395,13 @@ mod tests {
     }
     #[test]
     fn validates_url() {
-        assert!(SUPPLIER.apply(&Map::new()).is_err());
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &Map::new(),
+                )
+                .is_err()
+        );
     }
 }

@@ -60,9 +60,9 @@ impl ComponentSupplier for FixedSourceSupplier {
             ComponentType::file_resolver("fixed".to_owned()),
         ]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let content = props
@@ -92,7 +92,6 @@ impl ComponentSupplier for FixedSourceSupplier {
         };
         Ok(Arc::new(FixedSource { content: converted, offset_mode }))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }

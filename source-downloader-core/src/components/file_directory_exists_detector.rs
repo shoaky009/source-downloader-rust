@@ -21,6 +21,7 @@ impl ComponentSupplier for ItemDirectoryExistsDetectorSupplier {
 
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         _: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         Ok(Arc::new(FileDirectoryExistsDetector))
@@ -107,7 +108,10 @@ mod tests {
 
         let files = [file];
         let mover = crate::components::system_file_mover::SUPPLIER
-            .apply(&Map::new())
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &Map::new(),
+            )
             .unwrap()
             .as_file_mover()
             .unwrap();

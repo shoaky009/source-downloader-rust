@@ -18,6 +18,7 @@ impl ComponentSupplier for SimpleFileTaggerSupplier {
     }
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let mut mapping =
@@ -98,7 +99,10 @@ mod tests {
     use std::path::PathBuf;
     async fn tag(path: &str, props: Map<String, Value>) -> Option<String> {
         SUPPLIER
-            .apply(&props)
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &props,
+            )
             .unwrap()
             .as_file_tagger()
             .unwrap()
@@ -112,7 +116,14 @@ mod tests {
             vec![ComponentType::file_tagger("simple".to_string())]
         );
         assert!(SUPPLIER.is_support_no_props());
-        assert!(SUPPLIER.apply(&Map::new()).is_ok());
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &Map::new(),
+                )
+                .is_ok()
+        );
     }
     #[tokio::test]
     async fn tags_common_top_level_types_and_subtitles() {

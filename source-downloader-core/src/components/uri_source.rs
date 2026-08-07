@@ -21,9 +21,9 @@ impl ComponentSupplier for UriSourceSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::source("uri".to_owned())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let config: UriSourceConfig =
@@ -35,7 +35,6 @@ impl ComponentSupplier for UriSourceSupplier {
         })?;
         Ok(Arc::new(UriSource { uri }))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }

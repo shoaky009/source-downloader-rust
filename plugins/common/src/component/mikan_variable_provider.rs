@@ -30,9 +30,9 @@ impl ComponentSupplier for MikanVariableProviderSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::variable_provider("mikan".to_string())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let mikan_base = prop(props, "mikan-base-url", "https://mikanani.me")?;
@@ -75,7 +75,6 @@ impl ComponentSupplier for MikanVariableProviderSupplier {
             cache: Mutex::new(Cache::default()),
         }))
     }
-
     fn is_support_no_props(&self) -> bool {
         true
     }
@@ -299,6 +298,13 @@ mod tests {
 
     #[test]
     fn supplier_defaults() {
-        assert!(SUPPLIER.apply(&Map::new()).is_ok());
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &Map::new(),
+                )
+                .is_ok()
+        );
     }
 }

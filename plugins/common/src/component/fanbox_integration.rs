@@ -27,9 +27,9 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
             ComponentType::file_resolver("fanbox".into()),
         ]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let cookie = props
@@ -75,7 +75,6 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
             latest_only: mode == "latestOnly",
         }))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }
@@ -561,7 +560,14 @@ mod tests {
             .expect(2)
             .mount(&server)
             .await;
-        let source = SUPPLIER.apply(&props(&server)).unwrap().as_source().unwrap();
+        let source = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &props(&server),
+            )
+            .unwrap()
+            .as_source()
+            .unwrap();
         let mut pointer = source.default_pointer();
         let first = source.fetch(pointer.as_ref(), 10).await.unwrap();
         assert_eq!(1, first.len());
@@ -585,7 +591,12 @@ mod tests {
             })))
             .mount(&server)
             .await;
-        let component = SUPPLIER.apply(&props(&server)).unwrap();
+        let component = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &props(&server),
+            )
+            .unwrap();
         let resolver = component.as_item_file_resolver().unwrap();
         let item = SourceItem {
             title: "Post".into(),

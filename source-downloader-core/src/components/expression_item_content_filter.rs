@@ -21,9 +21,9 @@ impl ComponentSupplier for ExpressionItemContentFilterSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::item_content_filter("expression".to_string())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let val = serde_json::to_value(props)
@@ -43,7 +43,6 @@ impl ComponentSupplier for ExpressionItemContentFilterSupplier {
 
         Ok(Arc::new(ExpressionItemContentFilter { exclusions, inclusions }))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }
@@ -146,8 +145,14 @@ mod test {
             let mut props = Map::new();
             props.insert("exclusions".into(), Value::from(data.exclusions.clone()));
             props.insert("inclusions".into(), Value::from(data.inclusions.clone()));
-            let filter =
-                SUPPLIER.apply(&props).unwrap().as_item_content_filter().unwrap();
+            let filter = SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &props,
+                )
+                .unwrap()
+                .as_item_content_filter()
+                .unwrap();
             let item = data.item.as_ref().unwrap_or(&default_item);
             let files = Vec::new();
             let variables = HashMap::new();

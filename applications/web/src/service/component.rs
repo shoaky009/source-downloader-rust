@@ -302,7 +302,12 @@ fn check_request(
         )));
     }
     let supplier = supplier.unwrap();
-    supplier.apply(&request.props).map(|_| ())
+    supplier
+        .apply(
+            &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+            &request.props,
+        )
+        .map(|_| ())
 }
 
 struct ComponentStateStream {

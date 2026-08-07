@@ -92,6 +92,7 @@ pub mod test_support {
 
         fn apply(
             &self,
+            _: &dyn source_downloader_sdk::component::ComponentCreateContext,
             _: &Map<String, Value>,
         ) -> Result<Arc<dyn SdComponent>, ComponentError> {
             Ok(Arc::new(HardCodeVfsFileResolver {}))
@@ -336,9 +337,9 @@ pub mod test_support {
         fn supply_types(&self) -> Vec<ComponentType> {
             vec![ComponentType::source("mock".to_owned())]
         }
-
         fn apply(
             &self,
+            _: &dyn source_downloader_sdk::component::ComponentCreateContext,
             props: &Map<String, Value>,
         ) -> Result<Arc<dyn SdComponent>, ComponentError> {
             let cfg = serde_json::from_value::<ComponentMockConfig>(Value::Object(
@@ -352,7 +353,6 @@ pub mod test_support {
                 .collect::<Result<VecDeque<_>, _>>()?;
             Ok(Arc::new(MockSource { fetches: Mutex::new(fetches) }))
         }
-
         fn is_support_no_props(&self) -> bool {
             true
         }
@@ -406,6 +406,7 @@ pub mod test_support {
 
         fn apply(
             &self,
+            _: &dyn source_downloader_sdk::component::ComponentCreateContext,
             _: &Map<String, Value>,
         ) -> Result<Arc<dyn SdComponent>, ComponentError> {
             let mut mock = MockComponent::new();

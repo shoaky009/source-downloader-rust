@@ -19,6 +19,7 @@ impl ComponentSupplier for ChiiVariableProviderSupplier {
     }
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let base_url = props
@@ -182,10 +183,10 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST")).and(path("/graphql")).and(body_partial_json(serde_json::json!({"operationName":"SubjectSearch","variables":{"q":"Frieren","type":"anime"}}))).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"data":{"querySubjectSearch":{"result":[{"id":"1","name":"葬送のフリーレン","nameCN":"葬送的芙莉莲"}]}}}))).mount(&server).await;
         let provider = SUPPLIER
-            .apply(&Map::from_iter([(
-                "base-url".to_string(),
-                Value::String(server.uri()),
-            )]))
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &Map::from_iter([("base-url".to_string(), Value::String(server.uri()))]),
+            )
             .unwrap()
             .as_variable_provider()
             .unwrap();
@@ -210,10 +211,10 @@ mod tests {
             .mount(&server)
             .await;
         let provider = SUPPLIER
-            .apply(&Map::from_iter([(
-                "base-url".to_string(),
-                Value::String(server.uri()),
-            )]))
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &Map::from_iter([("base-url".to_string(), Value::String(server.uri()))]),
+            )
             .unwrap()
             .as_variable_provider()
             .unwrap();

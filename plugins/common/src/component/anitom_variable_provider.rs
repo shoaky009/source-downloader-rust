@@ -20,6 +20,7 @@ impl ComponentSupplier for AnitomVariableProviderSupplier {
 
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         _: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         Ok(Arc::new(AnitomVariableProvider))
@@ -145,13 +146,26 @@ mod tests {
             vec![ComponentType::variable_provider("anitom".to_string())]
         );
         assert!(SUPPLIER.is_support_no_props());
-        assert!(SUPPLIER.apply(&Map::new()).is_ok());
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &Map::new(),
+                )
+                .is_ok()
+        );
     }
 
     #[tokio::test]
     async fn parses_anime_filename_into_kotlin_compatible_variable_names() {
-        let provider =
-            SUPPLIER.apply(&Map::new()).unwrap().as_variable_provider().unwrap();
+        let provider = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &Map::new(),
+            )
+            .unwrap()
+            .as_variable_provider()
+            .unwrap();
         let files = [SourceFile::new(PathBuf::from(
             "[TaigaSubs]_Toradora!_(2008)_-_01v2_-_Tiger_and_Dragon_[1280x720_H.264_FLAC][1234ABCD].mkv",
         ))];

@@ -30,6 +30,7 @@ impl ComponentSupplier for PixivIntegrationSupplier {
     }
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         p: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let sid = p.get("session-id").and_then(Value::as_str).ok_or_else(|| {
@@ -327,11 +328,25 @@ mod tests {
     fn derives_user_from_session() {
         let p =
             Map::from_iter([("session-id".into(), Value::String("12345_token".into()))]);
-        assert!(SUPPLIER.apply(&p).is_ok());
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &p,
+                )
+                .is_ok()
+        );
     }
     #[test]
     fn rejects_invalid_session() {
         let p = Map::from_iter([("session-id".into(), Value::String("bad".into()))]);
-        assert!(SUPPLIER.apply(&p).is_err());
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &p,
+                )
+                .is_err()
+        );
     }
 }

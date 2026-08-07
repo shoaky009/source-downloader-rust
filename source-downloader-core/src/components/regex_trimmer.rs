@@ -21,9 +21,9 @@ impl ComponentSupplier for RegexTrimmerSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::trimmer("regex".to_owned())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let config: RegexConfig = serde_json::from_value(Value::Object(props.clone()))
@@ -35,7 +35,6 @@ impl ComponentSupplier for RegexTrimmerSupplier {
         })?;
         Ok(Arc::new(RegexTrimmer { regex }))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }

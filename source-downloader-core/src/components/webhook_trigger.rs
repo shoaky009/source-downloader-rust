@@ -15,9 +15,9 @@ impl ComponentSupplier for WebhookTriggerSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::trigger("webhook".to_owned())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let path = props
@@ -32,7 +32,6 @@ impl ComponentSupplier for WebhookTriggerSupplier {
         };
         Ok(Arc::new(WebhookTrigger::new(path, method).map_err(ComponentError::from)?))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }
@@ -556,7 +555,14 @@ mod tests {
         props.insert("path".to_owned(), Value::String("updates".to_owned()));
         props.insert("method".to_owned(), Value::String("not valid".to_owned()));
 
-        assert!(SUPPLIER.apply(&props).is_err());
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &props,
+                )
+                .is_err()
+        );
     }
 
     #[test]
@@ -565,7 +571,14 @@ mod tests {
         props.insert("path".to_owned(), Value::String("updates".to_owned()));
         props.insert("method".to_owned(), Value::Bool(true));
 
-        assert!(SUPPLIER.apply(&props).is_err());
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &props,
+                )
+                .is_err()
+        );
     }
 
     #[test]

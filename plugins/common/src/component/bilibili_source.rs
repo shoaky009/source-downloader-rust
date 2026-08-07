@@ -22,6 +22,7 @@ impl ComponentSupplier for BilibiliSourceSupplier {
     }
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         p: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let favorites = p
@@ -277,7 +278,14 @@ mod tests {
             ("favorites".into(), serde_json::json!([7])),
             ("base-url".into(), Value::String(s.uri())),
         ]);
-        let source = SUPPLIER.apply(&props).unwrap().as_source().unwrap();
+        let source = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &props,
+            )
+            .unwrap()
+            .as_source()
+            .unwrap();
         let mut pointer = source.default_pointer();
         let first = source.fetch(pointer.as_ref(), 10).await.unwrap();
         assert_eq!(1, first.len());

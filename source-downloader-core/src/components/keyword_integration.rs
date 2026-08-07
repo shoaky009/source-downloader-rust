@@ -37,9 +37,9 @@ impl ComponentSupplier for KeywordIntegrationSupplier {
             ComponentType::item_filter("keyword".to_owned()),
         ]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let config: KeywordIntegrationConfig =

@@ -19,6 +19,7 @@ impl ComponentSupplier for HtmlFileResolverSupplier {
     }
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         p: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let css = p.get("css-selector").and_then(Value::as_str).ok_or_else(|| {
@@ -166,7 +167,11 @@ mod tests {
             ("extract-attribute".into(), Value::String("href".into())),
             ("no-proxy".into(), Value::Bool(true)),
         ]);
-        let r = SUPPLIER.apply(&p).unwrap().as_item_file_resolver().unwrap();
+        let r = SUPPLIER
+            .apply(&source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT, &p)
+            .unwrap()
+            .as_item_file_resolver()
+            .unwrap();
         let f = r
             .resolve_files(&item(&format!("{}/page/index.html", s.uri())))
             .await
@@ -199,19 +204,37 @@ mod tests {
             ("direct-mode".into(), Value::Bool(true)),
             ("no-proxy".into(), Value::Bool(true)),
         ]);
-        let r = SUPPLIER.apply(&p).unwrap().as_item_file_resolver().unwrap();
+        let r = SUPPLIER
+            .apply(&source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT, &p)
+            .unwrap()
+            .as_item_file_resolver()
+            .unwrap();
         let f = r.resolve_files(&item(&format!("{}/page", s.uri()))).await.unwrap();
         assert_eq!(Some(&b"PNG"[..]), f[0].data.as_deref());
         assert!(f[0].download_uri.is_none());
     }
     #[test]
     fn validates_selector_and_required_props() {
-        assert!(SUPPLIER.apply(&Map::new()).is_err());
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &Map::new(),
+                )
+                .is_err()
+        );
         let p = Map::from_iter([
             ("css-selector".into(), Value::String("[".into())),
             ("extract-attribute".into(), Value::String("href".into())),
         ]);
-        assert!(SUPPLIER.apply(&p).is_err());
+        assert!(
+            SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &p,
+                )
+                .is_err()
+        );
         let _ = serde_json::json!({});
     }
 }

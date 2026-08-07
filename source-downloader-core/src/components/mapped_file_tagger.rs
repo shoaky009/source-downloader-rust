@@ -23,9 +23,9 @@ impl ComponentSupplier for MappedFileTaggerSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::file_tagger("mapped".to_owned())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let config: MappedFileTaggerConfig =
@@ -34,7 +34,6 @@ impl ComponentSupplier for MappedFileTaggerSupplier {
             })?;
         Ok(Arc::new(MappedFileTagger { mapping: config.mapping }))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }

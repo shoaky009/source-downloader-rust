@@ -16,9 +16,9 @@ impl ComponentSupplier for CronTriggerSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::trigger("cron".to_owned())]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let expression = props
@@ -28,7 +28,6 @@ impl ComponentSupplier for CronTriggerSupplier {
         validate_cron_expression(expression).map_err(ComponentError::new)?;
         Ok(Arc::new(CronTrigger::new(expression.to_owned())))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }

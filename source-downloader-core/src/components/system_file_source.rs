@@ -24,9 +24,9 @@ impl ComponentSupplier for SystemFileSourceSupplier {
             ComponentType::downloader("system-file".to_owned()),
         ]
     }
-
     fn apply(
         &self,
+        _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let path = props
@@ -44,7 +44,6 @@ impl ComponentSupplier for SystemFileSourceSupplier {
             mode: mode as i8,
         }))
     }
-
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }
