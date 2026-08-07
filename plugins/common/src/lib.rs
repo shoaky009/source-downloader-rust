@@ -5,7 +5,9 @@ mod instance;
 mod test_support;
 pub mod util;
 
-use crate::component::{anime_file_filter, anime_replacement_decider, mikan_source};
+use crate::component::{
+    anime_file_filter, anime_replacement_decider, anime_tagger, mikan_source,
+};
 use source_downloader_sdk::component::ComponentSupplier;
 use source_downloader_sdk::instance::InstanceFactory;
 use source_downloader_sdk::plugin::{Plugin, PluginContext, PluginDescription};
@@ -28,6 +30,7 @@ impl Plugin for CommonPlugin {
             Arc::new(mikan_source::SUPPLIER),
             Arc::new(anime_file_filter::SUPPLIER),
             Arc::new(anime_replacement_decider::SUPPLIER),
+            Arc::new(anime_tagger::SUPPLIER),
         ]
     }
 
