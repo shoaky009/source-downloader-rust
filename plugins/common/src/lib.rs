@@ -7,11 +7,11 @@ pub mod util;
 
 use crate::component::{
     ai_variable_provider, anime_file_filter, anime_replacement_decider, anime_tagger,
-    anime_title_variable_provider, bgmitv_variable_provider, chii_variable_provider,
-    dlsite_variable_provider, doujin_title_trimmer, emby_image_tagger,
-    episode_variable_provider, getchu_variable_provider, html_file_resolver,
-    language_variable_provider, media_type_exists_detector, mikan_source,
-    resolution_variable_provider, rss_source, season_variable_provider,
+    anime_title_variable_provider, bgmitv_variable_provider, bilibili_source,
+    chii_variable_provider, dlsite_variable_provider, doujin_title_trimmer,
+    emby_image_tagger, episode_variable_provider, getchu_variable_provider,
+    html_file_resolver, language_variable_provider, media_type_exists_detector,
+    mikan_source, resolution_variable_provider, rss_source, season_variable_provider,
     simple_file_tagger, tmdb_variable_provider,
 };
 use source_downloader_sdk::component::ComponentSupplier;
@@ -54,6 +54,7 @@ impl Plugin for CommonPlugin {
             Arc::new(html_file_resolver::SUPPLIER),
             Arc::new(tmdb_variable_provider::SUPPLIER),
             Arc::new(rss_source::SUPPLIER),
+            Arc::new(bilibili_source::SUPPLIER),
         ]
     }
 

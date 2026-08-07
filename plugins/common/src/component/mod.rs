@@ -4,6 +4,7 @@ pub mod anime_replacement_decider;
 pub mod anime_tagger;
 pub mod anime_title_variable_provider;
 pub mod bgmitv_variable_provider;
+pub mod bilibili_source;
 pub mod chii_variable_provider;
 pub mod dlsite_variable_provider;
 pub mod doujin_title_trimmer;
