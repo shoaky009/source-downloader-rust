@@ -11,8 +11,8 @@ use crate::component::{
     dlsite_variable_provider, doujin_title_trimmer, emby_image_tagger,
     episode_variable_provider, getchu_variable_provider, html_file_resolver,
     language_variable_provider, media_type_exists_detector, mikan_source,
-    resolution_variable_provider, season_variable_provider, simple_file_tagger,
-    tmdb_variable_provider,
+    resolution_variable_provider, rss_source, season_variable_provider,
+    simple_file_tagger, tmdb_variable_provider,
 };
 use source_downloader_sdk::component::ComponentSupplier;
 use source_downloader_sdk::instance::InstanceFactory;
@@ -53,6 +53,7 @@ impl Plugin for CommonPlugin {
             Arc::new(getchu_variable_provider::SUPPLIER),
             Arc::new(html_file_resolver::SUPPLIER),
             Arc::new(tmdb_variable_provider::SUPPLIER),
+            Arc::new(rss_source::SUPPLIER),
         ]
     }
 

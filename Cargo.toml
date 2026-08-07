@@ -60,6 +60,7 @@ lingua = { version = "1.7", default-features = false, features = ["chinese", "ja
 mimetype-detector = "0.3.11"
 encoding_rs = "0.8"
 chardetng = "0.1"
+quick-xml = "0.41"
 criterion = "0.8"
 vfs = "0.12"
 jsonpath-rust = { version = "1.0.4" }

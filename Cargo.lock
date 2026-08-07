@@ -729,6 +729,7 @@ dependencies = [
  "mimetype-detector",
  "moka",
  "parking_lot",
+ "quick-xml 0.41.0",
  "regex",
  "reqwest",
  "rss-for-mikan",

@@ -20,6 +20,7 @@ mimetype-detector = { workspace = true }
 url = { workspace = true }
 encoding_rs = { workspace = true }
 chardetng = { workspace = true }
+quick-xml = { workspace = true }
 
 [dev-dependencies]
 wiremock = "0.6"
