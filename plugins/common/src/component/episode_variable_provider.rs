@@ -46,7 +46,7 @@ static CLEANERS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
     [
         (r"_", " "),
         (r"(?i)(?:480|720|1080|2160)P", ""),
-        (r"(?i)1920x1080|3840x2160", ""),
+        (r"(?i)1280x720|1920x1080|3840x2160", ""),
         (r"(?i)x(?:264|265)", ""),
         (r"(?i)flacx2|ma10p|hi10p|yuv420p10|10bit|hevc10|aacx2|flac|4k", ""),
         (r"(?i)\b[A-Fa-f0-9]{8}\b|CRC32.*[0-9A-F]{8}", ""),
@@ -89,7 +89,7 @@ static WORD_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     .collect()
 });
 static NUMBER_TOKEN_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:^|[^\d.])(\[?\d+(?:\.\d+)?]?)(?:$|[^\d.])")
+    Regex::new(r"(?:^|[^\d.])(\[?\d+(?:\.\d+)?]?)(?:$|[\s\[\]()（）【】])")
         .expect("static regex must compile")
 });
 
@@ -175,15 +175,37 @@ fn parse_episode(value: &str) -> Option<String> {
     if let Some(range) = parse_range(value) {
         return Some(range);
     }
+    if let Some(found) = capture(&PARSERS[7], value) {
+        return Some(normalize_number(found));
+    }
+    if let Some(found) = value
+        .split('[')
+        .skip(1)
+        .filter_map(|segment| segment.split_once(']'))
+        .filter_map(|(content, _)| bracket_episode(content))
+        .next()
+    {
+        return Some(normalize_number(found));
+    }
     if let Some(common) = parse_common(value) {
         return Some(common);
     }
-    for regex in PARSERS.iter().skip(7) {
+    for regex in PARSERS.iter().skip(8) {
         if let Some(found) = capture(regex, value) {
             return Some(normalize_number(found));
         }
     }
     None
+}
+
+fn bracket_episode(content: &str) -> Option<&str> {
+    let digit_count = content.bytes().take_while(u8::is_ascii_digit).count();
+    if !(2..=3).contains(&digit_count)
+        || content[digit_count..].bytes().any(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    Some(&content[..digit_count])
 }
 
 fn capture<'a>(regex: &Regex, value: &'a str) -> Option<&'a str> {
@@ -216,9 +238,14 @@ fn parse_range(value: &str) -> Option<String> {
     (begin < end).then(|| format!("{begin}-{end}"))
 }
 
+static NON_NUMERIC_BRACKET: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[[^\[\]]*[^\d\[\]][^\[\]]*]").expect("static regex must compile")
+});
+
 fn parse_common(value: &str) -> Option<String> {
+    let value = NON_NUMERIC_BRACKET.replace_all(value, "");
     let mut best: Option<(i32, String)> = None;
-    for captures in NUMBER_TOKEN_REGEX.captures_iter(value) {
+    for captures in NUMBER_TOKEN_REGEX.captures_iter(&value) {
         let raw = captures.get(1)?.as_str();
         let bracketed = raw.starts_with('[') && raw.ends_with(']');
         let number = raw.trim_matches(['[', ']']);
@@ -295,38 +322,39 @@ mod tests {
         assert!(SUPPLIER.apply(&Map::new()).is_ok());
     }
 
-    #[test]
-    fn parser_chain_covers_named_formats_and_priority() {
-        for (value, expected) in [
-            ("第12.5話", "12.5"),
-            ("12话", "12"),
-            ("EP07", "7"),
-            ("S02E09", "9"),
-            ("SP03", "3"),
-            ("第十話", "10"),
-            ("Show #8", "8"),
-            ("Show 01-03", "01-03"),
-            ("[01(56)]", "1"),
-            ("06.5(OVA)", "6.5"),
-        ] {
-            assert_eq!(Some(expected.to_string()), parse_episode(value), "value={value}");
+    #[tokio::test]
+    async fn should_all_expected() {
+        let item = item();
+        for line in include_str!("../../test-resources/episode-test-data.csv")
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+        {
+            let (expected, path) = line.split_once(',').unwrap();
+            let shared_variables = EpisodeVariableProvider.item_variables(&item).await;
+            let variables = EpisodeVariableProvider
+                .file_variables(
+                    &item,
+                    &shared_variables,
+                    &[SourceFile::new(PathBuf::from(path))],
+                )
+                .await;
+            assert_eq!(
+                expected,
+                variables[0].get("episode").map(String::as_str).unwrap_or(""),
+                "path={path}"
+            );
         }
-        assert_eq!(Some("9".to_string()), parse_episode("S02E09 #10"));
-        assert_eq!(Some("01-12".to_string()), parse_episode("EP01-12"));
     }
 
     #[tokio::test]
-    async fn cleans_noise_and_pads_each_file() {
-        let files = ["Show_01_1080P_x265.mkv", "Show EP2 [A1B2C3D4].mkv", "unparsed.mkv"]
-            .into_iter()
-            .map(|path| SourceFile::new(PathBuf::from(path)))
+    async fn test_episode_padding_by_files_length() {
+        let files = (1..=150)
+            .map(|episode| SourceFile::new(PathBuf::from(episode.to_string())))
             .collect::<Vec<_>>();
         let variables = EpisodeVariableProvider
             .file_variables(&item(), &HashMap::new(), &files)
             .await;
-        assert_eq!(Some("01"), variables[0].get("episode").map(String::as_str));
-        assert_eq!(Some("02"), variables[1].get("episode").map(String::as_str));
-        assert!(variables[2].is_empty());
+        assert_eq!(Some("001"), variables[0].get("episode").map(String::as_str));
     }
 
     #[tokio::test]

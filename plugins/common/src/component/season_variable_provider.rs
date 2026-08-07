@@ -133,12 +133,16 @@ fn parse_season(value: &str) -> Option<u32> {
     if FRACTION_REGEX.is_match(value) {
         return None;
     }
+    if let Some((title, _)) = value.split_once(" - ") {
+        return parse_season(title);
+    }
     let captures = LAST_REGEX.captures(value)?;
     let found = captures.get(1)?;
     if found.start() > 0 {
         let previous = value[..found.start()].chars().next_back()?;
-        if previous.is_ascii_alphabetic()
-            && !value[..found.start()].to_lowercase().ends_with("season")
+        if previous.is_ascii_alphanumeric()
+            && (previous.is_ascii_digit()
+                || !value[..found.start()].to_lowercase().ends_with("season"))
         {
             return None;
         }
@@ -197,31 +201,31 @@ mod tests {
         assert!(SUPPLIER.is_support_no_props());
         assert!(SUPPLIER.apply(&Map::new()).is_ok());
     }
-    #[test]
-    fn parses_chain_and_default() {
-        for (value, expected) in [
-            ("Show SP01", 0),
-            ("Show S03", 3),
-            ("Show Season 4", 4),
-            ("动画 第三季", 3),
-            ("Show III", 3),
-            ("Show Ⅱ", 2),
-        ] {
-            assert_eq!(Some(expected), parse_season(value), "value={value}");
-        }
-        assert_eq!(None, parse_season("Show 1/2"));
-    }
     #[tokio::test]
-    async fn file_path_precedes_title_and_values_are_padded() {
-        let files = vec![
-            SourceFile::new(PathBuf::from("Show S02/01.mkv")),
-            SourceFile::new(PathBuf::from("Show/01.mkv")),
-        ];
-        let variables = SeasonVariableProvider
-            .file_variables(&item("Show Season 3"), &HashMap::new(), &files)
-            .await;
-        assert_eq!(Some("02"), variables[0].get("season").map(String::as_str));
-        assert_eq!(Some("03"), variables[1].get("season").map(String::as_str));
+    async fn should_all_expected() {
+        for line in include_str!("../../test-resources/season-test-data.csv")
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+        {
+            let mut fields = line.split(',');
+            let expected = fields.next().unwrap();
+            let title = fields.next().unwrap();
+            let path = fields.next().unwrap_or("");
+            let item = item(title);
+            let shared_variables = SeasonVariableProvider.item_variables(&item).await;
+            let variables = SeasonVariableProvider
+                .file_variables(
+                    &item,
+                    &shared_variables,
+                    &[SourceFile::new(PathBuf::from(path))],
+                )
+                .await;
+            assert_eq!(
+                Some(expected),
+                variables[0].get("season").map(String::as_str),
+                "title={title}"
+            );
+        }
     }
     #[tokio::test]
     async fn extract_from_defaults_to_first_season() {
