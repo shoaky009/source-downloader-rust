@@ -3,13 +3,13 @@ use parking_lot::Mutex;
 use regex::Regex;
 use scraper::{Html, Selector};
 use serde::Deserialize;
+use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
     SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
-use source_downloader_sdk::{SdComponent, SourceItem};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::sync::{Arc, LazyLock};
@@ -134,19 +134,19 @@ impl DlsiteVariableProvider {
             None => HashMap::new(),
         };
         let mut c = self.cache.lock();
-        if c.len() >= 500 {
-            if let Some(k) = c.keys().next().cloned() {
-                c.remove(&k);
-            }
+        if c.len() >= 500
+            && let Some(k) = c.keys().next().cloned()
+        {
+            c.remove(&k);
         }
         c.insert(key, vars.clone());
         vars
     }
     async fn keyword(&self, text: &str) -> Option<String> {
-        if self.prefer {
-            if let Some(v) = self.suggest(text).await {
-                return Some(v);
-            }
+        if self.prefer
+            && let Some(v) = self.suggest(text).await
+        {
+            return Some(v);
         }
         let encoded: String =
             url::form_urlencoded::byte_serialize(text.as_bytes()).collect();
@@ -226,6 +226,7 @@ fn parse_detail(html: &str, id: &str) -> PatternVariables {
         v.insert("maker".into(), x);
     }
     let tr = Selector::parse("#work_outline tbody tr").unwrap();
+    let date_regex = Regex::new(r"(\d{4}).?(\d{2}).?(\d{2})").unwrap();
     for row in d.select(&tr) {
         let cells =
             row.text().map(str::trim).filter(|x| !x.is_empty()).collect::<Vec<_>>();
@@ -236,9 +237,7 @@ fn parse_detail(html: &str, id: &str) -> PatternVariables {
         match cells[0] {
             "販売日" | "贩卖日" => {
                 v.insert("releaseDate".into(), val.clone());
-                if let Some(c) =
-                    Regex::new(r"(\d{4}).?(\d{2}).?(\d{2})").unwrap().captures(&val)
-                {
+                if let Some(c) = date_regex.captures(&val) {
                     v.insert("year".into(), c[1].into());
                     v.insert("month".into(), c[2].trim_start_matches('0').into());
                     v.insert("day".into(), c[3].trim_start_matches('0').into());

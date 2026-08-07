@@ -256,7 +256,7 @@ impl ExpandHandler<SourceItem, PointedItem> for MikanItemExpandHandler<'_> {
             .map_err(|e| ProcessingError::non_retryable(e.to_string()))?;
         let mut fansub_items: Vec<SourceItem> =
             channel.items.iter().filter_map(MikanSource::convert_item).collect();
-        fansub_items.sort_by(|a, b| a.datetime.cmp(&b.datetime));
+        fansub_items.sort_by_key(|a| a.datetime);
         if !fansub_items.contains(&item) {
             tracing::debug!("Item不在RSS列表中: {:?}", item);
             fansub_items.push(item);

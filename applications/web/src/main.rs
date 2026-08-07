@@ -2,7 +2,6 @@ mod webhook_adapter;
 
 use axum::http::{StatusCode, Uri};
 use axum::{Router, middleware, response::IntoResponse};
-use webhook_adapter::AxumWebhookAdapter;
 use clap::{Args, Parser};
 use problem_details::ProblemDetails;
 use source_downloader_core::application::{CoreApplication, CorePluginContext};
@@ -22,6 +21,7 @@ use tracing::{info, log};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::time::OffsetTime;
 use web::{ApplicationContext, error_handle, service};
+use webhook_adapter::AxumWebhookAdapter;
 
 #[tokio::main]
 async fn main() {

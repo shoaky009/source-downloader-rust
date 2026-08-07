@@ -4,13 +4,13 @@ use encoding_rs::Encoding;
 use parking_lot::Mutex;
 use regex::Regex;
 use scraper::{Html, Selector};
+use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
     SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
-use source_downloader_sdk::{SdComponent, SourceItem};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::sync::{Arc, LazyLock};
@@ -84,10 +84,10 @@ impl GetchuVariableProvider {
         let query = ISBN.find(text).map(|m| m.as_str()).unwrap_or(text);
         let vars = self.search(query).await.unwrap_or_default();
         let mut c = self.cache.lock();
-        if c.len() >= 500 {
-            if let Some(k) = c.keys().next().cloned() {
-                c.remove(&k);
-            }
+        if c.len() >= 500
+            && let Some(k) = c.keys().next().cloned()
+        {
+            c.remove(&k);
         }
         c.insert(text.into(), vars.clone());
         vars
@@ -171,15 +171,15 @@ fn parse_detail(html: &str, id: &str) -> PatternVariables {
         .map(|e| e.text().collect::<String>().trim().to_string())
         .collect::<Vec<_>>();
     for (i, x) in cells.iter().enumerate() {
-        if x == "発売日：" {
-            if let Some(y) = cells.get(i + 1) {
-                v.insert("releaseDate".into(), y.clone());
-            }
+        if x == "発売日："
+            && let Some(y) = cells.get(i + 1)
+        {
+            v.insert("releaseDate".into(), y.clone());
         }
-        if x == "品番：" {
-            if let Some(y) = cells.get(i + 1) {
-                v.insert("isbn".into(), y.clone());
-            }
+        if x == "品番："
+            && let Some(y) = cells.get(i + 1)
+        {
+            v.insert("isbn".into(), y.clone());
         }
     }
     v

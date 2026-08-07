@@ -3,13 +3,13 @@ use parking_lot::Mutex;
 use regex::Regex;
 use scraper::{Html, Selector};
 use serde::Deserialize;
+use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
     SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
-use source_downloader_sdk::{SdComponent, SourceItem};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, LazyLock};
@@ -310,7 +310,7 @@ fn parse_season(value: &str) -> Option<u32> {
     let captures = SEASON.captures(value)?;
     let value =
         (1..=3).find_map(|index| captures.get(index).map(|value| value.as_str()))?;
-    value.parse().ok().or_else(|| match value {
+    value.parse().ok().or(match value {
         "一" => Some(1),
         "二" => Some(2),
         "三" => Some(3),

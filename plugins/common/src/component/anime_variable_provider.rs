@@ -2,13 +2,13 @@ use crate::http;
 use parking_lot::Mutex;
 use regex::Regex;
 use serde::Deserialize;
+use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
     SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{Map, Value, json};
-use source_downloader_sdk::{SdComponent, SourceItem};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, LazyLock};
@@ -180,8 +180,6 @@ struct BangumiResponse {
 #[derive(Deserialize)]
 struct BangumiSubject {
     name: String,
-    #[serde(default)]
-    name_cn: String,
 }
 
 impl AnimeVariableProvider {

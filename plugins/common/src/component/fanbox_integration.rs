@@ -1,15 +1,15 @@
 use crate::http;
 use serde::{Deserialize, Serialize};
+use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, ItemPointer,
-    PatternVariables, PointedItem, ProcessingError, SdComponent, SdComponentMetadata,
-    Source, SourceFile, SourcePointer,
+    PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourceFile,
+    SourcePointer,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value};
 use source_downloader_sdk::time::OffsetDateTime;
-use source_downloader_sdk::{SdComponent, SourceItem};
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
@@ -615,7 +615,7 @@ mod tests {
         };
         let files = resolver.resolve_files(&item).await.unwrap();
         assert_eq!(4, files.len());
-        assert!(files.iter().any(|file| file.path == PathBuf::from("i.png")));
-        assert!(files.iter().any(|file| file.path == PathBuf::from("text_10.txt")));
+        assert!(files.iter().any(|file| file.path == *"i.png"));
+        assert!(files.iter().any(|file| file.path == *"text_10.txt"));
     }
 }

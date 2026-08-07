@@ -1,12 +1,12 @@
 use crate::http;
 use scraper::{Html, Selector};
+use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, ProcessingError,
     SdComponent, SdComponentMetadata, SourceFile,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
-use source_downloader_sdk::{SdComponent, SourceItem};
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 use std::sync::Arc;

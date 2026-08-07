@@ -2,6 +2,7 @@ use crate::http;
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use serde::{Deserialize, Serialize};
+use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, EmptyPointer, ItemPointer,
@@ -11,7 +12,6 @@ use source_downloader_sdk::component::{
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value};
 use source_downloader_sdk::time::OffsetDateTime;
-use source_downloader_sdk::{SdComponent, SourceItem};
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
@@ -188,13 +188,14 @@ fn parse_feed(
                 let q = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 for a in e.attributes().flatten() {
                     let k = String::from_utf8_lossy(a.key.as_ref()).to_string();
-                    if k == "xmlns" || k.starts_with("xmlns:") {
-                        if let Ok(v) = a.decode_and_unescape_value(r.decoder()) {
-                            namespaces.insert(
-                                k.strip_prefix("xmlns:").unwrap_or("").to_string(),
-                                v.into_owned(),
-                            );
-                        }
+                    if (k == "xmlns" || k.starts_with("xmlns:"))
+                        && let Ok(v) = a
+                            .decoded_and_normalized_value(Default::default(), r.decoder())
+                    {
+                        namespaces.insert(
+                            k.strip_prefix("xmlns:").unwrap_or("").to_string(),
+                            v.into_owned(),
+                        );
                     }
                 }
                 let name = q.rsplit(':').next().unwrap_or(&q).to_string();
@@ -203,19 +204,20 @@ fn parse_feed(
                 } else if item.is_some() {
                     let mut aa = HashMap::new();
                     for a in e.attributes().flatten() {
-                        if let Ok(v) = a.decode_and_unescape_value(r.decoder()) {
+                        if let Ok(v) = a
+                            .decoded_and_normalized_value(Default::default(), r.decoder())
+                        {
                             aa.insert(
                                 String::from_utf8_lossy(a.key.as_ref()).to_string(),
                                 v.into_owned(),
                             );
                         }
                     }
-                    if name == "enclosure" {
-                        if let Some(i) = item.as_mut() {
-                            i.enclosure_url = aa.get("url").cloned();
-                            i.enclosure_type =
-                                aa.get("type").cloned().unwrap_or_default();
-                        }
+                    if name == "enclosure"
+                        && let Some(i) = item.as_mut()
+                    {
+                        i.enclosure_url = aa.get("url").cloned();
+                        i.enclosure_type = aa.get("type").cloned().unwrap_or_default();
                     }
                     field = Some((q, name, aa));
                 }
@@ -230,9 +232,10 @@ fn parse_feed(
                     if name == "enclosure" {
                         for attribute in e.attributes().flatten() {
                             let key = String::from_utf8_lossy(attribute.key.as_ref());
-                            if let Ok(value) =
-                                attribute.decode_and_unescape_value(r.decoder())
-                            {
+                            if let Ok(value) = attribute.decoded_and_normalized_value(
+                                Default::default(),
+                                r.decoder(),
+                            ) {
                                 match key.as_ref() {
                                     "url" => {
                                         item.enclosure_url = Some(value.into_owned())
@@ -280,10 +283,10 @@ fn parse_feed(
                     .next()
                     .unwrap_or_default()
                     .to_string();
-                if name == "item" {
-                    if let Some(i) = item.take() {
-                        out.push(convert(i, tags, attrs, date_format)?);
-                    }
+                if name == "item"
+                    && let Some(i) = item.take()
+                {
+                    out.push(convert(i, tags, attrs, date_format)?);
                 }
                 field = None
             }

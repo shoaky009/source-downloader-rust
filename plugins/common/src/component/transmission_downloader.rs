@@ -2,13 +2,13 @@ use crate::http;
 use parking_lot::RwLock;
 use serde::Deserialize;
 use sha1::{Digest, Sha1};
+use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     AsyncDownloader, ComponentError, ComponentSupplier, ComponentType, DownloadTask,
     Downloader, ProcessingError, SdComponent, SdComponentMetadata, SourceFile,
 };
 use source_downloader_sdk::serde_json::{Map, Value, json};
-use source_downloader_sdk::{SdComponent, SourceItem};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, OnceLock};
 
@@ -123,7 +123,6 @@ struct Torrents {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Torrent {
-    hash_string: String,
     percent_done: f64,
     #[serde(default)]
     files: Vec<TorrentFile>,

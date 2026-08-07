@@ -1,13 +1,13 @@
 use crate::http;
 use parking_lot::Mutex;
 use serde::Deserialize;
+use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
     SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
-use source_downloader_sdk::{SdComponent, SourceItem};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
@@ -124,10 +124,10 @@ impl TmdbVariableProvider {
             }
         };
         let mut c = self.cache.lock();
-        if c.len() >= 500 {
-            if let Some(k) = c.keys().next().cloned() {
-                c.remove(&k);
-            }
+        if c.len() >= 500
+            && let Some(k) = c.keys().next().cloned()
+        {
+            c.remove(&k);
         }
         c.insert(q.into(), vars.clone());
         vars
@@ -152,10 +152,10 @@ impl VariableProvider for TmdbVariableProvider {
         v: &str,
     ) -> Option<HashMap<String, Value>> {
         let mut r = self.search(v).await;
-        if r.is_empty() {
-            if let Some(first) = v.split(' ').next() {
-                r = self.search(first).await
-            }
+        if r.is_empty()
+            && let Some(first) = v.split(' ').next()
+        {
+            r = self.search(first).await
         }
         if r.is_empty() {
             None

@@ -1,6 +1,7 @@
 use crate::http;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, ItemPointer,
@@ -10,7 +11,6 @@ use source_downloader_sdk::component::{
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value};
 use source_downloader_sdk::time::OffsetDateTime;
-use source_downloader_sdk::{SdComponent, SourceItem};
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
@@ -404,7 +404,7 @@ impl ItemFileResolver for PixivIntegration {
                 "Fetch Pixiv ugoira metadata",
             )
             .await?;
-        let mut request = self
+        let request = self
             .headers
             .iter()
             .fold(self.client.get(&meta.original_src), |r, (k, v)| r.header(k, v));

@@ -106,12 +106,11 @@ fn parse_season(value: &str) -> Option<u32> {
     if SP_REGEX.is_match(value) {
         return Some(0);
     }
-    if let Some(captures) = GENERAL_REGEX.captures(value) {
-        if let Some(raw) =
+    if let Some(captures) = GENERAL_REGEX.captures(value)
+        && let Some(raw) =
             (1..=4).find_map(|index| captures.get(index).map(|capture| capture.as_str()))
-        {
-            return parse_season_number(raw);
-        }
+    {
+        return parse_season_number(raw);
     }
     for (keyword, season) in [
         (" II ", 2),
@@ -148,7 +147,7 @@ fn parse_season(value: &str) -> Option<u32> {
 }
 
 fn parse_season_number(value: &str) -> Option<u32> {
-    value.parse().ok().or_else(|| match value {
+    value.parse().ok().or(match value {
         "一" => Some(1),
         "二" | "II" | "Ⅱ" | "２" => Some(2),
         "三" | "III" | "Ⅲ" | "３" => Some(3),

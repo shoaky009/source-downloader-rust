@@ -62,7 +62,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = build_client().unwrap();
+        let client = client_builder().no_proxy().build().unwrap();
         let response = execute(
             &client,
             client.get(format!("{}/items", server.uri())),
@@ -83,7 +83,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = build_client().unwrap();
+        let client = client_builder().no_proxy().build().unwrap();
         let error = execute(
             &client,
             client.get(format!("{}/items", server.uri())),
@@ -106,7 +106,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = build_client().unwrap();
+        let client = client_builder().no_proxy().build().unwrap();
         let error = execute(
             &client,
             client.get(format!("{}/items", server.uri())),
