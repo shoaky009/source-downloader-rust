@@ -7,7 +7,7 @@ pub mod util;
 
 use crate::component::{
     anime_file_filter, anime_replacement_decider, anime_tagger,
-    anime_title_variable_provider, mikan_source,
+    anime_title_variable_provider, doujin_title_trimmer, mikan_source,
 };
 use source_downloader_sdk::component::ComponentSupplier;
 use source_downloader_sdk::instance::InstanceFactory;
@@ -33,6 +33,7 @@ impl Plugin for CommonPlugin {
             Arc::new(anime_replacement_decider::SUPPLIER),
             Arc::new(anime_tagger::SUPPLIER),
             Arc::new(anime_title_variable_provider::SUPPLIER),
+            Arc::new(doujin_title_trimmer::SUPPLIER),
         ]
     }
 
