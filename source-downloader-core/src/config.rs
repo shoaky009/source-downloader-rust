@@ -337,11 +337,11 @@ impl Default for ProcessorOptionConfig {
             variable_conflict_strategy: None,
             variable_error_strategy: VariableErrorStrategy::Stay,
             save_processing_content: true,
-            rename_task_interval: "5m".to_string(),
+            rename_task_interval: "PT5M".to_string(),
             rename_times_threshold: 3,
             parallelism: 1,
             retry_attempts: 3,
-            retry_backoff: "5s".to_owned(),
+            retry_backoff: "PT5S".to_owned(),
             task_group: None,
             fetch_limit: 50,
             pointer_batch_mode: true,
@@ -777,16 +777,16 @@ mod test {
     #[test]
     fn ser_de_config() {
         let c = serde_json::from_str::<ProcessorOptionConfig>(
-            r#"{"save-path-pattern": "/mnt/p1/{name}", "fetch-limit": 51, "rename-task-interval": "5m"}"#,
+            r#"{"save-path-pattern": "/mnt/p1/{name}", "fetch-limit": 51, "rename-task-interval": "PT5M"}"#,
         )
         .unwrap();
         assert_eq!(
             c.rename_times_threshold,
             ProcessorOptionConfig::default().rename_times_threshold
         );
-        assert_eq!(c.rename_task_interval, "5m");
+        assert_eq!(c.rename_task_interval, "PT5M");
         let s = serde_json::to_string(&c).unwrap();
-        assert!(!s.contains("\"rename-task-interval\":\"5m\""));
+        assert!(!s.contains("\"rename-task-interval\":\"PT5M\""));
         assert!(s.contains("\"fetch-limit\":51"));
     }
 
@@ -794,14 +794,14 @@ mod test {
     fn retry_policy_matches_kotlin_defaults_and_config() {
         let defaults = ProcessorOptionConfig::default();
         assert_eq!(3, defaults.retry_attempts);
-        assert_eq!("5s", defaults.retry_backoff);
+        assert_eq!("PT5S", defaults.retry_backoff);
 
         let config = serde_json::from_str::<ProcessorOptionConfig>(
-            r#"{"retry-attempts": 7, "retry-backoff": "250ms"}"#,
+            r#"{"retry-attempts": 7, "retry-backoff": "PT0.25S"}"#,
         )
         .unwrap();
         assert_eq!(7, config.retry_attempts);
-        assert_eq!("250ms", config.retry_backoff);
+        assert_eq!("PT0.25S", config.retry_backoff);
     }
 
     #[test]

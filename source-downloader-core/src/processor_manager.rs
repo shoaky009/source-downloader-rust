@@ -31,6 +31,14 @@ use std::string::ToString;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
+fn parse_duration(value: &str) -> Result<std::time::Duration, String> {
+    let duration = iso8601_duration::Duration::parse(value)
+        .map_err(|error| format!("Invalid ISO 8601 duration '{value}': {error:?}"))?;
+    duration
+        .to_std()
+        .ok_or_else(|| format!("ISO 8601 duration '{value}' contains years or months"))
+}
+
 pub struct ProcessorManager {
     component_manager: Arc<ComponentManager>,
     processing_storage: Arc<dyn ProcessingStorage>,
@@ -500,25 +508,23 @@ impl ProcessorManager {
                 opt.variable_name_replace.to_owned(),
             ),
             save_processing_content: config.options.save_processing_content,
-            rename_task_interval: humantime::parse_duration(
-                &config.options.rename_task_interval,
-            )
-            .map_err(|error| {
-                ComponentError::new(format!(
-                    "Processor option 'rename-task-interval' value '{}' failed: {error}",
-                    config.options.rename_task_interval
-                ))
-            })?,
+            rename_task_interval: parse_duration(&config.options.rename_task_interval).map_err(
+                |error| {
+                    ComponentError::new(format!(
+                        "Processor option 'rename-task-interval' value '{}' failed: {error}",
+                        config.options.rename_task_interval
+                    ))
+                },
+            )?,
             rename_times_threshold: config.options.rename_times_threshold,
             parallelism: config.options.parallelism,
             retry_attempts: config.options.retry_attempts,
-            retry_backoff: humantime::parse_duration(&config.options.retry_backoff)
-                .map_err(|error| {
-                    ComponentError::new(format!(
-                        "Processor option 'retry-backoff' value '{}' failed: {error}",
-                        config.options.retry_backoff
-                    ))
-                })?,
+            retry_backoff: parse_duration(&config.options.retry_backoff).map_err(|error| {
+                ComponentError::new(format!(
+                    "Processor option 'retry-backoff' value '{}' failed: {error}",
+                    config.options.retry_backoff
+                ))
+            })?,
             task_group: Some(group),
             fetch_limit: config.options.fetch_limit,
             item_error_continue: config.options.item_error_continue,

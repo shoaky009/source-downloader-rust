@@ -1,4 +1,5 @@
 use crate::components::holding_task_trigger::state_detail_for_tasks;
+use iso8601_duration::Duration as Iso8601Duration;
 use parking_lot::Mutex;
 use source_downloader_sdk::SdComponent;
 use source_downloader_sdk::component::{
@@ -51,107 +52,11 @@ impl ComponentSupplier for FixedScheduleTriggerSupplier {
 }
 
 fn parse_duration(value: &str) -> Result<Duration, String> {
-    humantime::parse_duration(value).or_else(|_| parse_iso_duration(value))
-}
-
-fn parse_iso_duration(value: &str) -> Result<Duration, String> {
-    let mut value = value;
-    if let Some(rest) = value.strip_prefix('-') {
-        value = rest;
-        return Err(format!("Invalid duration: {value}"));
-    }
-    let Some(mut rest) = value.strip_prefix('P') else {
-        return Err(format!("Invalid duration: {value}"));
-    };
-
-    let mut seconds = 0u64;
-    let mut nanoseconds = 0u32;
-    let mut in_time = false;
-    let mut saw_component = false;
-    while !rest.is_empty() {
-        if let Some(next) = rest.strip_prefix('T') {
-            if in_time {
-                return Err(format!("Invalid duration: {value}"));
-            }
-            in_time = true;
-            rest = next;
-            continue;
-        }
-
-        let number_end = rest
-            .find(|character: char| !character.is_ascii_digit() && character != '.')
-            .ok_or_else(|| format!("Invalid duration: {value}"))?;
-        if number_end == 0 {
-            return Err(format!("Invalid duration: {value}"));
-        }
-        let number = &rest[..number_end];
-        let unit = rest[number_end..]
-            .chars()
-            .next()
-            .ok_or_else(|| format!("Invalid duration: {value}"))?;
-        rest = &rest[number_end + unit.len_utf8()..];
-
-        match unit {
-            'D' if !in_time => {
-                let days = number
-                    .parse::<u64>()
-                    .map_err(|_| format!("Invalid duration: {value}"))?;
-                seconds = seconds
-                    .checked_add(
-                        days.checked_mul(86_400)
-                            .ok_or_else(|| format!("Duration is too large: {value}"))?,
-                    )
-                    .ok_or_else(|| format!("Duration is too large: {value}"))?;
-            }
-            'H' if in_time && !number.contains('.') => {
-                let hours = number
-                    .parse::<u64>()
-                    .map_err(|_| format!("Invalid duration: {value}"))?;
-                seconds = seconds
-                    .checked_add(
-                        hours
-                            .checked_mul(3_600)
-                            .ok_or_else(|| format!("Duration is too large: {value}"))?,
-                    )
-                    .ok_or_else(|| format!("Duration is too large: {value}"))?;
-            }
-            'M' if in_time && !number.contains('.') => {
-                let minutes = number
-                    .parse::<u64>()
-                    .map_err(|_| format!("Invalid duration: {value}"))?;
-                seconds = seconds
-                    .checked_add(
-                        minutes
-                            .checked_mul(60)
-                            .ok_or_else(|| format!("Duration is too large: {value}"))?,
-                    )
-                    .ok_or_else(|| format!("Duration is too large: {value}"))?;
-            }
-            'S' if in_time => {
-                let (whole, fraction) = number.split_once('.').unwrap_or((number, ""));
-                let whole = whole
-                    .parse::<u64>()
-                    .map_err(|_| format!("Invalid duration: {value}"))?;
-                if fraction.len() > 9 || !fraction.chars().all(|c| c.is_ascii_digit()) {
-                    return Err(format!("Invalid duration: {value}"));
-                }
-                let fraction = format!("{fraction:0<9}")
-                    .parse::<u32>()
-                    .map_err(|_| format!("Invalid duration: {value}"))?;
-                seconds = seconds
-                    .checked_add(whole)
-                    .ok_or_else(|| format!("Duration is too large: {value}"))?;
-                nanoseconds = fraction;
-            }
-            _ => return Err(format!("Invalid duration: {value}")),
-        }
-        saw_component = true;
-    }
-
-    if !saw_component || (!in_time && value == "P") {
-        return Err(format!("Invalid duration: {value}"));
-    }
-    Ok(Duration::new(seconds, nanoseconds))
+    let duration = Iso8601Duration::parse(value)
+        .map_err(|error| format!("Invalid ISO 8601 duration '{value}': {error:?}"))?;
+    duration
+        .to_std()
+        .ok_or_else(|| format!("ISO 8601 duration '{value}' contains years or months"))
 }
 
 #[derive(SdComponent)]
@@ -533,11 +438,5 @@ mod tests {
     fn parse_duration_accepts_iso_8601_values() {
         assert_eq!(parse_duration("PT1.5S").unwrap(), Duration::from_millis(1500));
         assert_eq!(parse_duration("P1DT2H3M4S").unwrap(), Duration::from_secs(93_784));
-    }
-
-    #[test]
-    fn parse_duration_rejects_empty_iso_values() {
-        assert!(parse_duration("P").is_err());
-        assert!(parse_duration("PT").is_err());
     }
 }

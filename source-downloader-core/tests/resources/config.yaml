@@ -7,7 +7,7 @@ components:
   - name: 20min
     type: fixed
     props:
-      interval: 10s
+      interval: PT10S
   source:
   - name: test
     type: system-file
@@ -87,7 +87,7 @@ processors:
   options:
     item-expression-exclusions:
     - item.title == 'filter.txt'
-    rename-task-interval: 15m
+    rename-task-interval: PT15M
     rename-times-threshold: 5
     item-error-continue: true
     item-grouping:

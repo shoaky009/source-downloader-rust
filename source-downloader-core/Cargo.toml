@@ -15,6 +15,7 @@ tracing-subscriber = { workspace = true }
 parking_lot = { workspace = true }
 cel = { workspace = true, features = ["json", "regex"] }
 humantime = { workspace = true }
+iso8601-duration = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 async-trait = { workspace = true }
 backon = { workspace = true }

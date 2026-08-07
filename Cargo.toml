@@ -28,6 +28,7 @@ tempfile = "3"
 parking_lot = "0.12"
 cel = "0.12"
 humantime = "2.3"
+iso8601-duration = "0.2"
 clap = { version = "4", features = ["derive", "env"] }
 
 moka = { version = "0.12", features = ["sync"] }

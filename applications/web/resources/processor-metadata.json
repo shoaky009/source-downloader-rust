@@ -152,7 +152,7 @@
       "path": "options.rename-task-interval",
       "title": "重命名补偿间隔",
       "type": "duration",
-      "defaultValue": "5m",
+      "defaultValue": "PT5M",
       "valueType": "duration",
       "askMode": "never",
       "level": "advanced"
