@@ -17,6 +17,7 @@ pub mod html_file_resolver;
 pub mod language_variable_provider;
 pub mod media_type_exists_detector;
 pub mod mikan_source;
+pub mod mikan_variable_provider;
 pub mod patreon_integration;
 pub mod pixiv_integration;
 pub mod resolution_variable_provider;
