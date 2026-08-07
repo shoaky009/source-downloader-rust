@@ -17,6 +17,7 @@ cel = { workspace = true, features = ["json", "regex"] }
 humantime = { workspace = true }
 iso8601-duration = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+tokio-cron-scheduler = { workspace = true }
 async-trait = { workspace = true }
 backon = { workspace = true }
 futures-util = { workspace = true, features = ["std", "async-await"] }

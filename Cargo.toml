@@ -34,6 +34,7 @@ clap = { version = "4", features = ["derive", "env"] }
 moka = { version = "0.12", features = ["sync"] }
 axum = { version = "0.8", features = ["macros"] }
 tokio = { version = "1.4", features = ["full"] }
+tokio-cron-scheduler = { version = "0.15.1", default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-test = "0.2.5"
