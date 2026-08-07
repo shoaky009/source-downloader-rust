@@ -15,7 +15,7 @@ use crate::component::{
     mikan_variable_provider, patreon_integration, pixiv_integration,
     qbittorrent_downloader, resolution_variable_provider, rss_source,
     season_variable_provider, simple_file_tagger, tmdb_variable_provider,
-    torrent_file_resolver,
+    torrent_file_resolver, transmission_downloader,
 };
 use source_downloader_sdk::component::ComponentSupplier;
 use source_downloader_sdk::instance::InstanceFactory;
@@ -60,6 +60,7 @@ impl Plugin for CommonPlugin {
             Arc::new(tmdb_variable_provider::SUPPLIER),
             Arc::new(torrent_file_resolver::SUPPLIER),
             Arc::new(qbittorrent_downloader::SUPPLIER),
+            Arc::new(transmission_downloader::SUPPLIER),
             Arc::new(rss_source::SUPPLIER),
             Arc::new(bilibili_source::SUPPLIER),
             Arc::new(fanbox_integration::SUPPLIER),
