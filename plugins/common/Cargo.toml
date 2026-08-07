@@ -17,6 +17,7 @@ regex = { workspace = true }
 imagesize = { workspace = true }
 lingua = { workspace = true }
 mimetype-detector = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
 wiremock = "0.6"
