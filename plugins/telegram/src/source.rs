@@ -1,6 +1,7 @@
 use crate::client::TelegramClientInstance;
 use grammers_client::media::Media;
-use serde::{Deserialize, Serialize};
+use serde::de::{self, Unexpected, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
@@ -22,9 +23,46 @@ pub const MEDIA_TYPE_ATTR: &str = "mediaType";
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct ChatConfig {
+    #[serde(deserialize_with = "deserialize_i64_from_number_or_string")]
     chat_id: i64,
     #[serde(default)]
     begin_date: Option<Date>,
+}
+
+fn deserialize_i64_from_number_or_string<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct I64Visitor;
+
+    impl Visitor<'_> for I64Visitor {
+        type Value = i64;
+
+        fn expecting(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("an i64 or a string containing an i64")
+        }
+
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
+            Ok(value)
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            i64::try_from(value)
+                .map_err(|_| E::invalid_value(Unexpected::Unsigned(value), &self))
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            value.parse().map_err(|_| E::invalid_value(Unexpected::Str(value), &self))
+        }
+    }
+
+    deserializer.deserialize_any(I64Visitor)
 }
 
 #[derive(Deserialize)]
@@ -411,6 +449,25 @@ mod tests {
     }
 
     #[test]
+    fn source_config_accepts_numeric_and_string_chat_ids() {
+        let props = source_downloader_sdk::serde_json::json!({
+            "client": "telegram",
+            "chats": [
+                {"chat-id": -2637843147_i64},
+                {"chat-id": "-2567094752"},
+            ],
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+
+        let config: TelegramSourceConfig = deserialize_component_config(&props).unwrap();
+
+        assert_eq!(config.chats[0].chat_id, -2_637_843_147);
+        assert_eq!(config.chats[1].chat_id, -2_567_094_752);
+    }
+
+    #[test]
     fn supplier_reports_source_path_for_empty_chats() {
         let props = source_downloader_sdk::serde_json::json!({
             "client": "telegram",
@@ -475,7 +532,7 @@ mod tests {
 
         assert_eq!(
             error.message,
-            "Invalid configuration at 'chats[0].chat-id': invalid type: string \"invalid\", expected i64"
+            "Invalid configuration at 'chats[0].chat-id': invalid value: string \"invalid\", expected an i64 or a string containing an i64"
         );
     }
 }
