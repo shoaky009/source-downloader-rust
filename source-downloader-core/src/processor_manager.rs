@@ -88,14 +88,7 @@ impl ProcessorManager {
         self.component_manager
             .get_component(component_id)
             .and_then(|component| component.require_and_mark_ref(processor_name))
-            .map_err(|error| {
-                ComponentError::new(format!(
-                    "Component '{}' for processor '{}' failed: {}",
-                    component_id.display(),
-                    processor_name,
-                    error
-                ))
-            })
+            .map_err(|error| Self::component_resolution_error(component_id, error))
     }
 
     fn get_typed_component<T: ?Sized, F>(
@@ -109,19 +102,30 @@ impl ProcessorManager {
         F: FnOnce(Arc<dyn SdComponent>) -> Result<Arc<T>, ComponentError>,
     {
         let component = self.get_component_for_processor(component_id, processor_name)?;
-        cast(component).map_err(|error| Self::component_error(component_id, role, error))
+        cast(component).map_err(|error| {
+            ComponentError::new(format!(
+                "'{}': expected {role}: {error}",
+                component_id.display()
+            ))
+        })
     }
-    fn component_error(
+
+    fn component_resolution_error(
         component_id: &ComponentId,
-        role: &str,
         error: ComponentError,
     ) -> ComponentError {
-        ComponentError::new(format!(
-            "Component '{}' is not a valid {}: {}",
+        let manager_context = format!(
+            "Component '{}' creation failed (type={}, name={}): ",
             component_id.display(),
-            role,
-            error
-        ))
+            component_id.component_type,
+            component_id.name,
+        );
+        let cause =
+            error.message.strip_prefix(&manager_context).unwrap_or(&error.message);
+        let supplier_context =
+            format!("Component '{}' creation failed: ", component_id.component_type.name);
+        let cause = cause.strip_prefix(&supplier_context).unwrap_or(cause);
+        ComponentError::new(format!("'{}': {cause}", component_id.display()))
     }
 
     fn component_stage<T>(
@@ -132,7 +136,7 @@ impl ProcessorManager {
     }
 
     fn creation_error(stage: &str, error: ComponentError) -> ComponentError {
-        ComponentError::new(format!("Processor creation failed at {stage}: {error}"))
+        ComponentError::new(format!("at {stage}\n  caused by {error}"))
     }
 
     pub fn create_processor(&self, config: &ProcessorConfig) {
@@ -144,7 +148,7 @@ impl ProcessorManager {
             Ok(p) => p,
             Err(err) => {
                 self.component_manager.remove_processor_refs(&config.name);
-                error!("Processor[create-failed] {}: {}", config.name, err);
+                error!("Processor[create-failed] {} {}", config.name, err);
                 self.processor_wrappers.write().insert(
                     config.name.to_owned(),
                     Arc::new(ProcessorWrapper {
@@ -827,7 +831,7 @@ mod test {
         VariableReplacerConfig, YamlConfigOperator,
     };
     use crate::processor_manager::ProcessorManager;
-    use source_downloader_sdk::component::ComponentRootType;
+    use source_downloader_sdk::component::{ComponentError, ComponentRootType};
     use std::collections::HashSet;
     use std::sync::Arc;
     use storage_memory::MemoryProcessingStorage;
@@ -920,7 +924,7 @@ mod test {
         assert_eq!(
             processor_wp.error_message.as_deref(),
             Some(
-                "Processor creation failed at downloader: Component 'downloader:not-exists:not-exists' for processor 'normal-case' failed: Supplier not found for type: downloader:not-exists",
+                "at downloader\n  caused by 'downloader:not-exists:not-exists': Supplier not found for type: downloader:not-exists",
             )
         );
         let source_id = ComponentRootType::Source.parse_component_id("system-file:test");
@@ -931,6 +935,21 @@ mod test {
             ComponentRootType::ItemFileResolver.parse_component_id("system-file:test");
         assert!(
             component_manager.get_component(&resolver_id).unwrap().get_refs().is_empty()
+        );
+    }
+
+    #[test]
+    fn repeated_component_creation_context_is_compacted() {
+        let component_id = ComponentRootType::Source.parse_component_id("wnacg");
+        let error = ComponentError::new(
+            "Component 'source:wnacg:wnacg' creation failed (type=source:wnacg, name=wnacg): Component 'wnacg' creation failed: invalid configuration: invalid type: integer `1`, expected a string",
+        );
+
+        let error = ProcessorManager::component_resolution_error(&component_id, error);
+
+        assert_eq!(
+            error.message,
+            "'source:wnacg:wnacg': invalid configuration: invalid type: integer `1`, expected a string"
         );
     }
     #[tokio::test]
