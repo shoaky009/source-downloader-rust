@@ -26,7 +26,7 @@ clap = { workspace = true }
 problem_details = { workspace = true }
 tower-http = { workspace = true, features = ["fs", "trace"] }
 futures-util = { workspace = true, features = ["sink", "std"] }
-build-info = { version = "0.0.42" }
+build-info = { workspace = true }
 
 [build-dependencies]
-build-info-build = { version = "0.0.42" }
+build-info-build = { workspace = true }

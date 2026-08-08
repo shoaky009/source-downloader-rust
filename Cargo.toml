@@ -22,11 +22,11 @@ bytes = "1"
 http-serde = "2"
 time = "0.3"
 libloading = "0.9"
-syn = "2.0"
+syn = "3.0"
 quote = "1.0"
 tempfile = "3"
 parking_lot = "0.12"
-cel = "0.12"
+cel = "0.14"
 humantime = "2.3"
 iso8601-duration = "0.2"
 clap = { version = "4", features = ["derive", "env"] }
@@ -40,7 +40,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-test = "0.2.5"
 problem_details = "0.9"
 async-trait = "0.1"
-tower-http = { version = "0.6" }
+tower-http = { version = "0.7" }
 futures-util = { version = "0.3", default-features = false }
 serde_qs = "1.0.0-rc.3"
 retry = "2"
@@ -48,8 +48,8 @@ tokio-retry2 = "0.9"
 fastmurmur3 = "0.2.0"
 
 rss-for-mikan = "=2.0.4-mikan"
-reqwest = { version = "0.12", default-features = false }
-scraper = "0.25"
+reqwest = { version = "0.13", default-features = false }
+scraper = "0.27"
 indexmap = { version = "2" }
 backon = "1.6"
 walkdir = "2"
@@ -61,22 +61,26 @@ regex = "1.12.2"
 anitomy = { git = "https://github.com/Rapptz/anitomy-rs", rev = "c5271be1d9fe71a49e93e98ac3f982b38e6e27b6" }
 grammers-client = { version = "0.10.0", features = ["proxy", "markdown"] }
 grammers-session = { version = "0.10.0", default-features = false, features = ["serde"] }
-qrcode = "0.14.1"
-base64 = "0.22"
-imagesize = "0.14"
+qrcode = "0.14"
+base64 = "0.23"
+imagesize = "0.15"
 lingua = { version = "1.7", default-features = false, features = ["chinese", "japanese"] }
 mimetype-detector = "0.3.11"
 encoding_rs = "0.8"
-chardetng = "0.1"
+chardetng = "1.0"
 quick-xml = "0.41"
-sha1 = "0.10"
+sha1 = "0.11"
 criterion = "0.8"
-vfs = "0.12"
+vfs = "0.13"
 jsonpath-rust = { version = "1.0.4" }
 maplit = "1.0.2"
-mockall = "0.14"
+mockall = "0.15"
 derivative = "2.2.0"
+build-info = { version = "0.0.46" }
+build-info-build = { version = "0.0.46" }
+hex = "0.4.3"
+itertools = "0.15"
 
 # 使用cargo tree -p sea-orm -i sqlx查看sea-orm依赖的版本, 因为不喜欢用sea-orm的migration改用sqlx的方式
-sea-orm = { version = "2.0.0-rc.20" }
-sqlx = { version = "0.8.6" }
+sea-orm = { version = "2.0.1" }
+sqlx = { version = "0.9.0" }

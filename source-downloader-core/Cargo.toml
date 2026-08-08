@@ -28,8 +28,8 @@ url = { workspace = true, features = ["std"] }
 postcard = { workspace = true, features = ["use-std"] }
 zstd = { workspace = true }
 regex = { workspace = true }
-reqwest = { workspace = true, features = ["rustls-tls", "system-proxy", "stream"] }
-itertools = "0.14.0"
+reqwest = { workspace = true, features = ["rustls", "system-proxy", "stream"] }
+itertools = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

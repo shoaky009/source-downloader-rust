@@ -195,7 +195,7 @@ impl TransmissionDownloader {
         .bytes()
         .await
         .map_err(|error| http::map_error(error, "Read torrent for Transmission hash"))?;
-        Ok(format!("{:x}", Sha1::digest(info_slice(&bytes)?)))
+        Ok(hex::encode(Sha1::digest(info_slice(&bytes)?)))
     }
 
     async fn get_torrent(&self, hash: &str) -> Result<Option<Torrent>, ProcessingError> {

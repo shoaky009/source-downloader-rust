@@ -1,5 +1,5 @@
 use crate::http;
-use chardetng::EncodingDetector;
+use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
 use encoding_rs::Encoding;
 use parking_lot::Mutex;
 use regex::Regex;
@@ -135,9 +135,9 @@ async fn decode_response(r: reqwest::Response) -> Option<String> {
         .and_then(|v| Encoding::for_label(v.trim().as_bytes()));
     let b = r.bytes().await.ok()?;
     let enc = charset.unwrap_or_else(|| {
-        let mut d = EncodingDetector::new();
+        let mut d = EncodingDetector::new(Iso2022JpDetection::Allow);
         d.feed(&b, true);
-        d.guess(None, true)
+        d.guess(None, Utf8Detection::Allow)
     });
     let (text, _, errors) = enc.decode(&b);
     (!errors).then(|| text.into_owned())

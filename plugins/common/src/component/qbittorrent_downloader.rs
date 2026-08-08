@@ -176,7 +176,7 @@ impl QbittorrentDownloader {
             .await
             .map_err(|error| http::map_error(error, "Read torrent for info hash"))?;
         let info = info_slice(&bytes)?;
-        Ok(format!("{:x}", Sha1::digest(info)))
+        Ok(hex::encode(Sha1::digest(info)))
     }
 
     async fn set_unwanted(
