@@ -1,10 +1,10 @@
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer, de::Error as _};
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, EmptyPointer, ItemFileResolver,
     PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourceFile,
-    SourcePointer,
+    SourcePointer, deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::fmt::{Debug, Display, Formatter};
@@ -13,6 +13,23 @@ use std::sync::Arc;
 
 pub struct FixedSourceSupplier;
 pub const SUPPLIER: FixedSourceSupplier = FixedSourceSupplier;
+
+fn deserialize_optional_uri<'de, D>(
+    deserializer: D,
+) -> Result<Option<source_downloader_sdk::http::Uri>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer)?
+        .map(|uri| {
+            uri.parse::<source_downloader_sdk::http::Uri>().map_err(|error| {
+                D::Error::custom(format!(
+                    "Invalid fixed source file URI '{uri}': {error}"
+                ))
+            })
+        })
+        .transpose()
+}
 
 #[derive(Deserialize)]
 struct RawSourceItemContent {
@@ -25,32 +42,35 @@ struct RawSourceFile {
     path: PathBuf,
     #[serde(default)]
     attrs: Map<String, Value>,
-    #[serde(rename = "downloadUri", alias = "fileUri", default)]
-    download_uri: Option<String>,
+    #[serde(
+        rename = "downloadUri",
+        alias = "fileUri",
+        default,
+        deserialize_with = "deserialize_optional_uri"
+    )]
+    download_uri: Option<source_downloader_sdk::http::Uri>,
     #[serde(default)]
     tags: Vec<String>,
 }
 
 impl RawSourceFile {
-    fn into_source_file(self) -> Result<SourceFile, ComponentError> {
-        let download_uri = self
-            .download_uri
-            .map(|uri| {
-                uri.parse().map_err(|error| {
-                    ComponentError::new(format!(
-                        "Invalid fixed source file URI '{uri}': {error}"
-                    ))
-                })
-            })
-            .transpose()?;
-        Ok(SourceFile {
+    fn into_source_file(self) -> SourceFile {
+        SourceFile {
             path: self.path,
             attrs: self.attrs,
-            download_uri,
+            download_uri: self.download_uri,
             tags: self.tags,
             data: None,
-        })
+        }
     }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct FixedSourceConfig {
+    content: Vec<RawSourceItemContent>,
+    #[serde(default)]
+    offset_mode: bool,
 }
 
 impl ComponentSupplier for FixedSourceSupplier {
@@ -65,32 +85,19 @@ impl ComponentSupplier for FixedSourceSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let content = props
-            .get("content")
-            .ok_or_else(|| ComponentError::from("Missing 'content' property"))?;
-        let raw_content: Vec<RawSourceItemContent> =
-            serde_json::from_value(content.clone()).map_err(|error| {
-                ComponentError::new(format!("Invalid fixed source content: {error}"))
-            })?;
-        let mut converted = Vec::with_capacity(raw_content.len());
-        for item in raw_content {
+        let config = deserialize_component_config::<FixedSourceConfig>(props)?;
+        let mut converted = Vec::with_capacity(config.content.len());
+        for item in config.content {
             converted.push(SourceItemContent {
                 item: item.item,
                 files: item
                     .files
                     .into_iter()
                     .map(RawSourceFile::into_source_file)
-                    .collect::<Result<_, _>>()?,
+                    .collect(),
             });
         }
-        let offset_mode = match props.get("offset-mode") {
-            None => false,
-            Some(Value::Bool(value)) => *value,
-            Some(_) => {
-                return Err(ComponentError::from("'offset-mode' must be a boolean"));
-            }
-        };
-        Ok(Arc::new(FixedSource { content: converted, offset_mode }))
+        Ok(Arc::new(FixedSource { content: converted, offset_mode: config.offset_mode }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None

@@ -1,7 +1,11 @@
+use serde::de::Visitor;
+use serde::de::value::{MapAccessDeserializer, SeqAccessDeserializer};
+use serde::{Deserialize, Deserializer};
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, FileContentStatus, ItemContent,
     ProcessContext, ProcessListener, ProcessingError, SdComponent, SdComponentMetadata,
+    deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::fmt::{Display, Formatter};
@@ -12,6 +16,53 @@ use std::sync::Arc;
 pub struct RunCommandSupplier;
 pub const SUPPLIER: RunCommandSupplier = RunCommandSupplier;
 
+struct CommandValues(Vec<String>);
+
+impl<'de> Deserialize<'de> for CommandValues {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct CommandValuesVisitor;
+
+        impl<'de> Visitor<'de> for CommandValuesVisitor {
+            type Value = CommandValues;
+
+            fn expecting(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("an array or object")
+            }
+
+            fn visit_seq<A>(self, sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let sequence = SeqAccessDeserializer::new(sequence);
+                let values = Vec::<Value>::deserialize(sequence)?;
+                Ok(CommandValues(values.iter().map(value_to_string).collect()))
+            }
+
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let map = MapAccessDeserializer::new(map);
+                let values = Map::<String, Value>::deserialize(map)?;
+                Ok(CommandValues(values.values().map(value_to_string).collect()))
+            }
+        }
+
+        deserializer.deserialize_any(CommandValuesVisitor)
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RunCommandConfig {
+    command: CommandValues,
+    #[serde(default)]
+    with_subject_summary: bool,
+}
+
 impl ComponentSupplier for RunCommandSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::listener("command".to_owned())]
@@ -21,26 +72,12 @@ impl ComponentSupplier for RunCommandSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let raw_command = props
-            .get("command")
-            .ok_or_else(|| ComponentError::from("Missing 'command' property"))?;
-        let command = match raw_command {
-            Value::Array(values) => values.iter().map(value_to_string).collect(),
-            Value::Object(values) => values.values().map(value_to_string).collect(),
-            _ => {
-                return Err(ComponentError::from("'command' must be an array or object"));
-            }
-        };
-        let with_subject_summary = match props.get("withSubjectSummary") {
-            None => false,
-            Some(Value::Bool(value)) => *value,
-            Some(_) => {
-                return Err(ComponentError::from(
-                    "'withSubjectSummary' must be a boolean",
-                ));
-            }
-        };
-        Ok(Arc::new(RunCommand { command, with_subject_summary }))
+        let config = deserialize_component_config::<RunCommandConfig>(props)?;
+        let CommandValues(command) = config.command;
+        Ok(Arc::new(RunCommand {
+            command,
+            with_subject_summary: config.with_subject_summary,
+        }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
@@ -207,13 +244,16 @@ mod tests {
     fn supplier_rejects_scalar_commands() {
         let props = serde_json::json!({"command": "echo"}).as_object().unwrap().clone();
 
-        assert!(
-            SUPPLIER
-                .apply(
-                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
-                    &props,
-                )
-                .is_err()
+        let error = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &props,
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Invalid configuration at 'command': invalid type: string \"echo\", expected an array or object"
         );
     }
 

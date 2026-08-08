@@ -41,12 +41,7 @@ impl ComponentSupplier for ExampleSupplier {
         context: &dyn ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let config = serde_json::from_value::<ExampleConfig>(Value::Object(
-            props.clone(),
-        ))
-        .map_err(|error| {
-            ComponentError::new(format!("Invalid example config: {error}"))
-        })?;
+        let config = deserialize_component_config::<ExampleConfig>(props)?;
         Ok(Arc::new(ExampleComponent::new(context, config)?))
     }
 

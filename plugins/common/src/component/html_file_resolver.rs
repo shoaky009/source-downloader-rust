@@ -6,7 +6,7 @@ use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, ProcessingError,
     SdComponent, SdComponentMetadata, SourceFile,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{self, Map, Value};
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -22,23 +22,39 @@ impl ComponentSupplier for HtmlFileResolverSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         p: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let css = p.get("css-selector").and_then(Value::as_str).ok_or_else(|| {
-            ComponentError::new("Missing or invalid 'css-selector' property")
+        let css = p.get("css-selector").ok_or_else(|| {
+            ComponentError::new(
+                "Invalid configuration at 'css-selector': missing field `css-selector`",
+            )
         })?;
-        let selector = Selector::parse(css)
-            .map_err(|e| ComponentError::new(format!("Invalid 'css-selector': {e}")))?;
-        let attr = p
-            .get("extract-attribute")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                ComponentError::new("Missing or invalid 'extract-attribute' property")
-            })?
-            .to_string();
+        let css = serde_json::from_value::<String>(css.clone()).map_err(|error| {
+            ComponentError::new(format!(
+                "Invalid configuration at 'css-selector': {error}"
+            ))
+        })?;
+        let selector = Selector::parse(&css).map_err(|error| {
+            ComponentError::new(format!(
+                "Invalid configuration at 'css-selector': {error}"
+            ))
+        })?;
+        let attr = p.get("extract-attribute").ok_or_else(|| {
+            ComponentError::new(
+                "Invalid configuration at 'extract-attribute': missing field `extract-attribute`",
+            )
+        })?;
+        let attr = serde_json::from_value::<String>(attr.clone()).map_err(|error| {
+            ComponentError::new(format!(
+                "Invalid configuration at 'extract-attribute': {error}"
+            ))
+        })?;
         let direct = p
             .get("direct-mode")
-            .map(|v| {
-                v.as_bool()
-                    .ok_or_else(|| ComponentError::new("Invalid 'direct-mode' property"))
+            .map(|value| {
+                serde_json::from_value::<bool>(value.clone()).map_err(|error| {
+                    ComponentError::new(format!(
+                        "Invalid configuration at 'direct-mode': {error}"
+                    ))
+                })
             })
             .transpose()?
             .unwrap_or(false);
@@ -215,26 +231,24 @@ mod tests {
     }
     #[test]
     fn validates_selector_and_required_props() {
-        assert!(
-            SUPPLIER
-                .apply(
-                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
-                    &Map::new(),
-                )
-                .is_err()
+        let error = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &Map::new(),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.message,
+            "Invalid configuration at 'css-selector': missing field `css-selector`"
         );
         let p = Map::from_iter([
             ("css-selector".into(), Value::String("[".into())),
             ("extract-attribute".into(), Value::String("href".into())),
         ]);
-        assert!(
-            SUPPLIER
-                .apply(
-                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
-                    &p,
-                )
-                .is_err()
-        );
+        let error = SUPPLIER
+            .apply(&source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT, &p)
+            .unwrap_err();
+        assert!(error.message.starts_with("Invalid configuration at 'css-selector':"));
         let _ = serde_json::json!({});
     }
 }

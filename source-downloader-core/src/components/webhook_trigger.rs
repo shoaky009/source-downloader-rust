@@ -1,8 +1,9 @@
 use crate::components::holding_task_trigger::HoldingTaskTrigger;
 use parking_lot::Mutex;
+use serde::Deserialize;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ProcessTask, SdComponent,
-    SdComponentMetadata, Stateful, Trigger,
+    SdComponentMetadata, Stateful, Trigger, deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::fmt::{Debug, Display, Formatter};
@@ -10,6 +11,18 @@ use std::sync::{Arc, Weak};
 
 pub struct WebhookTriggerSupplier;
 pub const SUPPLIER: WebhookTriggerSupplier = WebhookTriggerSupplier;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct WebhookTriggerConfig {
+    path: String,
+    #[serde(default = "default_webhook_method")]
+    method: String,
+}
+
+fn default_webhook_method() -> String {
+    "GET".to_owned()
+}
 
 impl ComponentSupplier for WebhookTriggerSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
@@ -20,17 +33,15 @@ impl ComponentSupplier for WebhookTriggerSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let path = props
-            .get("path")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ComponentError::from("Missing 'path' property"))?;
-        let method = match props.get("method") {
-            None => "GET",
-            Some(value) => value
-                .as_str()
-                .ok_or_else(|| ComponentError::from("Invalid 'method' property"))?,
-        };
-        Ok(Arc::new(WebhookTrigger::new(path, method).map_err(ComponentError::from)?))
+        let config = deserialize_component_config::<WebhookTriggerConfig>(props)?;
+        WebhookMethod::parse(&config.method).map_err(|error| {
+            ComponentError::new(format!("Invalid configuration at 'method': {error}"))
+        })?;
+        let trigger =
+            WebhookTrigger::new(config.path, config.method).map_err(|error| {
+                ComponentError::new(format!("Invalid configuration at 'path': {error}"))
+            })?;
+        Ok(Arc::new(trigger))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
@@ -555,13 +566,16 @@ mod tests {
         props.insert("path".to_owned(), Value::String("updates".to_owned()));
         props.insert("method".to_owned(), Value::String("not valid".to_owned()));
 
-        assert!(
-            SUPPLIER
-                .apply(
-                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
-                    &props,
-                )
-                .is_err()
+        let error = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &props,
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Invalid configuration at 'method': Invalid webhook method 'not valid'"
         );
     }
 
@@ -571,13 +585,16 @@ mod tests {
         props.insert("path".to_owned(), Value::String("updates".to_owned()));
         props.insert("method".to_owned(), Value::Bool(true));
 
-        assert!(
-            SUPPLIER
-                .apply(
-                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
-                    &props,
-                )
-                .is_err()
+        let error = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &props,
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Invalid configuration at 'method': invalid type: boolean `true`, expected a string"
         );
     }
 

@@ -8,7 +8,7 @@ use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, EMPTY_POINTER, ItemPointer,
     PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source,
-    SourcePointer,
+    SourcePointer, deserialize_component_config,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{Map, Value};
@@ -31,6 +31,14 @@ static DATETIME_FORMAT: &[BorrowedFormatItem] = time::macros::format_description
 );
 static TIME_OFFSET: UtcOffset = time::macros::offset!(+8);
 
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct MikanSourceConfig {
+    url: String,
+    #[serde(default)]
+    all_episode: bool,
+}
+
 impl ComponentSupplier for MikanSourceSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::source("mikan".to_string())]
@@ -40,24 +48,11 @@ impl ComponentSupplier for MikanSourceSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let url = props
-            .get("url")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ComponentError::new("Missing or invalid 'url' property"))?
-            .to_owned();
-        let all_episode = props
-            .get("all-episode")
-            .map(|value| {
-                value
-                    .as_bool()
-                    .ok_or_else(|| ComponentError::new("Invalid 'all-episode' property"))
-            })
-            .transpose()?
-            .unwrap_or(false);
+        let config = deserialize_component_config::<MikanSourceConfig>(props)?;
         let http_client = http::build_client()?;
         Ok(Arc::new(MikanSource {
-            url,
-            all_episode,
+            url: config.url,
+            all_episode: config.all_episode,
             mikan_client: Arc::new(MikanClient::new(None, http_client.clone())),
             http_client,
         }))

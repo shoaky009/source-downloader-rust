@@ -1,7 +1,8 @@
 use crate::components::holding_task_trigger::HoldingTaskTrigger;
+use serde::Deserialize;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ProcessTask, SdComponent,
-    SdComponentMetadata, Stateful, Trigger,
+    SdComponentMetadata, Stateful, Trigger, deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::fmt::{Debug, Display, Formatter};
@@ -12,6 +13,11 @@ use tokio_cron_scheduler::{Job, JobScheduler, JobSchedulerError};
 pub struct CronTriggerSupplier;
 pub const SUPPLIER: CronTriggerSupplier = CronTriggerSupplier;
 
+#[derive(Deserialize)]
+struct CronTriggerConfig {
+    expression: String,
+}
+
 impl ComponentSupplier for CronTriggerSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::trigger("cron".to_owned())]
@@ -21,12 +27,11 @@ impl ComponentSupplier for CronTriggerSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let expression = props
-            .get("expression")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ComponentError::from("Missing 'expression' property"))?;
-        validate_cron_expression(expression).map_err(ComponentError::new)?;
-        Ok(Arc::new(CronTrigger::new(expression.to_owned())))
+        let config = deserialize_component_config::<CronTriggerConfig>(props)?;
+        validate_cron_expression(&config.expression).map_err(|error| {
+            ComponentError::new(format!("Invalid configuration at 'expression': {error}"))
+        })?;
+        Ok(Arc::new(CronTrigger::new(config.expression)))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None

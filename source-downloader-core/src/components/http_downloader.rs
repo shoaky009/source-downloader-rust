@@ -3,12 +3,12 @@ use futures_util::future::{AbortHandle, Abortable};
 use futures_util::stream::{self, StreamExt};
 use parking_lot::Mutex;
 use serde::Deserialize;
-use serde_json::{Map, Value};
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, DownloadTask, Downloader,
     ProcessingError, SdComponent, SdComponentMetadata, SourceFile, SourceFileRef,
-    Stateful,
+    Stateful, deserialize_component_config,
 };
+use source_downloader_sdk::serde_json::{Map, Value};
 use source_downloader_sdk::{SdComponent, SourceItem};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
@@ -42,16 +42,10 @@ impl ComponentSupplier for HttpDownloaderSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let config =
-            serde_json::from_value::<HttpDownloaderConfig>(Value::Object(props.clone()))
-                .map_err(|error| {
-                    ComponentError::new(format!(
-                        "Invalid HTTP downloader config: {error}"
-                    ))
-                })?;
+        let config = deserialize_component_config::<HttpDownloaderConfig>(props)?;
         if config.parallelism == 0 {
             return Err(ComponentError::new(
-                "HTTP downloader parallelism must be greater than zero",
+                "Invalid configuration at 'parallelism': HTTP downloader parallelism must be greater than zero",
             ));
         }
         let client = reqwest::Client::builder().build().map_err(|error| {
@@ -434,7 +428,7 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "HTTP downloader parallelism must be greater than zero"
+            "Invalid configuration at 'parallelism': HTTP downloader parallelism must be greater than zero"
         );
     }
 }

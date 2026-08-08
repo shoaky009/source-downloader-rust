@@ -5,7 +5,7 @@ use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
-    SdComponentMetadata, SourceFile, VariableProvider,
+    SdComponentMetadata, SourceFile, VariableProvider, deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{self, Map, Value};
 use std::collections::{HashMap, VecDeque};
@@ -50,12 +50,11 @@ impl ComponentSupplier for AiVariableProviderSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let config: AiConfig = serde_json::from_value(Value::Object(props.clone()))
-            .map_err(|error| {
-                ComponentError::new(format!("Invalid AI configuration: {error}"))
-            })?;
+        let config: AiConfig = deserialize_component_config(props)?;
         if config.api_keys.is_empty() {
-            return Err(ComponentError::new("'api-keys' must not be empty"));
+            return Err(ComponentError::new(
+                "Invalid configuration at 'api-keys': must not be empty",
+            ));
         }
         let system_role = config.system_role.unwrap_or_else(|| format!("你现在是一个文件解析器，从文件名中解析信息\n需要的信息有:{:?}\n如果不存在字段无需返回，以json的格式返回", config.resolve_variables));
         let client = if config.api_host.starts_with("http://127.0.0.1:") {
@@ -263,21 +262,25 @@ mod tests {
     }
     #[test]
     fn validates_required_nonempty_keys() {
-        assert!(
-            SUPPLIER
-                .apply(
-                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
-                    &Map::new(),
-                )
-                .is_err()
+        let error = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &Map::new(),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.message,
+            "Invalid configuration at '<root>': missing field `api-keys`"
         );
-        assert!(
-            SUPPLIER
-                .apply(
-                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
-                    &Map::from_iter([("api-keys".to_string(), serde_json::json!([]))]),
-                )
-                .is_err()
+        let error = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &Map::from_iter([("api-keys".to_string(), serde_json::json!([]))]),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.message,
+            "Invalid configuration at 'api-keys': must not be empty"
         );
     }
     #[tokio::test]

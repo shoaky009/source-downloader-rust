@@ -6,6 +6,7 @@ use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
     SdComponentMetadata, SourceItemFilter, VariableProvider,
+    deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -42,10 +43,7 @@ impl ComponentSupplier for KeywordIntegrationSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let config: KeywordIntegrationConfig =
-            serde_json::from_value(Value::Object(props.clone())).map_err(|error| {
-                ComponentError::new(format!("Invalid keyword config: {error}"))
-            })?;
+        let config: KeywordIntegrationConfig = deserialize_component_config(props)?;
         Ok(Arc::new(KeywordIntegration::new(config.keywords, config.keyword_file)?))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {

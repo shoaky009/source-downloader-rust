@@ -3,12 +3,12 @@ use crate::expression::{
     CompiledExpression, CompiledExpressionFactory, file_content_variables,
 };
 use serde::Deserialize;
-use serde_json::{Map, Value};
 use source_downloader_sdk::SdComponent;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, FileContent, FileContentFilter,
-    SdComponent, SdComponentMetadata,
+    SdComponent, SdComponentMetadata, deserialize_component_config,
 };
+use source_downloader_sdk::serde_json::{Map, Value};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use tracing::warn;
@@ -26,19 +26,23 @@ impl ComponentSupplier for ExpressionFileContentFilterSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let val = serde_json::to_value(props)
-            .map_err(|e| ComponentError::new(format!("Failed to parse config: {}", e)))?;
-        let cfg = serde_json::from_value::<Cfg>(val).map_err(|e| {
-            ComponentError::new(format!("Failed to convert config: {}", e))
-        })?;
+        let cfg = deserialize_component_config::<Cfg>(props)?;
         let mut exclusions = Vec::new();
-        for x in cfg.exclusions {
-            exclusions.push(FACTORY.create(&x)?);
+        for (index, x) in cfg.exclusions.into_iter().enumerate() {
+            exclusions.push(FACTORY.create(&x).map_err(|error| {
+                ComponentError::new(format!(
+                    "Invalid configuration at 'exclusions[{index}]': {error}"
+                ))
+            })?);
         }
 
         let mut inclusions = Vec::new();
-        for x in cfg.inclusions {
-            inclusions.push(FACTORY.create(&x)?);
+        for (index, x) in cfg.inclusions.into_iter().enumerate() {
+            inclusions.push(FACTORY.create(&x).map_err(|error| {
+                ComponentError::new(format!(
+                    "Invalid configuration at 'inclusions[{index}]': {error}"
+                ))
+            })?);
         }
 
         Ok(Arc::new(ExpressionFileContentFilter { exclusions, inclusions }))

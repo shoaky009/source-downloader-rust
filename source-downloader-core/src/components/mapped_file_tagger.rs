@@ -4,7 +4,7 @@ use source_downloader_sdk::SdComponent;
 use source_downloader_sdk::component::SourceFile;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, FileTagger, SdComponent,
-    SdComponentMetadata,
+    SdComponentMetadata, deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -28,10 +28,7 @@ impl ComponentSupplier for MappedFileTaggerSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let config: MappedFileTaggerConfig =
-            serde_json::from_value(Value::Object(props.clone())).map_err(|error| {
-                ComponentError::new(format!("Invalid mapped tagger config: {error}"))
-            })?;
+        let config: MappedFileTaggerConfig = deserialize_component_config(props)?;
         Ok(Arc::new(MappedFileTagger { mapping: config.mapping }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {

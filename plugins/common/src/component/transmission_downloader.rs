@@ -8,7 +8,7 @@ use source_downloader_sdk::component::{
     AsyncDownloader, ComponentError, ComponentSupplier, ComponentType, DownloadTask,
     Downloader, ProcessingError, SdComponent, SdComponentMetadata, SourceFile,
 };
-use source_downloader_sdk::serde_json::{Map, Value, json};
+use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, OnceLock};
 
@@ -24,11 +24,7 @@ impl ComponentSupplier for TransmissionDownloaderSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let endpoint = props
-            .get("url")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ComponentError::new("Missing or invalid 'url' property"))?
-            .to_string();
+        let endpoint = required_string(props, "url")?;
         let username = optional(props, "username")?;
         let password = optional(props, "password")?;
         let client = if endpoint.starts_with("http://127.0.0.1:") {
@@ -53,6 +49,20 @@ impl ComponentSupplier for TransmissionDownloaderSupplier {
     }
 }
 
+fn required_string(
+    props: &Map<String, Value>,
+    key: &str,
+) -> Result<String, ComponentError> {
+    let value = props.get(key).ok_or_else(|| {
+        ComponentError::new(format!(
+            "Invalid configuration at '{key}': missing field `{key}`"
+        ))
+    })?;
+    serde_json::from_value::<String>(value.clone()).map_err(|error| {
+        ComponentError::new(format!("Invalid configuration at '{key}': {error}"))
+    })
+}
+
 fn optional(
     props: &Map<String, Value>,
     key: &str,
@@ -60,10 +70,9 @@ fn optional(
     props
         .get(key)
         .map(|value| {
-            value
-                .as_str()
-                .map(str::to_string)
-                .ok_or_else(|| ComponentError::new(format!("Invalid '{key}' property")))
+            serde_json::from_value::<String>(value.clone()).map_err(|error| {
+                ComponentError::new(format!("Invalid configuration at '{key}': {error}"))
+            })
         })
         .transpose()
 }

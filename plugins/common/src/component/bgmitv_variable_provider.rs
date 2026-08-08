@@ -7,7 +7,7 @@ use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
     SdComponentMetadata, SourceFile, VariableProvider,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{self, Map, Value};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
@@ -32,12 +32,13 @@ impl ComponentSupplier for BgmTvVariableProviderSupplier {
         let token = props
             .get("token")
             .map(|value| {
-                value
-                    .as_str()
-                    .ok_or_else(|| ComponentError::new("Invalid 'token' property"))
+                serde_json::from_value::<String>(value.clone()).map_err(|error| {
+                    ComponentError::new(format!(
+                        "Invalid configuration at 'token': {error}"
+                    ))
+                })
             })
-            .transpose()?
-            .map(str::to_string);
+            .transpose()?;
         let http = if base_url.starts_with("http://127.0.0.1:") {
             HttpClient::from_reqwest(http::client_builder().no_proxy().build().map_err(
                 |error| {

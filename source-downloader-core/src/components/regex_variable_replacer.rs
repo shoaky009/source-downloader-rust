@@ -2,7 +2,7 @@ use regex::Regex;
 use serde::Deserialize;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, SdComponent, SdComponentMetadata,
-    VariableReplacer,
+    VariableReplacer, deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::fmt::{Display, Formatter};
@@ -27,12 +27,11 @@ impl ComponentSupplier for RegexVariableReplacerSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let config: RegexConfig = serde_json::from_value(Value::Object(props.clone()))
-            .map_err(|error| {
-                ComponentError::new(format!("Invalid regex replacer config: {error}"))
-            })?;
+        let config: RegexConfig = deserialize_component_config(props)?;
         let regex = Regex::new(&config.regex).map_err(|error| {
-            ComponentError::new(format!("Invalid replacer regex: {error}"))
+            ComponentError::new(format!(
+                "Invalid configuration at 'regex': Invalid replacer regex: {error}"
+            ))
         })?;
         Ok(Arc::new(RegexVariableReplacer { regex, replacement: config.replacement }))
     }

@@ -6,7 +6,7 @@ use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
     SdComponentMetadata, SourceFile, VariableProvider,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{self, Map, Value};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::sync::{Arc, LazyLock};
@@ -27,8 +27,10 @@ impl ComponentSupplier for ResolutionVariableProviderSupplier {
         let only_high_resolution = props
             .get("only-high-resolution")
             .map(|value| {
-                value.as_bool().ok_or_else(|| {
-                    ComponentError::new("Invalid 'only-high-resolution' property")
+                serde_json::from_value::<bool>(value.clone()).map_err(|error| {
+                    ComponentError::new(format!(
+                        "Invalid configuration at 'only-high-resolution': {error}"
+                    ))
                 })
             })
             .transpose()?

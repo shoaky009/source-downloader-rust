@@ -1,8 +1,9 @@
+use serde::Deserialize;
 use source_downloader_sdk::SdComponent;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, FileTagger, SdComponent,
-    SdComponentMetadata, SourceFile,
+    SdComponentMetadata, SourceFile, deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -10,6 +11,12 @@ use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
 pub struct SimpleFileTaggerSupplier;
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct SimpleFileTaggerConfig {
+    #[serde(default)]
+    external_mapping: HashMap<String, String>,
+}
 pub const SUPPLIER: SimpleFileTaggerSupplier = SimpleFileTaggerSupplier;
 
 impl ComponentSupplier for SimpleFileTaggerSupplier {
@@ -21,23 +28,10 @@ impl ComponentSupplier for SimpleFileTaggerSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
+        let config = deserialize_component_config::<SimpleFileTaggerConfig>(props)?;
         let mut mapping =
             HashMap::from([("x-subrip".to_string(), "subtitle".to_string())]);
-        if let Some(value) = props.get("external-mapping") {
-            let external = value.as_object().ok_or_else(|| {
-                ComponentError::new("Invalid 'external-mapping' property")
-            })?;
-            for (subtype, tag) in external {
-                mapping.insert(
-                    subtype.clone(),
-                    tag.as_str()
-                        .ok_or_else(|| {
-                            ComponentError::new("Invalid 'external-mapping' value")
-                        })?
-                        .to_string(),
-                );
-            }
-        }
+        mapping.extend(config.external_mapping);
         Ok(Arc::new(SimpleFileTagger { mapping }))
     }
     fn is_support_no_props(&self) -> bool {

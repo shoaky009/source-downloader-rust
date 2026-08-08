@@ -9,7 +9,7 @@ use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
     ComponentError, ComponentRootType, ComponentSupplier, ComponentType, DownloadTask,
     Downloader, ItemFileResolver, ProcessingError, SdComponent, SdComponentMetadata,
-    SourceFile,
+    SourceFile, deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::fmt::{Debug, Display, Formatter};
@@ -83,9 +83,14 @@ impl ComponentSupplier for CompositeDownloaderSupplier {
         let component_manager = require_component_manager(&self.component_manager)?;
         let default = resolve_downloader(&component_manager, &config.default)?;
         let mut rules = Vec::with_capacity(config.rules.len());
-        for rule in config.rules {
+        for (index, rule) in config.rules.into_iter().enumerate() {
+            let expression = compile_expression(&rule.expression).map_err(|error| {
+                ComponentError::new(format!(
+                    "Invalid configuration at 'rules[{index}].expression': {error}"
+                ))
+            })?;
             rules.push(ComponentSelectRule::new(
-                compile_expression(&rule.expression)?,
+                expression,
                 resolve_downloader(&component_manager, &rule.component)?,
             ));
         }
@@ -120,9 +125,14 @@ impl ComponentSupplier for CompositeItemFileResolverSupplier {
         let component_manager = require_component_manager(&self.component_manager)?;
         let default = resolve_item_file_resolver(&component_manager, &config.default)?;
         let mut rules = Vec::with_capacity(config.rules.len());
-        for rule in config.rules {
+        for (index, rule) in config.rules.into_iter().enumerate() {
+            let expression = compile_expression(&rule.expression).map_err(|error| {
+                ComponentError::new(format!(
+                    "Invalid configuration at 'rules[{index}].expression': {error}"
+                ))
+            })?;
             rules.push(ComponentSelectRule::new(
-                compile_expression(&rule.expression)?,
+                expression,
                 resolve_item_file_resolver(&component_manager, &rule.component)?,
             ));
         }
@@ -139,8 +149,7 @@ impl ComponentSupplier for CompositeItemFileResolverSupplier {
 fn parse_config(
     props: &Map<String, Value>,
 ) -> Result<CompositeComponentConfig, ComponentError> {
-    serde_json::from_value(Value::Object(props.clone()))
-        .map_err(|error| ComponentError::new(format!("Failed to parse config: {error}")))
+    deserialize_component_config(props)
 }
 
 fn require_component_manager(

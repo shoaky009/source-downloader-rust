@@ -6,6 +6,7 @@ use crate::storage::ProcessingStatus;
 use async_trait::async_trait;
 use http::Uri;
 use parking_lot::RwLock;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::any::{Any, TypeId};
 use std::cmp::PartialEq;
@@ -632,6 +633,25 @@ pub struct PointedItem {
     pub item_pointer: Arc<dyn ItemPointer>,
 }
 
+pub fn deserialize_component_config<T>(
+    props: &Map<String, Value>,
+) -> Result<T, ComponentError>
+where
+    T: DeserializeOwned,
+{
+    serde_path_to_error::deserialize(Value::Object(props.clone())).map_err(|error| {
+        let path = if error.path().iter().next().is_none() {
+            "<root>".to_owned()
+        } else {
+            error.path().to_string()
+        };
+        ComponentError::new(format!(
+            "Invalid configuration at '{path}': {}",
+            error.inner()
+        ))
+    })
+}
+
 #[derive(Clone)]
 pub struct ComponentError {
     pub message: String,
@@ -956,9 +976,78 @@ impl TaskRegistry {
 mod test {
     use crate::component::{
         ComponentId, ComponentRootType, FileContent, FileContentStatus,
+        deserialize_component_config,
     };
+    use crate::serde_json::json;
+    use serde::Deserialize;
     use std::path::PathBuf;
     use std::sync::OnceLock;
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "kebab-case")]
+    struct FlatConfig {
+        api_hash: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct NestedConfig {
+        rules: Vec<RuleConfig>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct RuleConfig {
+        matcher: MatcherConfig,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct MatcherConfig {
+        tags: Vec<String>,
+    }
+
+    #[test]
+    fn deserialize_component_config_reports_top_level_field() {
+        let props = json!({ "api-hash": 1 }).as_object().unwrap().clone();
+
+        let error = deserialize_component_config::<FlatConfig>(&props).unwrap_err();
+
+        assert_eq!(
+            error.message,
+            "Invalid configuration at 'api-hash': invalid type: integer `1`, expected a string"
+        );
+    }
+
+    #[test]
+    fn deserialize_component_config_reports_missing_field() {
+        let props = json!({}).as_object().unwrap().clone();
+
+        let error = deserialize_component_config::<FlatConfig>(&props).unwrap_err();
+
+        assert_eq!(
+            error.message,
+            "Invalid configuration at '<root>': missing field `api-hash`"
+        );
+    }
+
+    #[test]
+    fn deserialize_component_config_reports_nested_collection_path() {
+        let props = json!({
+            "rules": [{
+                "matcher": {
+                    "tags": "anime"
+                }
+            }]
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+
+        let error = deserialize_component_config::<NestedConfig>(&props).unwrap_err();
+
+        assert_eq!(
+            error.message,
+            "Invalid configuration at 'rules[0].matcher.tags': invalid type: string \"anime\", expected a sequence"
+        );
+    }
 
     #[test]
     fn parse_component_id_given_raw_string() {

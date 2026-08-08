@@ -9,7 +9,7 @@ use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
     SdComponentMetadata, SourceFile, VariableProvider,
 };
-use source_downloader_sdk::serde_json::{Map, Value, json};
+use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, LazyLock};
@@ -50,17 +50,20 @@ impl ComponentSupplier for AnimeVariableProviderSupplier {
         let token = props
             .get("bgmtv-token")
             .map(|value| {
-                value
-                    .as_str()
-                    .map(str::to_string)
-                    .ok_or_else(|| ComponentError::new("Invalid 'bgmtv-token' property"))
+                serde_json::from_value::<String>(value.clone()).map_err(|error| {
+                    ComponentError::new(format!(
+                        "Invalid configuration at 'bgmtv-token': {error}"
+                    ))
+                })
             })
             .transpose()?;
         let prefer_bangumi = props
             .get("prefer-bgm-tv")
             .map(|value| {
-                value.as_bool().ok_or_else(|| {
-                    ComponentError::new("Invalid 'prefer-bgm-tv' property")
+                serde_json::from_value::<bool>(value.clone()).map_err(|error| {
+                    ComponentError::new(format!(
+                        "Invalid configuration at 'prefer-bgm-tv': {error}"
+                    ))
                 })
             })
             .transpose()?
@@ -102,10 +105,13 @@ fn string_prop(
     props
         .get(key)
         .map(|value| {
-            value
-                .as_str()
+            serde_json::from_value::<String>(value.clone())
                 .map(|value| value.trim_end_matches('/').to_string())
-                .ok_or_else(|| ComponentError::new(format!("Invalid '{key}' property")))
+                .map_err(|error| {
+                    ComponentError::new(format!(
+                        "Invalid configuration at '{key}': {error}"
+                    ))
+                })
         })
         .transpose()
         .map(|value| value.unwrap_or_else(|| default.to_string()))

@@ -3,7 +3,7 @@ use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, FileContentStatus, ItemContent,
     ProcessContext, ProcessListener, ProcessingError, ProcessorInfo, SdComponent,
-    SdComponentMetadata,
+    SdComponentMetadata, deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -42,21 +42,20 @@ impl ComponentSupplier for SendHttpRequestSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let config: HttpRequestConfig =
-            serde_json::from_value(Value::Object(props.clone())).map_err(|error| {
-                ComponentError::new(format!("Invalid HTTP request config: {error}"))
-            })?;
+        let config: HttpRequestConfig = deserialize_component_config(props)?;
         match config.method.as_str() {
             "GET" | "POST" | "PUT" | "DELETE" => {}
             _ => {
                 return Err(ComponentError::new(format!(
-                    "Invalid HTTP request method '{}'",
+                    "Invalid configuration at 'method': Invalid HTTP request method '{}'",
                     config.method
                 )));
             }
         }
         reqwest::Url::parse(&config.url).map_err(|error| {
-            ComponentError::new(format!("Invalid HTTP request URL: {error}"))
+            ComponentError::new(format!(
+                "Invalid configuration at 'url': Invalid HTTP request URL: {error}"
+            ))
         })?;
         Ok(Arc::new(SendHttpRequest { config, client: reqwest::Client::new() }))
     }
@@ -417,7 +416,10 @@ mod tests {
             )
             .unwrap_err();
 
-        assert!(error.to_string().contains("Invalid HTTP request method"));
+        assert_eq!(
+            error.to_string(),
+            "Invalid configuration at 'method': Invalid HTTP request method 'PATCH'"
+        );
     }
 
     #[test]

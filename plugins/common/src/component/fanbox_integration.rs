@@ -5,7 +5,7 @@ use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, ItemPointer,
     PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourceFile,
-    SourcePointer,
+    SourcePointer, deserialize_component_config,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value};
@@ -20,6 +20,12 @@ use std::sync::Arc;
 pub struct FanboxIntegrationSupplier;
 pub const SUPPLIER: FanboxIntegrationSupplier = FanboxIntegrationSupplier;
 
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct FanboxHeadersConfig {
+    headers: HashMap<String, String>,
+}
+
 impl ComponentSupplier for FanboxIntegrationSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![
@@ -32,24 +38,23 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let cookie = props
-            .get("cookie")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ComponentError::new("Missing or invalid 'cookie' property"))?
-            .to_string();
+        let cookie = props.get("cookie").ok_or_else(|| {
+            ComponentError::new(
+                "Invalid configuration at 'cookie': missing field `cookie`",
+            )
+        })?;
+        let cookie =
+            serde_json::from_value::<String>(cookie.clone()).map_err(|error| {
+                ComponentError::new(format!("Invalid configuration at 'cookie': {error}"))
+            })?;
         let mode = props.get("mode").and_then(Value::as_str).unwrap_or("all");
         if !matches!(mode, "all" | "latestOnly") {
-            return Err(ComponentError::new("Invalid 'mode' property"));
+            return Err(ComponentError::new(
+                "Invalid configuration at 'mode': expected either `all` or `latestOnly`",
+            ));
         }
-        let mut headers = props
-            .get("headers")
-            .map(|value| {
-                serde_json::from_value::<HashMap<String, String>>(value.clone()).map_err(
-                    |error| ComponentError::new(format!("Invalid 'headers': {error}")),
-                )
-            })
-            .transpose()?
-            .unwrap_or_default();
+        let mut headers =
+            deserialize_component_config::<FanboxHeadersConfig>(props)?.headers;
         headers.entry("Cookie".into()).or_insert(cookie);
         headers.entry("Origin".into()).or_insert("https://www.fanbox.cc".into());
         headers.entry("Referer".into()).or_insert("https://www.fanbox.cc/".into());

@@ -6,7 +6,7 @@ use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentCreateContext, ComponentError, ComponentSupplier, ComponentType,
     ItemPointer, PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source,
-    SourcePointer,
+    SourcePointer, deserialize_component_config,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value};
@@ -55,15 +55,11 @@ impl ComponentSupplier for TelegramSourceSupplier {
         context: &dyn ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let config =
-            serde_json::from_value::<TelegramSourceConfig>(Value::Object(props.clone()))
-                .map_err(|error| {
-                    ComponentError::new(format!(
-                        "Invalid Telegram source config: {error}"
-                    ))
-                })?;
+        let config: TelegramSourceConfig = deserialize_component_config(props)?;
         if config.chats.is_empty() {
-            return Err(ComponentError::new("Telegram 'chats' must not be empty"));
+            return Err(ComponentError::new(
+                "Invalid configuration at 'chats': must not be empty",
+            ));
         }
         let instance = context
             .get_instance(&config.client, TypeId::of::<TelegramClientInstance>())?;
@@ -412,5 +408,74 @@ mod tests {
             }));
         assert_eq!(pointer.dump()["chatLastMessageIds"]["-7"], 12);
         assert!(pointer.dump()["chatLastMessageIds"].get("9").is_none());
+    }
+
+    #[test]
+    fn supplier_reports_source_path_for_empty_chats() {
+        let props = source_downloader_sdk::serde_json::json!({
+            "client": "telegram",
+            "chats": [],
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+
+        let error = match SOURCE_SUPPLIER.apply(
+            &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+            &props,
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("invalid source configuration was accepted"),
+        };
+
+        assert_eq!(error.message, "Invalid configuration at 'chats': must not be empty");
+    }
+
+    #[test]
+    fn supplier_reports_source_field_path_for_invalid_top_level_value() {
+        let props = source_downloader_sdk::serde_json::json!({
+            "client": 1,
+            "chats": [],
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+
+        let error = match SOURCE_SUPPLIER.apply(
+            &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+            &props,
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("invalid source configuration was accepted"),
+        };
+
+        assert_eq!(
+            error.message,
+            "Invalid configuration at 'client': invalid type: integer `1`, expected a string"
+        );
+    }
+
+    #[test]
+    fn supplier_reports_full_path_for_invalid_chat_element() {
+        let props = source_downloader_sdk::serde_json::json!({
+            "client": "telegram",
+            "chats": [{"chat-id": "invalid"}],
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+
+        let error = match SOURCE_SUPPLIER.apply(
+            &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+            &props,
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("invalid chat configuration was accepted"),
+        };
+
+        assert_eq!(
+            error.message,
+            "Invalid configuration at 'chats[0].chat-id': invalid type: string \"invalid\", expected i64"
+        );
     }
 }

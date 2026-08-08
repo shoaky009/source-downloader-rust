@@ -2,7 +2,7 @@ use regex::Regex;
 use serde::Deserialize;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, SdComponent, SdComponentMetadata,
-    Trimmer,
+    Trimmer, deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::fmt::{Display, Formatter};
@@ -26,12 +26,11 @@ impl ComponentSupplier for RegexTrimmerSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let config: RegexConfig = serde_json::from_value(Value::Object(props.clone()))
-            .map_err(|error| {
-                ComponentError::new(format!("Invalid regex trimmer config: {error}"))
-            })?;
+        let config: RegexConfig = deserialize_component_config(props)?;
         let regex = Regex::new(&config.regex).map_err(|error| {
-            ComponentError::new(format!("Invalid trimmer regex: {error}"))
+            ComponentError::new(format!(
+                "Invalid configuration at 'regex': Invalid trimmer regex: {error}"
+            ))
         })?;
         Ok(Arc::new(RegexTrimmer { regex }))
     }

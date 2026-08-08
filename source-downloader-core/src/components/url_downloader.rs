@@ -5,6 +5,7 @@ use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, DownloadTask, Downloader,
     ProcessingError, SdComponent, SdComponentMetadata, SourceFile,
+    deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::fmt::{Display, Formatter};
@@ -29,10 +30,7 @@ impl ComponentSupplier for UrlDownloaderSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let config: UrlDownloaderConfig =
-            serde_json::from_value(Value::Object(props.clone())).map_err(|error| {
-                ComponentError::new(format!("Invalid URL downloader config: {error}"))
-            })?;
+        let config: UrlDownloaderConfig = deserialize_component_config(props)?;
         Ok(Arc::new(UrlDownloader { download_path: config.download_path }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {

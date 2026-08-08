@@ -9,7 +9,7 @@ use source_downloader_sdk::component::{
     Downloader, FileContent, FileMover, ProcessingError, SdComponent,
     SdComponentMetadata, SourceFile,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{self, Map, Value};
 use std::fmt::{Debug, Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -30,20 +30,26 @@ impl ComponentSupplier for QbittorrentDownloaderSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let endpoint = props
-            .get("endpoint")
-            .or_else(|| props.get("host"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| ComponentError::new("Missing or invalid 'endpoint' property"))?
-            .trim_end_matches('/')
-            .to_string();
+        let endpoint = match optional_string(props, "endpoint")? {
+            Some(endpoint) => endpoint,
+            None => optional_string(props, "host")?.ok_or_else(|| {
+                ComponentError::new(
+                    "Invalid configuration at 'endpoint': \
+                     missing field `endpoint`",
+                )
+            })?,
+        }
+        .trim_end_matches('/')
+        .to_string();
         let username = optional_string(props, "username")?;
         let password = optional_string(props, "password")?;
         let always_download_all = props
             .get("always-download-all")
             .map(|value| {
-                value.as_bool().ok_or_else(|| {
-                    ComponentError::new("Invalid 'always-download-all' property")
+                serde_json::from_value::<bool>(value.clone()).map_err(|error| {
+                    ComponentError::new(format!(
+                        "Invalid configuration at 'always-download-all': {error}"
+                    ))
                 })
             })
             .transpose()?
@@ -78,10 +84,9 @@ fn optional_string(
     props
         .get(key)
         .map(|value| {
-            value
-                .as_str()
-                .map(str::to_string)
-                .ok_or_else(|| ComponentError::new(format!("Invalid '{key}' property")))
+            serde_json::from_value::<String>(value.clone()).map_err(|error| {
+                ComponentError::new(format!("Invalid configuration at '{key}': {error}"))
+            })
         })
         .transpose()
 }

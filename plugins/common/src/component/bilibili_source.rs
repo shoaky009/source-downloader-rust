@@ -25,13 +25,16 @@ impl ComponentSupplier for BilibiliSourceSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         p: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let favorites = p
-            .get("favorites")
-            .ok_or_else(|| ComponentError::new("Missing 'favorites' property"))
-            .and_then(|v| {
-                serde_json::from_value::<Vec<i64>>(v.clone()).map_err(|e| {
-                    ComponentError::new(format!("Invalid 'favorites' property: {e}"))
-                })
+        let favorites = p.get("favorites").ok_or_else(|| {
+            ComponentError::new(
+                "Invalid configuration at 'favorites': missing field `favorites`",
+            )
+        })?;
+        let favorites =
+            serde_json::from_value::<Vec<i64>>(favorites.clone()).map_err(|error| {
+                ComponentError::new(format!(
+                    "Invalid configuration at 'favorites': {error}"
+                ))
             })?;
         let cookie = p.get("cookie").and_then(Value::as_str).map(str::to_string);
         let base = p

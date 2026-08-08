@@ -9,7 +9,7 @@ use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
     SdComponentMetadata, SourceFile, VariableProvider,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{self, Map, Value};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, LazyLock};
@@ -37,24 +37,8 @@ impl ComponentSupplier for MikanVariableProviderSupplier {
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let mikan_base = prop(props, "mikan-base-url", "https://mikanani.me")?;
         let bangumi_base = prop(props, "bgmtv-base-url", "https://api.bgm.tv")?;
-        let token = props
-            .get("token")
-            .map(|value| {
-                value
-                    .as_str()
-                    .map(str::to_string)
-                    .ok_or_else(|| ComponentError::new("Invalid 'token' property"))
-            })
-            .transpose()?;
-        let bangumi_token = props
-            .get("bgmtv-token")
-            .map(|value| {
-                value
-                    .as_str()
-                    .map(str::to_string)
-                    .ok_or_else(|| ComponentError::new("Invalid 'bgmtv-token' property"))
-            })
-            .transpose()?;
+        let token = optional_string(props, "token")?;
+        let bangumi_token = optional_string(props, "bgmtv-token")?;
         let http = if mikan_base.starts_with("http://127.0.0.1:")
             || bangumi_base.starts_with("http://127.0.0.1:")
         {
@@ -84,21 +68,27 @@ impl ComponentSupplier for MikanVariableProviderSupplier {
     }
 }
 
+fn optional_string(
+    props: &Map<String, Value>,
+    key: &str,
+) -> Result<Option<String>, ComponentError> {
+    props
+        .get(key)
+        .map(|value| {
+            serde_json::from_value::<String>(value.clone()).map_err(|error| {
+                ComponentError::new(format!("Invalid configuration at '{key}': {error}"))
+            })
+        })
+        .transpose()
+}
 fn prop(
     props: &Map<String, Value>,
     key: &str,
     default: &str,
 ) -> Result<String, ComponentError> {
-    props
-        .get(key)
-        .map(|value| {
-            value
-                .as_str()
-                .map(|value| value.trim_end_matches('/').to_string())
-                .ok_or_else(|| ComponentError::new(format!("Invalid '{key}' property")))
-        })
-        .transpose()
-        .map(|value| value.unwrap_or_else(|| default.to_string()))
+    Ok(optional_string(props, key)?
+        .map(|value| value.trim_end_matches('/').to_string())
+        .unwrap_or_else(|| default.to_string()))
 }
 
 #[derive(Debug, Default)]

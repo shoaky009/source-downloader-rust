@@ -4,7 +4,7 @@ use serde::Deserialize;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
-    SdComponentMetadata, SourceFile, VariableProvider,
+    SdComponentMetadata, SourceFile, VariableProvider, deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -41,15 +41,12 @@ impl ComponentSupplier for RegexVariableProviderSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let config: RegexVariableProviderConfig =
-            serde_json::from_value(Value::Object(props.clone())).map_err(|error| {
-                ComponentError::new(format!("Invalid regex provider config: {error}"))
-            })?;
+        let config: RegexVariableProviderConfig = deserialize_component_config(props)?;
         let mut regexes = Vec::with_capacity(config.regexes.len());
-        for regex in config.regexes {
+        for (index, regex) in config.regexes.into_iter().enumerate() {
             let compiled = Regex::new(&regex.regex).map_err(|error| {
                 ComponentError::new(format!(
-                    "Invalid regex for '{}': {error}",
+                    "Invalid configuration at 'regexes[{index}].regex': Invalid regex for '{}': {error}",
                     regex.name
                 ))
             })?;

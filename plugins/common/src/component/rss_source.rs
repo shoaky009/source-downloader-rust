@@ -7,7 +7,7 @@ use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, EmptyPointer, ItemPointer,
     PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source,
-    SourcePointer,
+    SourcePointer, deserialize_component_config,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value};
@@ -27,6 +27,16 @@ struct Extension {
     value: String,
 }
 pub struct RssSourceSupplier;
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct RssSourceConfig {
+    url: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    attributes: HashMap<String, String>,
+    date_format: Option<String>,
+}
 pub const SUPPLIER: RssSourceSupplier = RssSourceSupplier;
 impl ComponentSupplier for RssSourceSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
@@ -37,50 +47,31 @@ impl ComponentSupplier for RssSourceSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         p: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let url = p
-            .get("url")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ComponentError::new("Missing or invalid 'url' property"))?
-            .to_string();
-        reqwest::Url::parse(&url)
-            .map_err(|e| ComponentError::new(format!("Invalid RSS URL: {e}")))?;
-        let tags = strings(p.get("tags"), "tags")?;
-        let attributes = p
-            .get("attributes")
-            .map(|v| {
-                serde_json::from_value::<HashMap<String, String>>(v.clone()).map_err(
-                    |e| {
-                        ComponentError::new(format!("Invalid 'attributes' property: {e}"))
-                    },
-                )
-            })
-            .transpose()?
-            .unwrap_or_default();
-        let date_format =
-            p.get("date-format").and_then(Value::as_str).map(str::to_string);
-        let client = if url.starts_with("http://127.0.0.1:") {
+        let config = deserialize_component_config::<RssSourceConfig>(p)?;
+        let parsed_url = reqwest::Url::parse(&config.url).map_err(|error| {
+            ComponentError::new(format!("Invalid configuration at 'url': {error}"))
+        })?;
+        let client = if config.url.starts_with("http://127.0.0.1:") {
             http::client_builder()
                 .no_proxy()
                 .build()
-                .map_err(|e| ComponentError::new(e.to_string()))?
+                .map_err(|error| ComponentError::new(error.to_string()))?
         } else {
             http::build_client()?
         };
-        let group =
-            reqwest::Url::parse(&url).ok().and_then(|u| u.host_str().map(str::to_string));
-        Ok(Arc::new(RssSource { url, tags, attributes, date_format, client, group }))
+        let group = parsed_url.host_str().map(str::to_string);
+        Ok(Arc::new(RssSource {
+            url: config.url,
+            tags: config.tags,
+            attributes: config.attributes,
+            date_format: config.date_format,
+            client,
+            group,
+        }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None
     }
-}
-fn strings(v: Option<&Value>, name: &str) -> Result<Vec<String>, ComponentError> {
-    v.map(|v| {
-        serde_json::from_value(v.clone())
-            .map_err(|e| ComponentError::new(format!("Invalid '{name}' property: {e}")))
-    })
-    .transpose()
-    .map(|v| v.unwrap_or_default())
 }
 #[derive(Debug, source_downloader_sdk::SdComponent)]
 #[component(Source)]

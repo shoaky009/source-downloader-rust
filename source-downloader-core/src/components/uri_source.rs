@@ -4,6 +4,7 @@ use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, EmptyPointer, PointedItem,
     ProcessingError, SdComponent, SdComponentMetadata, Source, SourcePointer,
+    deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::fmt::{Display, Formatter};
@@ -26,12 +27,12 @@ impl ComponentSupplier for UriSourceSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let config: UriSourceConfig =
-            serde_json::from_value(Value::Object(props.clone())).map_err(|error| {
-                ComponentError::new(format!("Invalid URI source config: {error}"))
-            })?;
+        let config: UriSourceConfig = deserialize_component_config(props)?;
         let uri = config.uri.parse().map_err(|error| {
-            ComponentError::new(format!("Invalid URI '{}': {error}", config.uri))
+            ComponentError::new(format!(
+                "Invalid configuration at 'uri': Invalid URI '{}': {error}",
+                config.uri
+            ))
         })?;
         Ok(Arc::new(UriSource { uri }))
     }

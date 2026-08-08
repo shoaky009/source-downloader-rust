@@ -9,7 +9,7 @@ use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
     SdComponentMetadata, SourceFile, VariableProvider,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{self, Map, Value};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::sync::{Arc, LazyLock};
@@ -29,18 +29,22 @@ impl ComponentSupplier for DlsiteVariableProviderSupplier {
             p.get("locale").and_then(Value::as_str).unwrap_or("ja-jp").to_string();
         let only = p
             .get("only-extract-id")
-            .map(|v| {
-                v.as_bool().ok_or_else(|| {
-                    ComponentError::new("Invalid 'only-extract-id' property")
+            .map(|value| {
+                serde_json::from_value::<bool>(value.clone()).map_err(|error| {
+                    ComponentError::new(format!(
+                        "Invalid configuration at 'only-extract-id': {error}"
+                    ))
                 })
             })
             .transpose()?
             .unwrap_or(false);
         let prefer = p
             .get("prefer-suggest")
-            .map(|v| {
-                v.as_bool().ok_or_else(|| {
-                    ComponentError::new("Invalid 'prefer-suggest' property")
+            .map(|value| {
+                serde_json::from_value::<bool>(value.clone()).map_err(|error| {
+                    ComponentError::new(format!(
+                        "Invalid configuration at 'prefer-suggest': {error}"
+                    ))
                 })
             })
             .transpose()?

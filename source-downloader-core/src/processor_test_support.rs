@@ -342,10 +342,7 @@ pub mod test_support {
             _: &dyn source_downloader_sdk::component::ComponentCreateContext,
             props: &Map<String, Value>,
         ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-            let cfg = serde_json::from_value::<ComponentMockConfig>(Value::Object(
-                props.clone(),
-            ))
-            .map_err(|error| ComponentError::new(error.to_string()))?;
+            let cfg = deserialize_component_config::<ComponentMockConfig>(props)?;
             let fetches = cfg
                 .fetch
                 .into_iter()

@@ -13,6 +13,7 @@ http-serde = { workspace = true }
 time = { workspace = true, features = ["serde", "parsing", "formatting", "macros"] }
 serde_json = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+serde_path_to_error = { workspace = true }
 component-macro = { path = "../component-macro" }
 parking_lot = { workspace = true, features = ["serde"] }
 async-trait = { workspace = true }

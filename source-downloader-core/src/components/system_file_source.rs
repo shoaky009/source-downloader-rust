@@ -1,8 +1,9 @@
 use async_trait::async_trait;
+use serde::Deserialize;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, DownloadTask, Downloader,
     EmptyPointer, PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source,
-    SourceFile, SourcePointer,
+    SourceFile, SourcePointer, deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use source_downloader_sdk::time::OffsetDateTime;
@@ -17,6 +18,14 @@ use walkdir::WalkDir;
 pub struct SystemFileSourceSupplier;
 pub const SUPPLIER: SystemFileSourceSupplier = SystemFileSourceSupplier {};
 
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct SystemFileSourceConfig {
+    path: String,
+    #[serde(default)]
+    mode: i64,
+}
+
 impl ComponentSupplier for SystemFileSourceSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![
@@ -29,19 +38,18 @@ impl ComponentSupplier for SystemFileSourceSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let path = props
-            .get("path")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ComponentError::from("Missing 'path' property"))?;
-        let mode = props.get("mode").and_then(Value::as_i64).unwrap_or(0);
-        if mode != 0 && mode != 1 {
-            return Err(ComponentError::new(format!("Unknown mode: {mode}")));
+        let config = deserialize_component_config::<SystemFileSourceConfig>(props)?;
+        if config.mode != 0 && config.mode != 1 {
+            return Err(ComponentError::new(format!(
+                "Invalid configuration at 'mode': Unknown mode: {}",
+                config.mode
+            )));
         }
-        let path = PathBuf::from(path);
+        let path = PathBuf::from(config.path);
         Ok(Arc::new(SystemFileSource {
             download_path: path.to_string_lossy().into_owned(),
             path,
-            mode: mode as i8,
+            mode: config.mode as i8,
         }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {

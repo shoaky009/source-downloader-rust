@@ -1,10 +1,11 @@
 use crate::components::holding_task_trigger::state_detail_for_tasks;
 use iso8601_duration::Duration as Iso8601Duration;
 use parking_lot::Mutex;
+use serde::Deserialize;
 use source_downloader_sdk::SdComponent;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ProcessTask, SdComponent,
-    SdComponentMetadata, Stateful, TaskRegistry, Trigger,
+    SdComponentMetadata, Stateful, TaskRegistry, Trigger, deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::fmt::{Debug, Display, Formatter};
@@ -18,6 +19,14 @@ type TaskGroups = Vec<(Option<String>, Vec<Arc<dyn ProcessTask>>)>;
 pub struct FixedScheduleTriggerSupplier;
 pub const SUPPLIER: FixedScheduleTriggerSupplier = FixedScheduleTriggerSupplier {};
 
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct FixedScheduleTriggerConfig {
+    interval: String,
+    #[serde(default)]
+    on_start_run_tasks: bool,
+}
+
 impl ComponentSupplier for FixedScheduleTriggerSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
         vec![ComponentType::trigger("fixed".to_string())]
@@ -27,23 +36,12 @@ impl ComponentSupplier for FixedScheduleTriggerSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let interval_str = props
-            .get("interval")
-            .ok_or_else(|| ComponentError::from("Missing 'interval' property"))?
-            .as_str()
-            .ok_or_else(|| ComponentError::from("Invalid 'interval' property"))?;
-        let interval = parse_duration(interval_str)
-            .map_err(|error| ComponentError::from(error.to_string()))?;
+        let config = deserialize_component_config::<FixedScheduleTriggerConfig>(props)?;
+        let interval = parse_duration(&config.interval).map_err(|error| {
+            ComponentError::new(format!("Invalid configuration at 'interval': {error}"))
+        })?;
 
-        let on_start_run_tasks = match props.get("on-start-run-tasks") {
-            None => false,
-            Some(v) => match v {
-                Value::Bool(b) => *b,
-                _ => return Err("on-start-run-tasks 必须是 true or false".into()),
-            },
-        };
-
-        Ok(Arc::new(FixedScheduleTrigger::new(interval, on_start_run_tasks)))
+        Ok(Arc::new(FixedScheduleTrigger::new(interval, config.on_start_run_tasks)))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         None

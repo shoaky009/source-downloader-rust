@@ -7,7 +7,7 @@ use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, ItemPointer,
     PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourceFile,
-    SourcePointer,
+    SourcePointer, deserialize_component_config,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value};
@@ -19,6 +19,22 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 static USER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d+)_").unwrap());
+#[derive(Deserialize)]
+enum PixivMode {
+    #[serde(rename = "bookmark")]
+    Bookmark,
+    #[serde(rename = "following")]
+    Following,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct PixivIntegrationConfig {
+    session_id: String,
+    user_id: Option<i64>,
+    mode: Option<PixivMode>,
+    base_url: Option<String>,
+}
 pub struct PixivIntegrationSupplier;
 pub const SUPPLIER: PixivIntegrationSupplier = PixivIntegrationSupplier;
 impl ComponentSupplier for PixivIntegrationSupplier {
@@ -33,26 +49,22 @@ impl ComponentSupplier for PixivIntegrationSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         p: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let sid = p.get("session-id").and_then(Value::as_str).ok_or_else(|| {
-            ComponentError::new("Missing or invalid 'session-id' property")
-        })?;
-        let user = p
-            .get("user-id")
-            .and_then(Value::as_i64)
-            .or_else(|| USER.captures(sid)?.get(1)?.as_str().parse().ok())
+        let config = deserialize_component_config::<PixivIntegrationConfig>(p)?;
+        let sid = config.session_id;
+        let user = config
+            .user_id
+            .or_else(|| USER.captures(&sid)?.get(1)?.as_str().parse().ok())
             .ok_or_else(|| {
                 ComponentError::new(
-                    "session-id is invalid because user-id is not provided",
+                    "Invalid configuration at 'session-id': \
+                     session-id is invalid because user-id is not provided",
                 )
             })?;
-        let mode = p.get("mode").and_then(Value::as_str).unwrap_or("bookmark");
-        if !matches!(mode, "bookmark" | "following") {
-            return Err(ComponentError::new("Invalid 'mode' property"));
-        }
-        let base = p
-            .get("base-url")
-            .and_then(Value::as_str)
-            .unwrap_or("https://www.pixiv.net")
+        let bookmark =
+            matches!(config.mode.unwrap_or(PixivMode::Bookmark), PixivMode::Bookmark);
+        let base = config
+            .base_url
+            .unwrap_or_else(|| "https://www.pixiv.net".to_string())
             .trim_end_matches('/')
             .to_string();
         let http = if base.starts_with("http://127.0.0.1:") {
@@ -67,8 +79,8 @@ impl ComponentSupplier for PixivIntegrationSupplier {
         };
         Ok(Arc::new(PixivIntegration {
             user,
-            bookmark: mode == "bookmark",
-            client: PixivClient::new(http, base, sid)?,
+            bookmark,
+            client: PixivClient::new(http, base, &sid)?,
         }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {

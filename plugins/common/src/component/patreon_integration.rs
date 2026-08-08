@@ -5,7 +5,7 @@ use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, ItemPointer,
     PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourceFile,
-    SourcePointer,
+    SourcePointer, deserialize_component_config,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value};
@@ -18,6 +18,14 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 pub struct PatreonIntegrationSupplier;
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct PatreonIntegrationConfig {
+    session_id: String,
+    #[serde(default)]
+    headers: HashMap<String, String>,
+    base_url: Option<String>,
+}
 pub const SUPPLIER: PatreonIntegrationSupplier = PatreonIntegrationSupplier;
 impl ComponentSupplier for PatreonIntegrationSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
@@ -31,22 +39,15 @@ impl ComponentSupplier for PatreonIntegrationSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         p: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let sid = p.get("session-id").and_then(Value::as_str).ok_or_else(|| {
-            ComponentError::new("Missing or invalid 'session-id' property")
-        })?;
-        let mut headers = p
-            .get("headers")
-            .map(|v| {
-                serde_json::from_value::<HashMap<String, String>>(v.clone())
-                    .map_err(|e| ComponentError::new(format!("Invalid 'headers': {e}")))
-            })
-            .transpose()?
-            .unwrap_or_default();
-        headers.entry("Cookie".into()).or_insert(format!("session_id={sid}; patreon_location_country_code=CN; patreon_locale_code=zh-CN;"));
-        let base = p
-            .get("base-url")
-            .and_then(Value::as_str)
-            .unwrap_or("https://www.patreon.com")
+        let config = deserialize_component_config::<PatreonIntegrationConfig>(p)?;
+        let sid = config.session_id;
+        let mut headers = config.headers;
+        headers.entry("Cookie".into()).or_insert(format!(
+            "session_id={sid}; patreon_location_country_code=CN; patreon_locale_code=zh-CN;"
+        ));
+        let base = config
+            .base_url
+            .unwrap_or_else(|| "https://www.patreon.com".to_string())
             .trim_end_matches('/')
             .to_string();
         let client = if base.starts_with("http://127.0.0.1:") {

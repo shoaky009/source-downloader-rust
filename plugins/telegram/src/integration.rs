@@ -8,9 +8,9 @@ use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentCreateContext, ComponentError, ComponentSupplier, ComponentType,
     DownloadTask, Downloader, ItemFileResolver, ProcessingError, SdComponent,
-    SdComponentMetadata, SourceFile, Stateful,
+    SdComponentMetadata, SourceFile, Stateful, deserialize_component_config,
 };
-use source_downloader_sdk::serde_json::{self, Map, Value};
+use source_downloader_sdk::serde_json::{Map, Value};
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
@@ -43,12 +43,7 @@ impl ComponentSupplier for TelegramIntegrationSupplier {
         context: &dyn ComponentCreateContext,
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let config = serde_json::from_value::<TelegramIntegrationConfig>(Value::Object(
-            props.clone(),
-        ))
-        .map_err(|error| {
-            ComponentError::new(format!("Invalid Telegram integration config: {error}"))
-        })?;
+        let config: TelegramIntegrationConfig = deserialize_component_config(props)?;
         let instance = context
             .get_instance(&config.client, TypeId::of::<TelegramClientInstance>())?;
         let client = instance.downcast::<TelegramClientInstance>().map_err(|_| {

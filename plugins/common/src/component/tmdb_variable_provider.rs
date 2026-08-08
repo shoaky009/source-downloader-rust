@@ -5,13 +5,20 @@ use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
-    SdComponentMetadata, SourceFile, VariableProvider,
+    SdComponentMetadata, SourceFile, VariableProvider, deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 pub struct TmdbVariableProviderSupplier;
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct TmdbVariableProviderConfig {
+    base_url: Option<String>,
+    api_key: String,
+    language: Option<String>,
+}
 pub const SUPPLIER: TmdbVariableProviderSupplier = TmdbVariableProviderSupplier;
 impl ComponentSupplier for TmdbVariableProviderSupplier {
     fn supply_types(&self) -> Vec<ComponentType> {
@@ -22,19 +29,14 @@ impl ComponentSupplier for TmdbVariableProviderSupplier {
         _: &dyn source_downloader_sdk::component::ComponentCreateContext,
         p: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let base = p
-            .get("base-url")
-            .and_then(Value::as_str)
-            .unwrap_or("https://api.themoviedb.org")
+        let config = deserialize_component_config::<TmdbVariableProviderConfig>(p)?;
+        let base = config
+            .base_url
+            .unwrap_or_else(|| "https://api.themoviedb.org".to_string())
             .trim_end_matches('/')
             .to_string();
-        let key = p
-            .get("api-key")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ComponentError::new("Missing or invalid 'api-key' property"))?
-            .to_string();
-        let language =
-            p.get("language").and_then(Value::as_str).unwrap_or("zh-CN").to_string();
+        let key = config.api_key;
+        let language = config.language.unwrap_or_else(|| "zh-CN".to_string());
         let client = if base.starts_with("http://127.0.0.1:") {
             http::client_builder()
                 .no_proxy()

@@ -35,12 +35,14 @@ description: 实现 SourceDownloader 组件。用于新增或修改 ComponentSup
 
 1. 将 `props` 反序列化为 `#[serde(rename_all = "kebab-case")]` 配置类型；
 2. 通过 `ComponentCreateContext` 获取命名实例依赖并校验 `TypeId`；
-3. 将失败映射为带组件名、字段名或实例名的 `ComponentError`；
+3. 将配置失败映射为带字段路径的 `ComponentError`，实例依赖失败保留实例名；
 4. 返回完整可用的 `Arc<dyn SdComponent>`。
+
+**配置错误分支：** 只要 `apply` 解析 `props`，必须读取并执行 [CONFIG_ERRORS.md](CONFIG_ERRORS.md)。非嵌套对象可使用原始 serde API，但错误必须指出具体字段；嵌套对象、集合或枚举载荷使用 `serde_path_to_error` 追踪完整路径。
 
 组件无需配置且应自动创建时覆写 `is_support_no_props() -> true`。按 UI/状态需求返回 `SdComponentMetadata`，无元数据时返回 `None`。
 
-**完成标准：** `supply_types()` 完整声明能力；有效配置创建真实组件；每条无效配置或依赖路径返回可定位的 `ComponentError`；`is_support_no_props` 与配置语义一致。
+**完成标准：** `supply_types()` 完整声明能力；有效配置创建真实组件；每条无效配置或依赖路径返回可定位的 `ComponentError`，配置错误至少包含出错字段的 wire name；`is_support_no_props` 与配置语义一致。
 
 ## 3. 实现组件能力
 
@@ -71,7 +73,7 @@ struct ExampleComponent { /* shared state */ }
 
 按变更范围执行：
 
-1. 有效配置创建组件；缺字段、字段类型错误和实例类型错误均返回预期错误；
+1. 有效配置创建组件；缺字段、字段类型错误和实例类型错误均返回预期错误，配置错误包含准确字段路径；
 2. 对每个供应类型从 manager 取得组件并调用对应 `as_*`；
 3. 复合组件从不同能力入口验证共享状态和同名实例销毁行为；
 4. 验证所属插件或内置列表暴露 supplier；
