@@ -15,7 +15,7 @@ pub struct SourceItem {
     pub title: String,
     #[serde(with = "http_serde::uri")]
     pub link: http::Uri,
-    #[serde(with = "time::serde::iso8601")]
+    #[serde(with = "time::serde::rfc3339")]
     pub datetime: time::OffsetDateTime,
     pub content_type: String,
     #[serde(with = "http_serde::uri")]

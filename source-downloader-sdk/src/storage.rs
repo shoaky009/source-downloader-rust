@@ -88,7 +88,9 @@ pub struct ProcessingContent {
     pub rename_times: u32,
     pub status: ProcessingStatus,
     pub failure_reason: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
     pub updated_at: Option<OffsetDateTime>,
 }
 

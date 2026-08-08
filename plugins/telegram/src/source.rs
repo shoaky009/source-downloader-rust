@@ -17,6 +17,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 use std::sync::Arc;
+use time::UtcOffset;
 
 pub const MEDIA_TYPE_ATTR: &str = "mediaType";
 
@@ -283,7 +284,11 @@ impl TelegramSource {
             "tg://privatepost?channel={configured_chat_id}&post={message_id}"
         ))?;
         let datetime = OffsetDateTime::from_unix_timestamp(message.date().timestamp())
-            .map_err(|error| ProcessingError::non_retryable(error.to_string()))?;
+            .map_err(|error| ProcessingError::non_retryable(error.to_string()))?
+            .to_offset(
+                UtcOffset::current_local_offset()
+                    .map_err(|error| ProcessingError::non_retryable(error.to_string()))?
+            );
         let mut attrs = Map::from_iter([
             ("messageId".into(), Value::from(message_id)),
             ("chatId".into(), Value::from(chat_id)),
