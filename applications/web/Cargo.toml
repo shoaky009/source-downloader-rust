@@ -29,5 +29,9 @@ tower-http = { workspace = true, features = ["fs", "trace"] }
 futures-util = { workspace = true, features = ["sink", "std"] }
 build-info = { workspace = true }
 
+[dev-dependencies]
+tempfile = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+
 [build-dependencies]
 build-info-build = { workspace = true }

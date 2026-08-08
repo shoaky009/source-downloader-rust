@@ -1,6 +1,6 @@
 mod webhook_adapter;
 
-use axum::http::{StatusCode, Uri};
+use axum::http::StatusCode;
 use axum::{Router, middleware, response::IntoResponse};
 use clap::{Args, Parser};
 use problem_details::ProblemDetails;
@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use storage_sqlite::SeaProcessingStorage;
 use tokio::net::TcpListener;
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 use tracing::{info, log};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::time::OffsetTime;
@@ -135,23 +135,14 @@ async fn run_web_server(
         .merge(processing_routers)
         .merge(path_routers)
         .merge(metadata_routers)
+        .fallback(handle_api_fallback)
         .layer(middleware::from_fn(error_handle::error_handler));
     let webhook_router = webhook_adapter.router();
     let base_router = Router::new().merge(webhook_router).nest("/api", api_routers);
 
     let root_router = match &config.server.static_dir {
         None => base_router,
-        Some(dir) => {
-            let dir_path = PathBuf::from(dir);
-            base_router
-                .fallback_service(
-                    ServeDir::new(&dir_path).precompressed_gzip().precompressed_br(),
-                )
-                .fallback(move |uri: Uri| {
-                    let dir = dir_path.clone();
-                    async move { handle_spa_fallback(uri, dir).await }
-                })
-        }
+        Some(dir) => with_static_files(base_router, PathBuf::from(dir)),
     };
 
     let addr = format!("{}:{}", config.server.host, config.server.port);
@@ -159,17 +150,19 @@ async fn run_web_server(
     log::info!("Web服务器已启动，监听 {}", addr);
     axum::serve(listener, root_router).await.unwrap();
 }
+fn with_static_files(base_router: Router, dir_path: PathBuf) -> Router {
+    let index_path = dir_path.join("index.html");
+    base_router.fallback_service(
+        ServeDir::new(&dir_path)
+            .precompressed_gzip()
+            .precompressed_br()
+            .fallback(ServeFile::new(index_path)),
+    )
+}
 
-async fn handle_spa_fallback(uri: Uri, dir: PathBuf) -> impl IntoResponse {
-    if uri.path().starts_with("/api") {
-        let problem = ProblemDetails::from_status_code(StatusCode::NOT_FOUND);
-        return (StatusCode::NOT_FOUND, axum::Json(problem)).into_response();
-    }
-    let index_path = dir.join("index.html");
-    match tokio::fs::read(&index_path).await {
-        Ok(content) => axum::response::Html(content).into_response(),
-        Err(_) => (StatusCode::NOT_FOUND, "404 Not Found").into_response(),
-    }
+async fn handle_api_fallback() -> impl IntoResponse {
+    let problem = ProblemDetails::from_status_code(StatusCode::NOT_FOUND);
+    (StatusCode::NOT_FOUND, axum::Json(problem))
 }
 
 #[derive(Debug)]
@@ -257,6 +250,39 @@ struct Server {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::to_bytes;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn static_asset_is_served_from_configured_directory() {
+        let static_dir = tempfile::tempdir().unwrap();
+        tokio::fs::write(static_dir.path().join("index.html"), "<main>SPA</main>")
+            .await
+            .unwrap();
+        let assets_dir = static_dir.path().join("assets");
+        tokio::fs::create_dir(&assets_dir).await.unwrap();
+        tokio::fs::write(assets_dir.join("app.js"), "console.log('loaded');")
+            .await
+            .unwrap();
+
+        let response = with_static_files(Router::new(), static_dir.path().to_path_buf())
+            .oneshot(
+                Request::get("/assets/app.js").body(axum::body::Body::empty()).unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(axum::http::header::CONTENT_TYPE).unwrap(),
+            "text/javascript"
+        );
+        assert_eq!(
+            to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+            "console.log('loaded');"
+        );
+    }
 
     #[test]
     fn default_database_is_stored_in_data_location() {
