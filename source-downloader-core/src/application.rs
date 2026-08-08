@@ -52,6 +52,15 @@ impl CoreApplication {
         self.start_triggers()
     }
 
+    pub fn shutdown(&self) {
+        info!("Core application shutting down");
+        self.stop_triggers();
+        self.destroy_all_processor();
+        self.destroy_all_component();
+        self.destroy_all_instance();
+        info!("Core application stopped");
+    }
+
     pub fn set_webhook_adapter(&mut self, adapter: Arc<dyn WebhookAdapter>) {
         self.webhook_adapter = Some(adapter);
     }

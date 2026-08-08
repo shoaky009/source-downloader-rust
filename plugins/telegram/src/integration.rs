@@ -72,6 +72,27 @@ struct DownloadState {
     started_at: Instant,
 }
 
+struct ActiveDownload<'a> {
+    downloads: &'a Mutex<HashMap<PathBuf, DownloadState>>,
+    target: PathBuf,
+    temporary: PathBuf,
+}
+
+impl Drop for ActiveDownload<'_> {
+    fn drop(&mut self) {
+        self.downloads.lock().remove(&self.target);
+        if let Err(error) = std::fs::remove_file(&self.temporary)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                %error,
+                path = %self.temporary.display(),
+                "Failed to remove Telegram temporary file"
+            );
+        }
+    }
+}
+
 #[derive(source_downloader_sdk::SdComponent)]
 #[component(ItemFileResolver, Downloader, Stateful)]
 struct TelegramIntegration {
@@ -188,35 +209,33 @@ impl Downloader for TelegramIntegration {
                 },
             );
         }
+        let active_download =
+            ActiveDownload { downloads: &self.downloads, target, temporary };
 
         let result = Abortable::new(
-            download_media(&client, &media, &temporary, downloaded),
+            download_media(&client, &media, &active_download.temporary, downloaded),
             abort_registration,
         )
         .await
         .map_err(|_| {
             ProcessingError::non_retryable(format!(
                 "Telegram download cancelled: {}",
-                target.display()
+                active_download.target.display()
             ))
         })
         .and_then(|result| result);
-        self.downloads.lock().remove(&target);
         match result {
             Ok(()) => {
-                tokio::fs::rename(&temporary, &target).await?;
+                tokio::fs::rename(&active_download.temporary, &active_download.target)
+                    .await?;
                 self.downloaded.fetch_add(1, Ordering::Relaxed);
-                tracing::info!(path = %target.display(), "Telegram file downloaded");
+                tracing::info!(
+                    path = %active_download.target.display(),
+                    "Telegram file downloaded"
+                );
                 Ok(())
             }
-            Err(error) => {
-                if let Err(remove_error) = tokio::fs::remove_file(&temporary).await
-                    && remove_error.kind() != std::io::ErrorKind::NotFound
-                {
-                    tracing::warn!(error = %remove_error, path = %temporary.display(), "Failed to remove Telegram temporary file");
-                }
-                Err(error)
-            }
+            Err(error) => Err(error),
         }
     }
 
@@ -249,16 +268,21 @@ impl Stateful for TelegramIntegration {
                 let downloaded = state.downloaded.load(Ordering::Relaxed);
                 let elapsed = state.started_at.elapsed();
                 let rate = if elapsed.is_zero() {
-                    0
+                    0.0
                 } else {
-                    (downloaded as f64 / elapsed.as_secs_f64()) as u64
+                    downloaded as f64 / elapsed.as_secs_f64()
+                };
+                let progress = if state.total == 0 {
+                    0.0
+                } else {
+                    (downloaded as f64 * 10_000.0 / state.total as f64).round() / 100.0
                 };
                 source_downloader_sdk::serde_json::json!({
                     "path": path.to_string_lossy(),
                     "totalSize": state.total,
                     "downloadedSize": downloaded,
-                    "progress": if state.total == 0 { 0.0 } else { downloaded as f64 / state.total as f64 },
-                    "rate": rate,
+                    "progress": progress,
+                    "rate": readable_rate(rate),
                     "duration": elapsed.as_secs(),
                 })
             })
@@ -284,6 +308,21 @@ async fn download_media(
     }
     output.flush().await?;
     Ok(())
+}
+
+fn readable_rate(rate: f64) -> String {
+    const UNITS: [&str; 5] = ["B/s", "KiB/s", "MiB/s", "GiB/s", "TiB/s"];
+    let mut value = rate;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{value:.0} {}", UNITS[unit])
+    } else {
+        format!("{value:.2} {}", UNITS[unit])
+    }
 }
 
 fn telegram_target(item: &SourceItem) -> Result<(i64, i32), ProcessingError> {

@@ -1,5 +1,6 @@
 use crate::ApplicationContext;
 use crate::error_handle::AppError;
+use crate::service::processing::ProcessingContentDetail;
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
@@ -12,7 +13,7 @@ use source_downloader_core::application::CoreApplication;
 use source_downloader_core::config::ProcessorConfig;
 use source_downloader_core::processor_manager::ProcessorWrapper;
 use source_downloader_core::source_processor::{
-    DryRunOptions as CoreDryRunOptions, DryRunResult, ProcessorContentDeletion,
+    DryRunOptions as CoreDryRunOptions, ProcessorContentDeletion,
     ProcessorRuntimeSnapshot, SourceProcessor,
 };
 use source_downloader_sdk::SourceItem;
@@ -173,10 +174,17 @@ async fn dry_run(
     State(core): State<Arc<CoreApplication>>,
     Path(name): Path<String>,
     options: Option<Json<DryRunOptions>>,
-) -> Result<Json<Vec<DryRunResult>>, AppError> {
+) -> Result<Json<Vec<ProcessingContentDetail>>, AppError> {
     let processor = require_processor(&core, &name)?;
     let options = options.map(|Json(options)| options).unwrap_or_default();
-    let results = processor.dry_run(options.into()).await?;
+    let results = processor
+        .dry_run(options.into())
+        .await?
+        .into_iter()
+        .map(|result| {
+            ProcessingContentDetail::new(result.processing_content, result.file_contents)
+        })
+        .collect();
     Ok(Json(results))
 }
 
@@ -191,6 +199,8 @@ async fn dry_run_stream(
     let stream = processor.dry_run_stream(options.into()).map(|result| {
         let result =
             result.map_err(|error| std::io::Error::other(error.message().to_owned()))?;
+        let result =
+            ProcessingContentDetail::new(result.processing_content, result.file_contents);
         let mut line = source_downloader_sdk::serde_json::to_vec(&result)
             .map_err(std::io::Error::other)?;
         line.push(b'\n');

@@ -238,7 +238,7 @@ struct ItemContentSummary {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProcessingContentDetail {
+pub struct ProcessingContentDetail {
     id: Option<i64>,
     processor_name: String,
     item_hash: String,
@@ -252,7 +252,7 @@ struct ProcessingContentDetail {
 }
 
 impl ProcessingContentDetail {
-    fn new(content: ProcessingContent, file_contents: Vec<FileContent>) -> Self {
+    pub fn new(content: ProcessingContent, file_contents: Vec<FileContent>) -> Self {
         let ItemContentLite { source_item, item_variables } = content.item_content;
         Self {
             id: content.id,

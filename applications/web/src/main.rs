@@ -148,7 +148,42 @@ async fn run_web_server(
     let addr = format!("{}:{}", config.server.host, config.server.port);
     let listener = TcpListener::bind(&addr).await.unwrap();
     log::info!("Web服务器已启动，监听 {}", addr);
-    axum::serve(listener, root_router).await.unwrap();
+    axum::serve(listener, root_router)
+        .with_graceful_shutdown(shutdown_signal(core_application.core.clone()))
+        .await
+        .unwrap();
+}
+
+async fn shutdown_signal(core_application: Arc<CoreApplication>) {
+    #[cfg(unix)]
+    tokio::select! {
+        () = ctrl_c_signal() => {}
+        () = terminate_signal() => {}
+    }
+    #[cfg(not(unix))]
+    ctrl_c_signal().await;
+
+    info!("Shutdown signal received");
+    core_application.shutdown();
+}
+
+async fn ctrl_c_signal() {
+    if let Err(error) = tokio::signal::ctrl_c().await {
+        tracing::error!(%error, "Failed to listen for Ctrl+C");
+        std::future::pending::<()>().await;
+    }
+}
+
+#[cfg(unix)]
+async fn terminate_signal() {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let Ok(mut signal) = signal(SignalKind::terminate()) else {
+        tracing::error!("Failed to listen for SIGTERM");
+        std::future::pending::<()>().await;
+        return;
+    };
+    signal.recv().await;
 }
 fn with_static_files(base_router: Router, dir_path: PathBuf) -> Router {
     let index_path = dir_path.join("index.html");
