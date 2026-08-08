@@ -6401,6 +6401,7 @@ dependencies = [
  "source-downloader-core",
  "source-downloader-sdk",
  "storage-sqlite",
+ "telegram",
  "tokio",
  "tower-http 0.7.0",
  "tracing",

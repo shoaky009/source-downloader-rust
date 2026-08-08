@@ -16,6 +16,7 @@ source-downloader-core = { path = "../../source-downloader-core" }
 source-downloader-sdk = { path = "../../source-downloader-sdk" }
 storage-sqlite = { path = "../../storage-sqlite" }
 common = { path = "../../plugins/common" }
+telegram = { path = "../../plugins/telegram" }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["fmt", "time", "std", "local-time", "env-filter"] }
 axum = { workspace = true }

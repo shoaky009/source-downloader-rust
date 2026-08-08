@@ -44,6 +44,7 @@ async fn main() {
     core.set_webhook_adapter(webhook_adapter.clone());
 
     core.plugin_manager.register_plugin(Box::new(common::PLUGIN));
+    core.plugin_manager.register_plugin(Box::new(telegram::PLUGIN));
     core.start()
         .unwrap_or_else(|error| panic!("Failed to start core application: {error}"));
 
