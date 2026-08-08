@@ -809,6 +809,7 @@ pub trait ProcessTask: Send + Sync {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileContent {
     /// /mnt/downloads
     pub download_path: PathBuf,

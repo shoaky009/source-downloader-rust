@@ -277,7 +277,7 @@ async fn download_media(
     downloaded: Arc<AtomicU64>,
 ) -> Result<(), ProcessingError> {
     let mut output = tokio::fs::File::create(path).await?;
-    let mut parts = client.iter_download(media).chunk_size(1024 * 1024);
+    let mut parts = client.iter_download(media);
     while let Some(bytes) = parts.next().await.map_err(crate::client::telegram_error)? {
         output.write_all(&bytes).await?;
         downloaded.fetch_add(bytes.len() as u64, Ordering::Relaxed);

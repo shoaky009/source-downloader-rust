@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::OnceCell;
-use tokio::task::JoinHandle;
+use tokio::task::{AbortHandle, JoinHandle};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -57,7 +57,7 @@ impl InstanceFactory for TelegramClientInstanceFactory {
                 "grammers supports only socks5:// Telegram proxies",
             ));
         }
-        Ok(Arc::new(TelegramClientInstance { config, connected: OnceCell::new() }))
+        Ok(Arc::new(TelegramClientInstance::eager(config)))
     }
 
     fn instance_type_id(&self) -> TypeId {
@@ -67,10 +67,39 @@ impl InstanceFactory for TelegramClientInstanceFactory {
 
 pub struct TelegramClientInstance {
     config: TelegramClientConfig,
-    connected: OnceCell<ConnectedClient>,
+    connected: Arc<OnceCell<ConnectedClient>>,
+    eager_connect_task: Option<AbortHandle>,
 }
 
 impl TelegramClientInstance {
+    fn eager(config: TelegramClientConfig) -> Self {
+        let connected = Arc::new(OnceCell::new());
+        let task_connected = connected.clone();
+        let task_config = config.clone();
+        let eager_connect_task = match tokio::runtime::Handle::try_current() {
+            Ok(handle) => Some(
+                handle
+                    .spawn(async move {
+                        if let Err(error) = task_connected
+                            .get_or_try_init(|| ConnectedClient::connect(&task_config))
+                            .await
+                        {
+                            tracing::error!(%error, "Telegram eager connection failed");
+                        }
+                    })
+                    .abort_handle(),
+            ),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "Telegram eager connection deferred because no Tokio runtime is available"
+                );
+                None
+            }
+        };
+        Self { config, connected, eager_connect_task }
+    }
+
     pub async fn client(&self) -> Result<Client, ProcessingError> {
         let connected = self
             .connected
@@ -92,7 +121,15 @@ impl TelegramClientInstance {
 
     #[cfg(test)]
     pub(crate) fn disconnected(config: TelegramClientConfig) -> Self {
-        Self { config, connected: OnceCell::new() }
+        Self { config, connected: Arc::new(OnceCell::new()), eager_connect_task: None }
+    }
+}
+
+impl Drop for TelegramClientInstance {
+    fn drop(&mut self) {
+        if let Some(task) = &self.eager_connect_task {
+            task.abort();
+        }
     }
 }
 
@@ -108,6 +145,7 @@ impl ConnectedClient {
     async fn connect(config: &TelegramClientConfig) -> Result<Self, ProcessingError> {
         tokio::fs::create_dir_all(&config.metadata_path).await?;
         let session_path = config.metadata_path.join("telegram.session");
+        tracing::info!(path = %session_path.display(), "Opening Telegram session");
         let session =
             Arc::new(FileSession::open(session_path).await.map_err(|error| {
                 ProcessingError::non_retryable(format!(

@@ -78,6 +78,7 @@ pub trait ProcessingStorage: Send + Sync {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProcessingContent {
     pub id: Option<i64>,
     pub processor_name: String,
@@ -92,6 +93,7 @@ pub struct ProcessingContent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ItemContentLite {
     pub source_item: SourceItem,
     pub item_variables: HashMap<String, String>,

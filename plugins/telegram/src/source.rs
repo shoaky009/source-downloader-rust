@@ -218,7 +218,6 @@ impl Source for TelegramSource {
                 })?;
                 messages = messages.offset_date(timestamp);
             }
-            let mut messages = messages.limit(limit as usize - items.len());
             while let Some(message) =
                 messages.next().await.map_err(crate::client::telegram_error)?
             {
