@@ -3,6 +3,12 @@ use serde::Deserialize;
 use source_downloader_sdk::component::ProcessingError;
 use source_downloader_sdk::serde_json::json;
 
+pub(crate) const BANGUMI_USER_AGENT: &str = concat!(
+    "source-downloader/",
+    env!("CARGO_PKG_VERSION"),
+    " (https://github.com/shoaky009/source-downloader)"
+);
+
 #[derive(Clone, Debug)]
 pub(crate) struct BangumiClient {
     http: HttpClient,
@@ -41,6 +47,7 @@ impl BangumiClient {
     }
 
     fn authenticate(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        let request = request.header(reqwest::header::USER_AGENT, BANGUMI_USER_AGENT);
         match &self.token {
             Some(token) => request.bearer_auth(token),
             None => request,

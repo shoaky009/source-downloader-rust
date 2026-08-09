@@ -363,6 +363,69 @@ mod tests {
         assert_eq!("葬送のフリーレン", extract_title("[Group] 葬送のフリーレン [1080P]"));
         assert_eq!("アニメ", extract_title("English Title / アニメ"));
         assert_eq!("Anime 2", reformat_anilist("Anime2"));
+        assert_eq!(
+            "Kanpekisugite Kawaige ga Nai to Konyaku Haki sareta Seijo wa Ringoku ni Urareru",
+            extract_title(
+                "[Nekomoe kissaten&VCB-Studio] Kanpekisugite Kawaige ga Nai to Konyaku Haki sareta Seijo wa Ringoku ni Urareru [Ma10p_1080p]"
+            )
+        );
+        assert_eq!(
+            "Zenshuu  -",
+            extract_title("[Moozzi2] Zenshuu [ x265-10Bit Ver. ] - TV + SP")
+        );
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_bangumi_for_long_romaji_title() {
+        use wiremock::matchers::{body_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        const TITLE: &str = "Kanpekisugite Kawaige ga Nai to Konyaku Haki sareta Seijo wa Ringoku ni Urareru";
+        const NATIVE_NAME: &str =
+            "完璧すぎて可愛げがないと婚約破棄された聖女は隣国に売られる";
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_json(json!({
+                "query": "query ($search: String) { Page(page: 1, perPage: 10) { media(search: $search, type: ANIME) { title { romaji native } } } }",
+                "variables": {"search": TITLE}
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": {"Page": {"media": []}}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v0/search/subjects"))
+            .and(header("user-agent", crate::api::bangumi::BANGUMI_USER_AGENT))
+            .and(body_json(json!({
+                "keyword": TITLE,
+                "filter": {"type": [2], "nsfw": true}
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": [{"name": NATIVE_NAME, "name_cn": "", "date": "2025-04-09"}]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let http =
+            HttpClient::from_reqwest(http::client_builder().no_proxy().build().unwrap());
+        let provider = AnimeVariableProvider {
+            bangumi: BangumiClient::new(http.clone(), server.uri(), None),
+            http,
+            anilist_url: format!("{}/graphql", server.uri()),
+            prefer_bangumi: false,
+            cache: Mutex::new(Cache::default()),
+        };
+        let raw_title = format!("[Nekomoe kissaten&VCB-Studio] {TITLE} [Ma10p_1080p]");
+
+        assert_eq!(
+            Some(NATIVE_NAME),
+            provider.variables(&raw_title).await.get("nativeName").map(String::as_str)
+        );
     }
 
     #[test]
