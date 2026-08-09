@@ -10,14 +10,15 @@ use axum::{Json, Router};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use source_downloader_core::application::CoreApplication;
+use source_downloader_core::compatibility::ProcessorCompatibilityReport;
 use source_downloader_core::config::ProcessorConfig;
 use source_downloader_core::processor_manager::ProcessorWrapper;
+#[cfg(test)]
+use source_downloader_core::source_processor::DryRunErrorKind;
 use source_downloader_core::source_processor::{
     DryRunError, DryRunEvent, DryRunItemErrorAction, DryRunOptions as CoreDryRunOptions,
     DryRunSummary, ProcessorContentDeletion, ProcessorRuntimeSnapshot, SourceProcessor,
 };
-#[cfg(test)]
-use source_downloader_core::source_processor::DryRunErrorKind;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::ProcessTask;
 use source_downloader_sdk::serde_json::{Map, Value};
@@ -32,6 +33,7 @@ pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
         .nest(
             "/processor",
             Router::new()
+                .route("/validate", post(validate_processor))
                 .route(
                     "/{name}",
                     get(get_processor).put(update_processor).delete(delete_processor),
@@ -135,6 +137,29 @@ async fn query_processors(
     Json(processors)
 }
 
+fn validate_processor_config(
+    core: &CoreApplication,
+    config: &ProcessorConfig,
+) -> ProcessorCompatibilityReport {
+    core.processor_manager.validate_compatibility(config)
+}
+
+fn require_compatible_processor(
+    core: &CoreApplication,
+    config: &ProcessorConfig,
+) -> Result<(), AppError> {
+    let report = validate_processor_config(core, config);
+    if report.valid { Ok(()) } else { Err(AppError::ProcessorCompatibility(report)) }
+}
+
+#[axum::debug_handler]
+async fn validate_processor(
+    State(core): State<Arc<CoreApplication>>,
+    Json(body): Json<ProcessorConfig>,
+) -> Result<Json<ProcessorCompatibilityReport>, AppError> {
+    Ok(Json(validate_processor_config(&core, &body)))
+}
+
 #[axum::debug_handler]
 async fn update_processor(
     State(core): State<Arc<CoreApplication>>,
@@ -150,6 +175,7 @@ async fn update_processor(
             body.name
         )));
     }
+    require_compatible_processor(&core, &body)?;
     core.config_operator.save_processor(body.clone())?;
     core.processor_manager.destroy_processor(&name);
     core.processor_manager.create_processor(&body);
@@ -174,6 +200,7 @@ async fn create_processor(
     if core.processor_manager.processor_exists(&body.name) {
         return Err(AppError::BadRequest("Processor already exists".to_string()));
     }
+    require_compatible_processor(&core, &body)?;
     core.config_operator.save_processor(body.clone())?;
     core.processor_manager.create_processor(&body);
     Ok(StatusCode::CREATED)
@@ -188,6 +215,7 @@ async fn reload_processor(
         .config_operator
         .get_processor_config(&name)
         .ok_or_else(|| AppError::NotFound("Processor config not found".to_string()))?;
+    require_compatible_processor(&core, &config)?;
     if core.processor_manager.processor_exists(&name) {
         core.processor_manager.destroy_processor(&name);
     }

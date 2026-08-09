@@ -103,13 +103,16 @@ impl Display for ComponentRootType {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ComponentType {
     pub root_type: ComponentRootType,
+    #[serde(rename = "typeName")]
     pub name: String,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ComponentId {
     pub component_type: ComponentType,
     pub name: String,
@@ -206,6 +209,52 @@ impl Display for ComponentType {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComponentSelector {
+    pub root_type: ComponentRootType,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub type_names: Vec<String>,
+}
+
+impl ComponentSelector {
+    pub fn matches(&self, component_type: &ComponentType) -> bool {
+        self.root_type == component_type.root_type
+            && (self.type_names.is_empty()
+                || self.type_names.iter().any(|name| name == &component_type.name))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "camelCase")]
+pub enum ComponentCompatibilityRelation {
+    InstanceNameEquals,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "camelCase")]
+pub enum ComponentCompatibilityConstraint {
+    Requires {
+        target: ComponentSelector,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        relations: Vec<ComponentCompatibilityRelation>,
+    },
+    Forbids {
+        target: ComponentSelector,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        relations: Vec<ComponentCompatibilityRelation>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComponentCompatibilityRule {
+    pub code: String,
+    pub owner: ComponentType,
+    pub constraint: ComponentCompatibilityConstraint,
+    pub message: String,
+}
+
 pub trait ComponentCreateContext: Send + Sync {
     fn get_instance(
         &self,
@@ -233,6 +282,11 @@ impl ComponentCreateContext for EmptyComponentCreateContext {
 pub trait ComponentSupplier: Send + Sync {
     /// 组件的创建类型
     fn supply_types(&self) -> Vec<ComponentType>;
+
+    /// 声明创建 Processor 时可静态检查的组件兼容规则。
+    fn compatibility_rules(&self) -> Vec<ComponentCompatibilityRule> {
+        Vec::new()
+    }
 
     /// 创建组件实例
     fn apply(

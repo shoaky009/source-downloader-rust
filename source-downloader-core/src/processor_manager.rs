@@ -1,3 +1,6 @@
+use crate::compatibility::{
+    CompositionComponent, ProcessorCompatibilityReport, evaluate_compatibility,
+};
 use crate::component_manager::ComponentManager;
 use crate::components::expression_file_content_filter::ExpressionFileContentFilter;
 use crate::components::expression_item_content_filter::ExpressionItemContentFilter;
@@ -139,22 +142,52 @@ impl ProcessorManager {
         ComponentError::new(format!("at {stage}\n  caused by {error}"))
     }
 
+    pub fn validate_compatibility(
+        &self,
+        config: &ProcessorConfig,
+    ) -> ProcessorCompatibilityReport {
+        let component_ids = processor_component_ids(config);
+        let components = component_ids
+            .into_iter()
+            .map(|id| {
+                let rules =
+                    self.component_manager.get_compatibility_rules(&id.component_type);
+                CompositionComponent { id, rules }
+            })
+            .collect::<Vec<_>>();
+        evaluate_compatibility(&components)
+    }
+
     pub fn create_processor(&self, config: &ProcessorConfig) {
         if config.enabled.not() {
             info!("Processor[disabled] {}", config.name);
             return;
         }
-        let processor_wrapper = match self.create_internal(config) {
-            Ok(p) => p,
-            Err(err) => {
+        let compatibility = self.validate_compatibility(config);
+        let processor_wrapper = match if compatibility.valid {
+            self.create_internal(config)
+        } else {
+            Err(ComponentError::new(
+                compatibility
+                    .violations
+                    .iter()
+                    .map(|violation| {
+                        format!("{}: {}", violation.rule_code, violation.message)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            ))
+        } {
+            Ok(processor) => processor,
+            Err(error) => {
                 self.component_manager.remove_processor_refs(&config.name);
-                error!("Processor[create-failed] {} {}", config.name, err);
+                error!("Processor[create-failed] {} {}", config.name, error);
                 self.processor_wrappers.write().insert(
                     config.name.to_owned(),
                     Arc::new(ProcessorWrapper {
                         name: config.name.to_owned(),
                         processor: None,
-                        error_message: Some(err.message),
+                        error_message: Some(error.message),
                     }),
                 );
                 return;
@@ -808,6 +841,84 @@ impl ProcessorManager {
         }
         Ok(result)
     }
+}
+
+fn processor_component_ids(config: &ProcessorConfig) -> Vec<ComponentId> {
+    let mut ids = Vec::new();
+    let mut known = HashSet::new();
+    let mut push = |root_type: ComponentRootType, reference: &str| {
+        let id = root_type.parse_component_id(reference);
+        if known.insert(id.clone()) {
+            ids.push(id);
+        }
+    };
+
+    for reference in &config.triggers {
+        push(ComponentRootType::Trigger, reference);
+    }
+    push(ComponentRootType::Source, &config.source);
+    push(ComponentRootType::ItemFileResolver, &config.item_file_resolver);
+    push(ComponentRootType::Downloader, &config.downloader);
+    push(ComponentRootType::FileMover, &config.file_mover);
+
+    let options = &config.options;
+    for replacer in &options.variable_replacers {
+        push(ComponentRootType::VariableReplacer, &replacer.id);
+    }
+    for trimming in &options.trimming {
+        for trimmer in &trimming.trimmers {
+            push(ComponentRootType::Trimmer, trimmer);
+        }
+    }
+    for process in &options.variable_process {
+        for provider in &process.chain {
+            push(ComponentRootType::VariableProvider, provider);
+        }
+    }
+    for filter in &options.item_filters {
+        push(ComponentRootType::SourceItemFilter, filter);
+    }
+    for filter in &options.source_file_filters {
+        push(ComponentRootType::SourceFileFilter, filter);
+    }
+    for provider in &options.variable_providers {
+        push(ComponentRootType::VariableProvider, provider);
+    }
+    for tagger in &options.file_taggers {
+        push(ComponentRootType::FileTagger, tagger);
+    }
+    for filter in &options.file_content_filters {
+        push(ComponentRootType::FileContentFilter, filter);
+    }
+    for filter in &options.item_content_filters {
+        push(ComponentRootType::ItemContentFilter, filter);
+    }
+    for listener in &options.process_listeners {
+        push(ComponentRootType::ProcessListener, &listener.id);
+    }
+    push(
+        ComponentRootType::FileExistsDetector,
+        options.file_exists_detector.as_deref().unwrap_or("simple"),
+    );
+    push(
+        ComponentRootType::FileReplacementDecider,
+        options.file_replacement_decider.as_deref().unwrap_or("never"),
+    );
+    for rule in &options.item_grouping {
+        for filter in rule.source_item_filters.as_deref().unwrap_or_default() {
+            push(ComponentRootType::SourceItemFilter, filter);
+        }
+        for provider in rule.variable_providers.as_deref().unwrap_or_default() {
+            push(ComponentRootType::VariableProvider, provider);
+        }
+    }
+    for rule in &options.file_grouping {
+        for filter in rule.file_content_filters.as_deref().unwrap_or_default() {
+            push(ComponentRootType::FileContentFilter, filter);
+        }
+    }
+
+    ids
 }
 
 pub struct ProcessorWrapper {

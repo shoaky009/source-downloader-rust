@@ -5,9 +5,10 @@ use sha1::{Digest, Sha1};
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
-    AsyncDownloader, ComponentError, ComponentSupplier, ComponentType, DownloadTask,
-    Downloader, FileContent, FileMover, ProcessingError, SdComponent,
-    SdComponentMetadata, SourceFile,
+    AsyncDownloader, ComponentCompatibilityConstraint, ComponentCompatibilityRelation,
+    ComponentCompatibilityRule, ComponentError, ComponentSelector, ComponentSupplier,
+    ComponentType, DownloadTask, Downloader, FileContent, FileMover, ProcessingError,
+    SdComponent, SdComponentMetadata, SourceFile,
 };
 use source_downloader_sdk::serde_json::{self, Map, Value};
 use std::fmt::{Debug, Display, Formatter};
@@ -24,6 +25,22 @@ impl ComponentSupplier for QbittorrentDownloaderSupplier {
             ComponentType::downloader("qbittorrent".to_string()),
             ComponentType::file_mover("qbittorrent".to_string()),
         ]
+    }
+    fn compatibility_rules(&self) -> Vec<ComponentCompatibilityRule> {
+        vec![ComponentCompatibilityRule {
+            code: "qbittorrent-instance-must-match".to_owned(),
+            owner: ComponentType::file_mover("qbittorrent".to_owned()),
+            constraint: ComponentCompatibilityConstraint::Requires {
+                target: ComponentSelector {
+                    root_type:
+                        source_downloader_sdk::component::ComponentRootType::Downloader,
+                    type_names: vec!["qbittorrent".to_owned()],
+                },
+                relations: vec![ComponentCompatibilityRelation::InstanceNameEquals],
+            },
+            message: "qBittorrent file mover requires the downloader to use the same component instance"
+                .to_owned(),
+        }]
     }
     fn apply(
         &self,
@@ -654,6 +671,23 @@ mod tests {
             target_path: OnceLock::new(),
             data: None,
         }
+    }
+
+    #[test]
+    fn declares_same_instance_compatibility_rule() {
+        let rules = SUPPLIER.compatibility_rules();
+
+        assert_eq!(
+            rules[0].constraint,
+            ComponentCompatibilityConstraint::Requires {
+                target: ComponentSelector {
+                    root_type:
+                        source_downloader_sdk::component::ComponentRootType::Downloader,
+                    type_names: vec!["qbittorrent".to_owned()],
+                },
+                relations: vec![ComponentCompatibilityRelation::InstanceNameEquals],
+            }
+        );
     }
 
     #[test]

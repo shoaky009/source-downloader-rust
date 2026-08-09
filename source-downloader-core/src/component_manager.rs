@@ -3,9 +3,9 @@
 use crate::config::{ConfigOperator, Properties};
 use parking_lot::RwLock;
 use source_downloader_sdk::component::{
-    ComponentCreateContext, ComponentError, ComponentId, ComponentRootType,
-    ComponentSupplier, ComponentType, EMPTY_COMPONENT_CREATE_CONTEXT, SdComponent,
-    Trigger,
+    ComponentCompatibilityRule, ComponentCreateContext, ComponentError, ComponentId,
+    ComponentRootType, ComponentSupplier, ComponentType, EMPTY_COMPONENT_CREATE_CONTEXT,
+    SdComponent, Trigger,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -17,6 +17,8 @@ pub struct ComponentManager {
     config_operator: Arc<dyn ConfigOperator>,
     create_context: Arc<dyn ComponentCreateContext>,
     component_suppliers: RwLock<HashMap<ComponentType, Arc<dyn ComponentSupplier>>>,
+    compatibility_rules:
+        RwLock<HashMap<ComponentType, Arc<[ComponentCompatibilityRule]>>>,
     component_wrappers: RwLock<HashMap<String, Arc<ComponentWrapper>>>,
 }
 
@@ -59,6 +61,7 @@ impl ComponentManager {
             config_operator,
             create_context,
             component_suppliers: RwLock::new(HashMap::new()),
+            compatibility_rules: RwLock::new(HashMap::new()),
             component_wrappers: RwLock::new(HashMap::new()),
         }
     }
@@ -68,14 +71,34 @@ impl ComponentManager {
         supplier: Arc<dyn ComponentSupplier>,
     ) -> Result<bool, ComponentError> {
         let component_types = supplier.supply_types();
-        for component_type in component_types {
-            if self.component_suppliers.read().contains_key(&component_type) {
+        let mut rules_by_owner = HashMap::<_, Vec<_>>::new();
+        for rule in supplier.compatibility_rules() {
+            if !component_types.contains(&rule.owner) {
+                return Err(ComponentError::new(format!(
+                    "Compatibility rule '{}' declares unsupported owner type '{}'",
+                    rule.code, rule.owner
+                )));
+            }
+            rules_by_owner.entry(rule.owner.clone()).or_default().push(rule);
+        }
+
+        let mut suppliers = self.component_suppliers.write();
+        for component_type in &component_types {
+            if suppliers.contains_key(component_type) {
                 return Err(ComponentError::new(format!(
                     "Component type {:?} already registered",
                     component_type
                 )));
             }
-            self.component_suppliers.write().insert(component_type, supplier.clone());
+        }
+        for component_type in component_types {
+            suppliers.insert(component_type, supplier.clone());
+        }
+        drop(suppliers);
+
+        let mut compatibility_rules = self.compatibility_rules.write();
+        for (owner, rules) in rules_by_owner {
+            compatibility_rules.insert(owner, Arc::from(rules));
         }
         Ok(true)
     }
@@ -239,6 +262,21 @@ impl ComponentManager {
         component_type: &ComponentType,
     ) -> Option<Arc<dyn ComponentSupplier>> {
         self.component_suppliers.read().get(component_type).cloned()
+    }
+
+    pub fn get_compatibility_rules(
+        &self,
+        component_type: &ComponentType,
+    ) -> Option<Arc<[ComponentCompatibilityRule]>> {
+        self.compatibility_rules.read().get(component_type).cloned()
+    }
+
+    pub fn get_all_compatibility_rules(&self) -> Vec<ComponentCompatibilityRule> {
+        self.compatibility_rules
+            .read()
+            .values()
+            .flat_map(|rules| rules.iter().cloned())
+            .collect()
     }
 
     pub fn destroy_all(&self) {

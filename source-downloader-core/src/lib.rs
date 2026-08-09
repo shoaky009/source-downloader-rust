@@ -1,4 +1,5 @@
 pub mod application;
+pub mod compatibility;
 pub mod component_manager;
 pub mod components;
 pub mod config;

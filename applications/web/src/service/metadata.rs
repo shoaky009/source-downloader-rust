@@ -4,8 +4,9 @@ use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
+use source_downloader_core::compatibility::COMPATIBILITY_DSL_VERSION;
 use source_downloader_sdk::component::{
-    ComponentRootType, ComponentType, SdComponentMetadata,
+    ComponentCompatibilityRule, ComponentRootType, ComponentType, SdComponentMetadata,
 };
 use source_downloader_sdk::serde_json::{Value, from_str};
 use std::sync::{Arc, LazyLock};
@@ -23,6 +24,10 @@ pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
                 .route("/processor", get(processor_metadata))
                 .route("/component-root-types", get(component_root_types))
                 .route("/component-capabilities", get(component_capabilities))
+                .route(
+                    "/component-compatibility-rules",
+                    get(component_compatibility_rules),
+                )
                 .route(
                     "/component-capabilities/{root_type}/{type_name}",
                     get(component_capability),
@@ -127,6 +132,14 @@ async fn instance_capability(
         })
 }
 
+async fn component_compatibility_rules(
+    State(core): State<Arc<source_downloader_core::application::CoreApplication>>,
+) -> Json<ComponentCompatibilityRules> {
+    let mut rules = core.component_manager.get_all_compatibility_rules();
+    rules.sort_by(|left, right| left.code.cmp(&right.code));
+    Json(ComponentCompatibilityRules { dsl_version: COMPATIBILITY_DSL_VERSION, rules })
+}
+
 fn component_capability_details(
     core: &source_downloader_core::application::CoreApplication,
 ) -> Vec<ComponentCapabilityDetail> {
@@ -147,7 +160,6 @@ fn component_capability_details(
                     .collect(),
                 description,
                 metadata,
-                rules: Vec::new(),
             }
         })
         .collect::<Vec<_>>();
@@ -199,7 +211,13 @@ struct ComponentCapabilityDetail {
     types: Vec<ComponentCapabilityType>,
     description: Option<String>,
     metadata: Option<Box<SdComponentMetadata>>,
-    rules: Vec<ComponentCapabilityRule>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ComponentCompatibilityRules {
+    dsl_version: u32,
+    rules: Vec<ComponentCompatibilityRule>,
 }
 
 #[derive(Serialize)]
@@ -218,14 +236,6 @@ impl From<ComponentType> for ComponentCapabilityType {
             type_name: component_type.name,
         }
     }
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ComponentCapabilityRule {
-    is_allow: bool,
-    root_type: ComponentRootType,
-    component_class_name: String,
 }
 
 #[derive(Serialize)]

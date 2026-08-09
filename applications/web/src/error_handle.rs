@@ -1,6 +1,7 @@
 use axum::http::StatusCode;
 use axum::{body::Body, http::Request, middleware::Next, response::IntoResponse};
 use problem_details::ProblemDetails;
+use source_downloader_core::compatibility::ProcessorCompatibilityReport;
 use source_downloader_sdk::component::{ComponentError, ProcessingError};
 use std::{
     fmt,
@@ -14,6 +15,7 @@ pub enum AppError {
     InternalError(String),
     NotFound(String),
     BadRequest(String),
+    ProcessorCompatibility(ProcessorCompatibilityReport),
     Unauthorized(String),
 }
 
@@ -23,6 +25,13 @@ impl fmt::Display for AppError {
             Self::InternalError(msg) => write!(f, "Internal error: {}", msg),
             Self::NotFound(msg) => write!(f, "Not found: {}", msg),
             Self::BadRequest(msg) => write!(f, "Bad request: {}", msg),
+            Self::ProcessorCompatibility(report) => {
+                write!(
+                    f,
+                    "Processor compatibility validation failed with {} violation(s)",
+                    report.violations.len()
+                )
+            }
             Self::Unauthorized(msg) => write!(f, "Unauthorized: {}", msg),
         }
     }
@@ -58,6 +67,14 @@ impl From<ProcessingError> for AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
+        if let Self::ProcessorCompatibility(report) = &self {
+            log::debug!(
+                "Processor compatibility validation failed with {} violation(s)",
+                report.violations.len()
+            );
+            return (StatusCode::BAD_REQUEST, axum::Json(report.clone())).into_response();
+        }
+
         let (status_code, title, detail) = match &self {
             Self::InternalError(msg) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -73,6 +90,7 @@ impl IntoResponse for AppError {
             Self::Unauthorized(msg) => {
                 (StatusCode::UNAUTHORIZED, "Unauthorized".to_string(), Some(msg.clone()))
             }
+            Self::ProcessorCompatibility(_) => unreachable!(),
         };
 
         if status_code.as_u16() >= 500 {
