@@ -57,20 +57,37 @@ impl Display for LanguageVariableProvider {
     }
 }
 
-static LANGUAGE_RULES: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
-    [
-        (r"(?i) chs|[ .]sc", "zh-CHS"),
-        (r"(?i) cht|[ .]tc", "zh-CHT"),
-        (r"(?i)jpsc", "zh-CHS"),
-        (r"(?i) gb", "zh-CHS"),
-        (r"(?i) big5", "zh-CHT"),
-    ]
-    .into_iter()
-    .map(|(pattern, language)| {
-        (Regex::new(pattern).expect("static regex must compile"), language)
-    })
-    .collect()
-});
+const LANGUAGE_MARKERS: &[(&[&str], &[&str])] = &[
+    (&["JPSC", "JPCHS", "CHSJP", "SCJP"], &["zh-CHS", "JP"]),
+    (&["JPTC", "JPCHT", "CHTJP", "TCJP"], &["zh-CHT", "JP"]),
+    (
+        &["CHS", "SC", "GB", "GBK", "GB2312", "CN", "ZHCN", "ZHCHS", "简体", "简中"],
+        &["zh-CHS"],
+    ),
+    (&["CHT", "TC", "BIG5", "TW", "HK", "ZHTW", "ZHCHT", "繁体", "繁中"], &["zh-CHT"]),
+    (&["JP", "JPN", "JA", "JAPANESE", "日语", "日文"], &["JP"]),
+    (&["EN", "ENG", "ENGLISH", "英语", "英文"], &["EN"]),
+    (&["KR", "KOR", "KO", "KOREAN", "韩语", "韓語", "韩文", "韓文"], &["KR"]),
+    (&["FR", "FRE", "FRA", "FRENCH"], &["FR"]),
+    (&["DE", "GER", "DEU", "GERMAN"], &["DE"]),
+    (&["ES", "SPA", "SPANISH"], &["ES"]),
+    (&["IT", "ITA", "ITALIAN"], &["IT"]),
+    (&["PT", "POR", "PORTUGUESE"], &["PT"]),
+    (&["RU", "RUS", "RUSSIAN"], &["RU"]),
+    (&["NL", "DUT", "NLD", "DUTCH"], &["NL"]),
+    (&["PL", "POL", "POLISH"], &["PL"]),
+    (&["TR", "TUR", "TURKISH"], &["TR"]),
+    (&["SV", "SWE", "SWEDISH"], &["SV"]),
+    (&["TH", "THA", "THAI"], &["TH"]),
+    (&["VI", "VIE", "VIETNAMESE"], &["VI"]),
+    (&["ID", "IND", "INDONESIAN"], &["ID"]),
+    (&["MS", "MSA", "MAY", "MALAY"], &["MS"]),
+    (&["AR", "ARA", "ARABIC"], &["AR"]),
+];
+const LANGUAGE_ORDER: &[&str] = &[
+    "zh-CHS", "zh-CHT", "JP", "EN", "KR", "FR", "DE", "ES", "IT", "PT", "RU", "NL", "PL",
+    "TR", "SV", "TH", "VI", "ID", "MS", "AR",
+];
 static SRT_NUMBER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\d+$").expect("static regex must compile"));
 static SRT_TIME: LazyLock<Regex> = LazyLock::new(|| {
@@ -124,11 +141,34 @@ impl VariableProvider for LanguageVariableProvider {
 }
 
 fn language_from_name(file: &SourceFile) -> Option<String> {
-    let stem = file.path.file_stem()?.to_str()?;
-    let normalized = stem.replace(['-', '_', '[', ']', '(', ')', '.'], " ");
-    LANGUAGE_RULES.iter().find_map(|(regex, language)| {
-        regex.is_match(&normalized).then(|| (*language).to_string())
-    })
+    let stem = file.path.file_stem()?.to_str()?.to_uppercase();
+    let mut detected = [false; LANGUAGE_ORDER.len()];
+    for marker in stem.split(|character: char| !character.is_alphanumeric()) {
+        if marker.is_empty() {
+            continue;
+        }
+        if let Some((_, languages)) =
+            LANGUAGE_MARKERS.iter().find(|(aliases, _)| aliases.contains(&marker))
+        {
+            for language in *languages {
+                if let Some(index) =
+                    LANGUAGE_ORDER.iter().position(|candidate| candidate == language)
+                {
+                    detected[index] = true;
+                }
+            }
+        }
+    }
+    let mut value = String::new();
+    for (language, detected) in LANGUAGE_ORDER.iter().zip(detected) {
+        if detected {
+            if !value.is_empty() {
+                value.push('.');
+            }
+            value.push_str(language);
+        }
+    }
+    (!value.is_empty()).then_some(value)
 }
 
 fn language_from_file(file: &SourceFile) -> Option<String> {
@@ -234,16 +274,62 @@ mod tests {
 
     #[tokio::test]
     async fn filename_rules_take_priority() {
-        let files = ["Show.CHS.ass", "Show_tc.srt", "Show-JPSC.ass", "Show BIG5.ass"]
-            .into_iter()
-            .map(|path| SourceFile::new(PathBuf::from(path)))
-            .collect::<Vec<_>>();
+        let files = [
+            "Show.CHS.ass",
+            "Show_tc.srt",
+            "Show-JPSC.ass",
+            "Show.JPTC.ass",
+            "Show BIG5.ass",
+        ]
+        .into_iter()
+        .map(|path| SourceFile::new(PathBuf::from(path)))
+        .collect::<Vec<_>>();
         let provider = LanguageVariableProvider { read_content: false };
         let variables = provider.file_variables(&item(), &HashMap::new(), &files).await;
         assert_eq!(Some("zh-CHS"), variables[0].get("language").map(String::as_str));
         assert_eq!(Some("zh-CHT"), variables[1].get("language").map(String::as_str));
-        assert_eq!(Some("zh-CHS"), variables[2].get("language").map(String::as_str));
-        assert_eq!(Some("zh-CHT"), variables[3].get("language").map(String::as_str));
+        assert_eq!(Some("zh-CHS.JP"), variables[2].get("language").map(String::as_str));
+        assert_eq!(Some("zh-CHT.JP"), variables[3].get("language").map(String::as_str));
+        assert_eq!(Some("zh-CHT"), variables[4].get("language").map(String::as_str));
+    }
+
+    #[test]
+    fn recognizes_common_filename_language_markers() {
+        let cases = [
+            ("Show.JPSC.ass", "zh-CHS.JP"),
+            ("Show.JPTC.ass", "zh-CHT.JP"),
+            (
+                r"Z:\anime-temp\[Nekomoe kissaten&VCB-Studio] Kanpekisugite Kawaige ga Nai to Konyaku Haki sareta Seijo wa Ringoku ni Urareru [Ma10p_1080p]\[Nekomoe kissaten&VCB-Studio] Kanpekiseijo [01][Ma10p_1080p][x265_flac].JPSC.ass",
+                "zh-CHS.JP",
+            ),
+            (
+                r"Z:\anime-temp\[Nekomoe kissaten&VCB-Studio] Kanpekisugite Kawaige ga Nai to Konyaku Haki sareta Seijo wa Ringoku ni Urareru [Ma10p_1080p]\[Nekomoe kissaten&VCB-Studio] Kanpekiseijo [01][Ma10p_1080p][x265_flac].JPTC.ass",
+                "zh-CHT.JP",
+            ),
+            ("Show.CHS.JP.ass", "zh-CHS.JP"),
+            ("Show.JPN.ass", "JP"),
+            ("Show.ENG.ass", "EN"),
+            ("Show.KOR.ass", "KR"),
+            ("Show.FRE.ass", "FR"),
+            ("Show.GER.ass", "DE"),
+            ("Show.SPA.ass", "ES"),
+            ("Show.ITA.ass", "IT"),
+            ("Show.POR.ass", "PT"),
+            ("Show.RUS.ass", "RU"),
+            ("Show.DUT.ass", "NL"),
+            ("Show.POL.ass", "PL"),
+            ("Show.TUR.ass", "TR"),
+            ("Show.SWE.ass", "SV"),
+            ("Show.THA.ass", "TH"),
+            ("Show.VIE.ass", "VI"),
+            ("Show.IND.ass", "ID"),
+            ("Show.ARA.ass", "AR"),
+        ];
+
+        for (name, expected) in cases {
+            let file = SourceFile::new(PathBuf::from(name));
+            assert_eq!(Some(expected), language_from_name(&file).as_deref(), "{name}");
+        }
     }
 
     #[tokio::test]
