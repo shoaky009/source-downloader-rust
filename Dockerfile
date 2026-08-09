@@ -1,28 +1,17 @@
 FROM debian:bookworm-slim
 
-ARG APP_UID=1000
 ARG TARGETARCH
-ARG APP_GID=1000
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd \
-        --gid ${APP_GID} \
-        source-downloader \
-    && useradd \
-        --uid ${APP_UID} \
-        --gid ${APP_GID} \
-        --no-create-home \
-        --home-dir /nonexistent \
-        --shell /usr/sbin/nologin \
-        source-downloader \
     && mkdir -p /app/data /app/plugins \
-    && chown -R ${APP_UID}:${APP_GID} /app
+    && chown -R 1000:1000 /app
 
 
-COPY --chown=${APP_UID}:${APP_GID} \
+COPY --chmod=755 \
+    --chown=1000:1000 \
     container-binaries/${TARGETARCH}/source-downloader-web \
     /app/source-downloader-web
 
@@ -36,11 +25,10 @@ ENV SOURCE_DOWNLOADER_DATA_LOCATION=/app/data \
 
 WORKDIR /app
 
-USER ${APP_UID}:${APP_GID}
+USER 1000:1000
 
 VOLUME ["/app/data", "/app/plugins"]
 
 EXPOSE 8080
-
 
 ENTRYPOINT ["/app/source-downloader-web"]
