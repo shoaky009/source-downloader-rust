@@ -13,9 +13,11 @@ use source_downloader_core::application::CoreApplication;
 use source_downloader_core::config::ProcessorConfig;
 use source_downloader_core::processor_manager::ProcessorWrapper;
 use source_downloader_core::source_processor::{
-    DryRunOptions as CoreDryRunOptions, ProcessorContentDeletion,
-    ProcessorRuntimeSnapshot, SourceProcessor,
+    DryRunError, DryRunEvent, DryRunItemErrorAction, DryRunOptions as CoreDryRunOptions,
+    DryRunSummary, ProcessorContentDeletion, ProcessorRuntimeSnapshot, SourceProcessor,
 };
+#[cfg(test)]
+use source_downloader_core::source_processor::DryRunErrorKind;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::ProcessTask;
 use source_downloader_sdk::serde_json::{Map, Value};
@@ -64,6 +66,44 @@ fn require_processor(
                 .unwrap_or_else(|| "Processor not running".to_owned()),
         )
     })
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+enum DryRunEventResponse {
+    Item {
+        content: ProcessingContentDetail,
+    },
+    ItemError {
+        item_hash: String,
+        item: SourceItem,
+        error: DryRunError,
+        action: DryRunItemErrorAction,
+    },
+    Complete {
+        summary: DryRunSummary,
+    },
+    RunError {
+        error: DryRunError,
+    },
+}
+
+impl From<DryRunEvent> for DryRunEventResponse {
+    fn from(event: DryRunEvent) -> Self {
+        match event {
+            DryRunEvent::Item { result } => Self::Item {
+                content: ProcessingContentDetail::new(
+                    result.processing_content,
+                    result.file_contents,
+                ),
+            },
+            DryRunEvent::ItemError { item_hash, item, error, action } => {
+                Self::ItemError { item_hash, item, error, action }
+            }
+            DryRunEvent::Complete { summary } => Self::Complete { summary },
+            DryRunEvent::RunError { error } => Self::RunError { error },
+        }
+    }
 }
 #[axum::debug_handler]
 async fn get_processor(
@@ -174,18 +214,12 @@ async fn dry_run(
     State(core): State<Arc<CoreApplication>>,
     Path(name): Path<String>,
     options: Option<Json<DryRunOptions>>,
-) -> Result<Json<Vec<ProcessingContentDetail>>, AppError> {
+) -> Result<Json<Vec<DryRunEventResponse>>, AppError> {
     let processor = require_processor(&core, &name)?;
     let options = options.map(|Json(options)| options).unwrap_or_default();
-    let results = processor
-        .dry_run(options.into())
-        .await?
-        .into_iter()
-        .map(|result| {
-            ProcessingContentDetail::new(result.processing_content, result.file_contents)
-        })
-        .collect();
-    Ok(Json(results))
+    let events =
+        processor.dry_run(options.into()).await.into_iter().map(Into::into).collect();
+    Ok(Json(events))
 }
 
 #[axum::debug_handler]
@@ -196,12 +230,9 @@ async fn dry_run_stream(
 ) -> Result<Response<Body>, AppError> {
     let processor = require_processor(&core, &name)?;
     let options = options.map(|Json(options)| options).unwrap_or_default();
-    let stream = processor.dry_run_stream(options.into()).map(|result| {
-        let result =
-            result.map_err(|error| std::io::Error::other(error.message().to_owned()))?;
-        let result =
-            ProcessingContentDetail::new(result.processing_content, result.file_contents);
-        let mut line = source_downloader_sdk::serde_json::to_vec(&result)
+    let stream = processor.dry_run_stream(options.into()).map(|event| {
+        let event = DryRunEventResponse::from(event);
+        let mut line = source_downloader_sdk::serde_json::to_vec(&event)
             .map_err(std::io::Error::other)?;
         line.push(b'\n');
         Ok::<_, std::io::Error>(Bytes::from(line))
@@ -464,6 +495,43 @@ mod tests {
 
         assert!(default_options.filter_processed);
         assert!(!explicit_false.filter_processed);
+    }
+
+    #[test]
+    fn dry_run_item_error_uses_discriminated_wire_shape() {
+        let event = DryRunEventResponse::ItemError {
+            item_hash: "item-hash".to_owned(),
+            item: SourceItem {
+                title: "failed item".to_owned(),
+                link: source_downloader_sdk::http::Uri::from_static(
+                    "https://example.com/item",
+                ),
+                datetime: OffsetDateTime::UNIX_EPOCH,
+                content_type: "image".to_owned(),
+                download_uri: source_downloader_sdk::http::Uri::from_static(
+                    "https://example.com/file",
+                ),
+                attrs: Map::new(),
+                tags: Vec::new(),
+                identity: None,
+            },
+            error: DryRunError {
+                message: "resolver failed".to_owned(),
+                kind: DryRunErrorKind::NonRetryable,
+                skippable: false,
+            },
+            action: DryRunItemErrorAction::Stop,
+        };
+
+        let value = source_downloader_sdk::serde_json::to_value(event).unwrap();
+
+        assert_eq!(value["type"], "itemError");
+        assert_eq!(value["itemHash"], "item-hash");
+        assert_eq!(value["item"]["title"], "failed item");
+        assert_eq!(value["error"]["message"], "resolver failed");
+        assert_eq!(value["error"]["kind"], "nonRetryable");
+        assert_eq!(value["error"]["skippable"], false);
+        assert_eq!(value["action"], "stop");
     }
 
     #[test]

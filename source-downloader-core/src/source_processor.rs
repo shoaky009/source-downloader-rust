@@ -82,7 +82,6 @@ pub struct DryRunOptions {
     /// 是否应用已处理 item 过滤器。
     pub filter_processed: bool,
 }
-
 /// dry-run 生成的处理内容和文件结果；不代表正式处理已经持久化。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -92,6 +91,100 @@ pub struct DryRunResult {
     /// dry-run 解析出的文件内容。
     pub file_contents: Vec<FileContent>,
 }
+
+/// dry-run 对外暴露的错误分类。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DryRunErrorKind {
+    /// 重试耗尽后仍然失败。
+    Retryable,
+    /// 重试不能解决的错误。
+    NonRetryable,
+}
+
+/// dry-run 错误的稳定客户端表示。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DryRunError {
+    /// 可直接展示的错误原因。
+    pub message: String,
+    /// 错误是否属于可重试分类。
+    pub kind: DryRunErrorKind,
+    /// 正式处理流程是否允许跳过该错误。
+    pub skippable: bool,
+}
+
+impl From<&ProcessingError> for DryRunError {
+    fn from(error: &ProcessingError) -> Self {
+        match error {
+            ProcessingError::Retryable { message } => Self {
+                message: message.clone(),
+                kind: DryRunErrorKind::Retryable,
+                skippable: false,
+            },
+            ProcessingError::NonRetryable { message, skip } => Self {
+                message: message.clone(),
+                kind: DryRunErrorKind::NonRetryable,
+                skippable: *skip,
+            },
+        }
+    }
+}
+
+/// item 失败后本次 dry-run 实际采用的调度动作。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DryRunItemErrorAction {
+    /// 继续提交后续 item。
+    Continue,
+    /// 停止提交后续 item。
+    Stop,
+}
+
+/// dry-run 终结事件中的结果统计。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DryRunSummary {
+    /// 成功产出预览结果的 item 数。
+    pub succeeded: u32,
+    /// 处理失败的 item 数。
+    pub failed: u32,
+    /// 是否因 item 错误停止提交后续 item。
+    pub stopped: bool,
+}
+
+/// dry-run 的统一结果事件；收集和流式接口共享相同的事件顺序与终结语义。
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum DryRunEvent {
+    /// item 成功完成 dry-run。
+    Item {
+        /// item 的处理内容和文件预览。
+        result: DryRunResult,
+    },
+    /// item 处理失败。
+    ItemError {
+        /// 失败 item 的稳定哈希。
+        item_hash: String,
+        /// 失败 item 的原始内容。
+        item: SourceItem,
+        /// 结构化错误原因。
+        error: DryRunError,
+        /// 失败后实际采用的调度动作。
+        action: DryRunItemErrorAction,
+    },
+    /// dry-run 正常结束，包括因 item 错误停止调度的情况。
+    Complete {
+        /// 本次 dry-run 的结果统计。
+        summary: DryRunSummary,
+    },
+    /// item 调度之外的执行阶段失败；该事件是终结事件。
+    RunError {
+        /// 结构化错误原因。
+        error: DryRunError,
+    },
+}
+
 /// 处理器运行状态的只读快照；通过快照只能观察状态，不能修改处理器。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessorRuntimeSnapshot {
@@ -502,6 +595,15 @@ impl ScheduleDecision {
     }
 }
 
+impl From<ScheduleDecision> for DryRunItemErrorAction {
+    fn from(decision: ScheduleDecision) -> Self {
+        match decision {
+            ScheduleDecision::Continue => Self::Continue,
+            ScheduleDecision::Stop => Self::Stop,
+        }
+    }
+}
+
 impl ItemProcessRuntime {
     fn filter_inc(&self) {
         self.filter_count.fetch_add(1, Ordering::Relaxed);
@@ -889,20 +991,18 @@ impl SourceProcessor {
             },
         }
     }
-    pub async fn dry_run(
-        &self,
-        options: DryRunOptions,
-    ) -> Result<Vec<DryRunResult>, ProcessingError> {
+    pub async fn dry_run(&self, options: DryRunOptions) -> Vec<DryRunEvent> {
         let process = DryRunProcess::collecting(self, options);
-        process.execute(self).await?;
-        Ok(process.into_results())
+        if let Err(error) = process.execute(self).await {
+            process.emit_run_error(&error).await;
+        }
+        process.into_events()
     }
 
     pub fn dry_run_stream(
         self: &Arc<Self>,
         options: DryRunOptions,
-    ) -> impl futures_util::Stream<Item = Result<DryRunResult, ProcessingError>> + Send + 'static
-    {
+    ) -> impl futures_util::Stream<Item = DryRunEvent> + Send + 'static {
         let capacity = self.options.parallelism.max(1) as usize;
         let (sender, receiver) = mpsc::channel(capacity);
         let process = DryRunProcess::streaming(self, options, sender.clone());
@@ -911,14 +1011,14 @@ impl SourceProcessor {
             tokio::select! {
                 result = process.execute(&processor) => {
                     if let Err(error) = result {
-                        let _ = sender.send(Err(error)).await;
+                        process.emit_run_error(&error).await;
                     }
                 }
                 _ = sender.closed() => {}
             }
         });
         futures_util::stream::unfold(receiver, |mut receiver| async move {
-            receiver.recv().await.map(|result| (result, receiver))
+            receiver.recv().await.map(|event| (event, receiver))
         })
     }
 
@@ -1355,6 +1455,14 @@ trait Process {
     ) {
     }
 
+    async fn on_item_error_settled(
+        &self,
+        _source_item: &SourceItem,
+        _error: &ProcessingError,
+        _decision: ScheduleDecision,
+    ) {
+    }
+
     async fn persist_item_failure(
         &self,
         p: &SourceProcessor,
@@ -1436,12 +1544,15 @@ trait Process {
         {
             coordinator.listener_context.has_error = true;
             self.on_item_error(p, coordinator, source_item, &err).await;
-            if p.options.item_error_continue {
+            let decision = if p.options.item_error_continue {
                 self.persist_item_failure(p, source_item, &err, None, None).await;
                 warn!("[item-continue-on-error] {} {}", err.message(), source_item);
+                ScheduleDecision::Continue
             } else {
-                return ScheduleDecision::Stop;
-            }
+                ScheduleDecision::Stop
+            };
+            self.on_item_error_settled(source_item, &err, decision).await;
+            return decision;
         }
         ScheduleDecision::Continue
     }
@@ -1458,14 +1569,16 @@ trait Process {
         coordinator.listener_context.has_error = true;
         self.on_item_error(p, coordinator, source_item, &err).await;
         let skippable = matches!(&err, ProcessingError::NonRetryable { skip: true, .. });
-        if skippable || p.options.item_error_continue {
+        let decision = if skippable || p.options.item_error_continue {
             self.persist_item_failure(p, source_item, &err, None, None).await;
             warn!("[item-continue-on-error] {} {}", err.message(), source_item);
             ScheduleDecision::Continue
         } else {
             warn!("[item-stop-on-error] {}, 停止提交新 Item", err.message());
             ScheduleDecision::Stop
-        }
+        };
+        self.on_item_error_settled(source_item, &err, decision).await;
+        decision
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2759,8 +2872,8 @@ pub fn decode_files_from_compressed(
 }
 
 enum DryRunOutput {
-    Collected(SyncMutex<Vec<DryRunResult>>),
-    Streamed(mpsc::Sender<Result<DryRunResult, ProcessingError>>),
+    Collected(SyncMutex<Vec<DryRunEvent>>),
+    Streamed(mpsc::Sender<DryRunEvent>),
 }
 
 /// dry-run 的 `Process` 实现，只收集或流式输出预览结果，不保存内容或下载文件。
@@ -2768,6 +2881,9 @@ struct DryRunProcess {
     source_pointer: Option<Value>,
     item_filters: Vec<Arc<dyn SourceItemFilter>>,
     output: DryRunOutput,
+    succeeded: AtomicU32,
+    failed: AtomicU32,
+    stopped: AtomicBool,
 }
 
 impl DryRunProcess {
@@ -2789,22 +2905,46 @@ impl DryRunProcess {
             source_pointer: options.pointer,
             item_filters,
             output: DryRunOutput::Collected(SyncMutex::new(Vec::new())),
+            succeeded: AtomicU32::new(0),
+            failed: AtomicU32::new(0),
+            stopped: AtomicBool::new(false),
         }
     }
 
     fn streaming(
         processor: &SourceProcessor,
         options: DryRunOptions,
-        sender: mpsc::Sender<Result<DryRunResult, ProcessingError>>,
+        sender: mpsc::Sender<DryRunEvent>,
     ) -> Self {
         let mut process = Self::collecting(processor, options);
         process.output = DryRunOutput::Streamed(sender);
         process
     }
 
-    fn into_results(self) -> Vec<DryRunResult> {
+    async fn emit(&self, event: DryRunEvent) {
+        match &self.output {
+            DryRunOutput::Collected(events) => events.lock().push(event),
+            DryRunOutput::Streamed(sender) => {
+                let _ = sender.send(event).await;
+            }
+        }
+    }
+
+    fn summary(&self) -> DryRunSummary {
+        DryRunSummary {
+            succeeded: self.succeeded.load(Ordering::Acquire),
+            failed: self.failed.load(Ordering::Acquire),
+            stopped: self.stopped.load(Ordering::Acquire),
+        }
+    }
+
+    async fn emit_run_error(&self, error: &ProcessingError) {
+        self.emit(DryRunEvent::RunError { error: error.into() }).await;
+    }
+
+    fn into_events(self) -> Vec<DryRunEvent> {
         match self.output {
-            DryRunOutput::Collected(results) => results.into_inner(),
+            DryRunOutput::Collected(events) => events.into_inner(),
             DryRunOutput::Streamed(_) => {
                 unreachable!("collecting dry-run must use collected output")
             }
@@ -2829,7 +2969,25 @@ impl Process for DryRunProcess {
         _: &SourceProcessor,
         _: &ProcessRuntime,
     ) -> Result<(), ProcessingError> {
+        self.emit(DryRunEvent::Complete { summary: self.summary() }).await;
         Ok(())
+    }
+
+    async fn on_item_error_settled(
+        &self,
+        source_item: &SourceItem,
+        error: &ProcessingError,
+        decision: ScheduleDecision,
+    ) {
+        self.failed.fetch_add(1, Ordering::AcqRel);
+        self.stopped.fetch_or(decision.should_stop(), Ordering::AcqRel);
+        self.emit(DryRunEvent::ItemError {
+            item_hash: source_item.hashing(),
+            item: source_item.clone(),
+            error: error.into(),
+            action: decision.into(),
+        })
+        .await;
     }
 
     async fn on_item_process_complete(
@@ -2850,14 +3008,11 @@ impl Process for DryRunProcess {
         processing_content: ProcessingContent,
         file_contents: Vec<FileContent>,
     ) -> Result<(), ProcessingError> {
-        let result = DryRunResult { processing_content, file_contents };
-        match &self.output {
-            DryRunOutput::Collected(results) => results.lock().push(result),
-            DryRunOutput::Streamed(sender) => sender
-                .send(Ok(result))
-                .await
-                .map_err(|_| ProcessingError::non_retryable("Dry-run stream closed"))?,
-        }
+        self.succeeded.fetch_add(1, Ordering::AcqRel);
+        self.emit(DryRunEvent::Item {
+            result: DryRunResult { processing_content, file_contents },
+        })
+        .await;
         Ok(())
     }
 
@@ -4015,6 +4170,16 @@ mod test {
         assert!(each_listener.context_visible.load(AtomicOrdering::Relaxed));
         assert_eq!(batch_listener.completed_items.lock().as_slice(), ["item-1"]);
     }
+    fn dry_run_results(events: Vec<DryRunEvent>) -> Vec<DryRunResult> {
+        events
+            .into_iter()
+            .filter_map(|event| match event {
+                DryRunEvent::Item { result } => Some(result),
+                _ => None,
+            })
+            .collect()
+    }
+
     #[tokio::test]
     async fn file_taggers_preserve_source_tags_without_processor_tags() {
         let (mut processor, _) = pointer_test_processor_with_settings(
@@ -4030,7 +4195,7 @@ mod test {
         processor.tags.insert("processor".to_owned());
         processor.options.file_taggers = vec![Arc::new(StaticFileTagger)];
 
-        let results = processor.dry_run(DryRunOptions::default()).await.unwrap();
+        let results = dry_run_results(processor.dry_run(DryRunOptions::default()).await);
 
         assert_eq!(
             results[0].file_contents[0].tags,
@@ -4060,7 +4225,7 @@ mod test {
         );
         processor.options.variable_providers = vec![provider.clone()];
 
-        let results = processor.dry_run(DryRunOptions::default()).await.unwrap();
+        let results = dry_run_results(processor.dry_run(DryRunOptions::default()).await);
         let file = &results[0].file_contents[0];
 
         assert_eq!(
@@ -4098,7 +4263,7 @@ mod test {
         );
         processor.options.variable_providers = vec![provider.clone()];
 
-        processor.dry_run(DryRunOptions::default()).await.unwrap();
+        processor.dry_run(DryRunOptions::default()).await;
 
         assert_eq!(
             *provider.0.lock(),
@@ -4121,7 +4286,7 @@ mod test {
         );
         processor.options.save_processing_content = true;
 
-        let results = processor.dry_run(DryRunOptions::default()).await.unwrap();
+        let results = dry_run_results(processor.dry_run(DryRunOptions::default()).await);
 
         assert_eq!(results.len(), 1);
         assert_eq!(
@@ -4139,6 +4304,94 @@ mod test {
     }
 
     #[tokio::test]
+    async fn dry_run_reports_item_error_and_stop_action() {
+        let (processor, _) = pointer_test_processor_with_settings(
+            false,
+            3,
+            false,
+            PointerTestSettings { invalid_item: Some(2), ..Default::default() },
+        );
+
+        let events = processor.dry_run(DryRunOptions::default()).await;
+
+        assert!(matches!(&events[0], DryRunEvent::Item { .. }));
+        assert!(matches!(
+            &events[1],
+            DryRunEvent::ItemError {
+                item,
+                error: DryRunError {
+                    kind: DryRunErrorKind::NonRetryable,
+                    skippable: false,
+                    ..
+                },
+                action: DryRunItemErrorAction::Stop,
+                ..
+            } if item.title == "item-2"
+        ));
+        assert!(matches!(
+            &events[2],
+            DryRunEvent::Complete {
+                summary: DryRunSummary { succeeded: 1, failed: 1, stopped: true },
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn dry_run_reports_item_error_and_continue_action() {
+        let (processor, _) = pointer_test_processor_with_settings(
+            false,
+            3,
+            false,
+            PointerTestSettings {
+                item_error_continue: true,
+                invalid_item: Some(2),
+                ..Default::default()
+            },
+        );
+
+        let events = processor.dry_run(DryRunOptions::default()).await;
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                DryRunEvent::Item { .. },
+                DryRunEvent::ItemError {
+                    item,
+                    action: DryRunItemErrorAction::Continue,
+                    ..
+                },
+                DryRunEvent::Item { .. },
+                DryRunEvent::Complete {
+                    summary: DryRunSummary {
+                        succeeded: 2,
+                        failed: 1,
+                        stopped: false,
+                    },
+                },
+            ] if item.title == "item-2"
+        ));
+    }
+
+    #[tokio::test]
+    async fn dry_run_reports_run_error_before_item_processing() {
+        let (processor, _) = pointer_test_processor(false, 1, false);
+        processor.close();
+
+        let events = processor.dry_run(DryRunOptions::default()).await;
+
+        assert!(matches!(
+            events.as_slice(),
+            [DryRunEvent::RunError {
+                error: DryRunError {
+                    message,
+                    kind: DryRunErrorKind::NonRetryable,
+                    skippable: false,
+                },
+            }] if message == "Processor is closed"
+        ));
+    }
+
+    #[tokio::test]
     async fn dry_run_stream_emits_each_result_without_side_effects() {
         let submit_count = Arc::new(AtomicUsize::new(0));
         let (processor, storage) = pointer_test_processor_with_settings(
@@ -4153,22 +4406,24 @@ mod test {
         );
         let processor = Arc::new(processor);
 
-        let results =
+        let events =
             processor.dry_run_stream(DryRunOptions::default()).collect::<Vec<_>>().await;
 
-        assert_eq!(results.len(), 2);
-        assert_eq!(
-            results
-                .into_iter()
-                .map(|result| result
-                    .unwrap()
-                    .processing_content
-                    .item_content
-                    .source_item
-                    .title)
-                .collect::<Vec<_>>(),
-            ["item-1", "item-2"]
-        );
+        assert!(matches!(
+            events.as_slice(),
+            [
+                DryRunEvent::Item { result: first },
+                DryRunEvent::Item { result: second },
+                DryRunEvent::Complete {
+                    summary: DryRunSummary {
+                        succeeded: 2,
+                        failed: 0,
+                        stopped: false,
+                    },
+                },
+            ] if first.processing_content.item_content.source_item.title == "item-1"
+                && second.processing_content.item_content.source_item.title == "item-2"
+        ));
         assert_eq!(submit_count.load(AtomicOrdering::Acquire), 0);
         assert_eq!(storage.next_content_id.load(AtomicOrdering::Acquire), 0);
         assert!(storage.saved_pointers().is_empty());
@@ -4214,11 +4469,13 @@ mod test {
             storage: storage.clone(),
         })];
 
-        let unfiltered = processor.dry_run(DryRunOptions::default()).await.unwrap();
-        let filtered = processor
-            .dry_run(DryRunOptions { filter_processed: true, ..Default::default() })
-            .await
-            .unwrap();
+        let unfiltered =
+            dry_run_results(processor.dry_run(DryRunOptions::default()).await);
+        let filtered = dry_run_results(
+            processor
+                .dry_run(DryRunOptions { filter_processed: true, ..Default::default() })
+                .await,
+        );
 
         assert_eq!(unfiltered.len(), 1);
         assert!(filtered.is_empty());
