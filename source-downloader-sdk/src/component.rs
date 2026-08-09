@@ -258,6 +258,7 @@ pub struct SdComponentMetadata {
     pub props_ui_schema: Option<Value>,
     pub state_json_schema: Option<Value>,
     pub state_ui_schema: Option<Value>,
+    pub source_pointer_json_schema: Option<Value>,
 }
 
 pub trait SdComponent: Any + Send + Sync + Debug + Display {
