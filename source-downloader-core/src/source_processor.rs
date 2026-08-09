@@ -5576,6 +5576,8 @@ mod test {
             file_download_path: PathBuf::from("/download/file.txt"),
             source_save_path: PathBuf::from("/save"),
             pattern_variables: HashMap::new(),
+            file_save_path_pattern: String::new(),
+            filename_pattern: String::new(),
             tags: Vec::new(),
             attrs: Default::default(),
             file_uri: None,
@@ -5586,6 +5588,7 @@ mod test {
             status: Normal,
             target_path: OnceLock::new(),
             data: None,
+            processed_variables: None,
         };
         let (mut processor, storage) = pointer_test_processor(false, 0, false);
         processor.name = content.processor_name.clone();
@@ -5646,6 +5649,8 @@ mod test {
             file_download_path: root.join("download/file.txt"),
             source_save_path: target_dir.clone(),
             pattern_variables: HashMap::new(),
+            file_save_path_pattern: String::new(),
+            filename_pattern: String::new(),
             tags: Vec::new(),
             attrs: Default::default(),
             file_uri: None,
@@ -5656,6 +5661,7 @@ mod test {
             status: Normal,
             target_path: OnceLock::new(),
             data: None,
+            processed_variables: None,
         };
         let (mut processor, storage) = pointer_test_processor(false, 0, false);
         processor.file_mover = Arc::new(ReplacementFileMover);
@@ -5715,6 +5721,8 @@ mod test {
             file_download_path: root.join("download/file.txt"),
             source_save_path: root.join("target"),
             pattern_variables: HashMap::new(),
+            file_save_path_pattern: String::new(),
+            filename_pattern: String::new(),
             tags: Vec::new(),
             attrs: Default::default(),
             file_uri: None,
@@ -5725,6 +5733,7 @@ mod test {
             status: Normal,
             target_path: OnceLock::new(),
             data: None,
+            processed_variables: None,
         };
         let (mut processor, storage) = pointer_test_processor(false, 0, false);
         processor.file_mover = Arc::new(FailingFileMover);
@@ -5835,6 +5844,8 @@ mod test {
             file_download_path: download_file.clone(),
             source_save_path: target_dir.clone(),
             pattern_variables: HashMap::new(),
+            file_save_path_pattern: String::new(),
+            filename_pattern: String::new(),
             tags: Vec::new(),
             attrs: Default::default(),
             file_uri: None,
@@ -5845,12 +5856,15 @@ mod test {
             status: Normal,
             target_path: OnceLock::new(),
             data: None,
+            processed_variables: None,
         };
         let replacement_file = FileContent {
             download_path: download_dir,
             file_download_path: replacement_download_file.clone(),
             source_save_path: target_dir.clone(),
             pattern_variables: HashMap::new(),
+            file_save_path_pattern: String::new(),
+            filename_pattern: String::new(),
             tags: Vec::new(),
             attrs: Default::default(),
             file_uri: None,
@@ -5861,6 +5875,7 @@ mod test {
             status: ReadyReplace,
             target_path: OnceLock::new(),
             data: None,
+            processed_variables: None,
         };
         let processor_name = "async-rename-test";
         let storage = storage().await.clone();
@@ -6065,6 +6080,8 @@ mod test {
             file_download_path: PathBuf::from("download.txt"),
             source_save_path: PathBuf::new(),
             pattern_variables: HashMap::new(),
+            file_save_path_pattern: String::new(),
+            filename_pattern: String::new(),
             tags: Vec::new(),
             attrs: Default::default(),
             file_uri: None,
@@ -6075,6 +6092,7 @@ mod test {
             status: TargetExists,
             target_path: OnceLock::new(),
             data: None,
+            processed_variables: None,
         };
         file.target_path.set(target_path).unwrap();
         let (mut processor, _) = pointer_test_processor(false, 0, false);
@@ -6169,6 +6187,8 @@ mod test {
             file_download_path: download_file.clone(),
             source_save_path: root.clone(),
             pattern_variables: HashMap::new(),
+            file_save_path_pattern: String::new(),
+            filename_pattern: String::new(),
             tags: Vec::new(),
             attrs: Default::default(),
             file_uri: None,
@@ -6179,6 +6199,7 @@ mod test {
             status: TargetExists,
             target_path: OnceLock::new(),
             data: None,
+            processed_variables: None,
         };
         file.target_path.set(target_file.clone()).unwrap();
         let mut files = vec![file];

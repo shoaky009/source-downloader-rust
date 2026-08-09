@@ -182,6 +182,8 @@ mod tests {
                 file_download_path: PathBuf::new(),
                 source_save_path: PathBuf::new(),
                 pattern_variables: PatternVariables::new(),
+                file_save_path_pattern: String::new(),
+                filename_pattern: String::new(),
                 tags: vec![],
                 attrs: Map::new(),
                 file_uri: None,
@@ -192,6 +194,7 @@ mod tests {
                 status: FileContentStatus::Undetected,
                 target_path: OnceLock::new(),
                 data: None,
+                processed_variables: None,
             }
         }
 

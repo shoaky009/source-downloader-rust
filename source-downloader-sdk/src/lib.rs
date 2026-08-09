@@ -117,6 +117,8 @@ pub mod test_utils {
                 file_download_path: PathBuf::new(),
                 source_save_path: PathBuf::new(),
                 pattern_variables: HashMap::new(),
+                file_save_path_pattern: String::new(),
+                filename_pattern: String::new(),
                 tags: vec![],
                 attrs: serde_json::Map::new(),
                 file_uri: None,
@@ -127,6 +129,7 @@ pub mod test_utils {
                 status: Undetected,
                 target_path: OnceLock::default(),
                 data: None,
+                processed_variables: None,
             }
         }
     }

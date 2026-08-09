@@ -305,7 +305,9 @@ impl Renamer {
                 download_path: file.download_path.to_owned(),
                 file_download_path,
                 source_save_path: file.save_path.to_owned(),
-                pattern_variables: variables.processed_variables,
+                pattern_variables: variables.pattern_variables,
+                file_save_path_pattern: file.save_path_pattern.pattern.clone(),
+                filename_pattern: file.filename_pattern.pattern.clone(),
                 target_filename,
                 target_save_path,
                 exist_target_path: None,
@@ -316,6 +318,7 @@ impl Renamer {
                 status: FileContentStatus::Undetected,
                 target_path: OnceLock::new(),
                 data,
+                processed_variables: Some(variables.processed_variables),
             };
         }
         if !self.trimming.is_empty() {
@@ -367,7 +370,9 @@ impl Renamer {
             download_path: file.download_path.to_owned(),
             file_download_path,
             source_save_path: file.save_path.to_owned(),
-            pattern_variables: variables.processed_variables,
+            pattern_variables: variables.pattern_variables,
+            file_save_path_pattern: file.save_path_pattern.pattern.clone(),
+            filename_pattern: file.filename_pattern.pattern.clone(),
             target_filename: filename_result.path,
             target_save_path: PathBuf::from_str(&dir_result.path).unwrap(),
             exist_target_path: None,
@@ -378,6 +383,7 @@ impl Renamer {
             status: FileContentStatus::Undetected,
             target_path: OnceLock::new(),
             data,
+            processed_variables: Some(variables.processed_variables),
         }
     }
 
@@ -605,7 +611,12 @@ impl Renamer {
             vars.entry(key.clone()).or_insert_with(|| value.clone());
         }
 
-        RenameVariables { variables: vars, processed_variables, ..Default::default() }
+        RenameVariables {
+            variables: vars,
+            processed_variables,
+            pattern_variables: file_pattern_vars,
+            ..Default::default()
+        }
     }
 
     fn apply_replacers(&self, name: &str, mut text: String) -> String {
@@ -1060,6 +1071,10 @@ mod tests {
             .await;
 
         assert_eq!("03-03.txt", content.target_filename);
+        assert_eq!(file_variables, content.pattern_variables);
+        assert_eq!("", content.file_save_path_pattern);
+        assert_eq!("{file.vars.episode}-{episode}.txt", content.filename_pattern);
+        assert_eq!(Some(HashMap::new()), content.processed_variables);
     }
 
     #[tokio::test]

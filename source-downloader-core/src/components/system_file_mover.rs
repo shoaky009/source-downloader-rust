@@ -72,6 +72,8 @@ mod tests {
             file_download_path: download_file.clone(),
             source_save_path: target_dir.clone(),
             pattern_variables: HashMap::new(),
+            file_save_path_pattern: String::new(),
+            filename_pattern: String::new(),
             tags: Vec::new(),
             attrs: Default::default(),
             file_uri: None,
@@ -82,6 +84,7 @@ mod tests {
             status: FileContentStatus::Normal,
             target_path: OnceLock::new(),
             data: None,
+            processed_variables: None,
         };
         let item = SourceItem {
             title: "item".to_owned(),

@@ -660,6 +660,8 @@ mod tests {
             file_download_path: PathBuf::from("/downloads/show/01.mkv"),
             source_save_path: PathBuf::from("/library"),
             pattern_variables: HashMap::new(),
+            file_save_path_pattern: String::new(),
+            filename_pattern: String::new(),
             tags: vec![],
             attrs: Map::new(),
             file_uri: None,
@@ -670,6 +672,7 @@ mod tests {
             status: FileContentStatus::Normal,
             target_path: OnceLock::new(),
             data: None,
+            processed_variables: None,
         }
     }
 

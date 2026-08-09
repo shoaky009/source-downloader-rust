@@ -872,6 +872,8 @@ pub struct FileContent {
     pub file_download_path: PathBuf,
     pub source_save_path: PathBuf,
     pub pattern_variables: PatternVariables,
+    pub file_save_path_pattern: String,
+    pub filename_pattern: String,
     pub tags: Vec<String>,
     pub attrs: Map<String, Value>,
     #[serde(with = "http_serde::option::uri")]
@@ -888,6 +890,7 @@ pub struct FileContent {
     pub target_path: OnceLock<PathBuf>,
     #[serde(skip, default)]
     pub data: Option<Arc<[u8]>>,
+    pub processed_variables: Option<PatternVariables>,
 }
 
 impl Debug for FileContent {
@@ -1132,6 +1135,8 @@ mod test {
             source_save_path: PathBuf::from("src/test/resources/target"),
             download_path: PathBuf::from("src/test/resources/downloads"),
             pattern_variables: Default::default(),
+            file_save_path_pattern: String::new(),
+            filename_pattern: String::new(),
             tags: vec![],
             attrs: Default::default(),
             file_uri: None,
@@ -1142,6 +1147,7 @@ mod test {
             status: FileContentStatus::Undetected,
             target_path: OnceLock::new(),
             data: None,
+            processed_variables: None,
         };
         assert_eq!(
             PathBuf::from("src/test/resources/target/test"),
