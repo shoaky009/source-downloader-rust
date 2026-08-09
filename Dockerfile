@@ -1,6 +1,4 @@
-FROM debian:bookworm-slim
-
-ARG TARGETARCH
+FROM debian:trixie-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -9,10 +7,9 @@ RUN apt-get update \
     && mkdir -p /app/data /app/plugins \
     && chown -R 1000:1000 /app
 
-
 COPY --chmod=755 \
     --chown=1000:1000 \
-    container-binaries/${TARGETARCH}/source-downloader-web \
+    source-downloader-web \
     /app/source-downloader-web
 
 
