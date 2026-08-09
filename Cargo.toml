@@ -66,7 +66,7 @@ qrcode = "0.14"
 base64 = "0.23"
 imagesize = "0.15"
 lingua = { version = "1.7", default-features = false, features = ["chinese", "japanese"] }
-mimetype-detector = "0.3.11"
+infer = "0.22"
 encoding_rs = "0.8"
 chardetng = "1.0"
 quick-xml = "0.41"

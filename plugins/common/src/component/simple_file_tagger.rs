@@ -6,16 +6,31 @@ use source_downloader_sdk::component::{
     SdComponentMetadata, SourceFile, deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+
+type Mapping = HashMap<Cow<'static, str>, Cow<'static, str>>;
 
 pub struct SimpleFileTaggerSupplier;
+static MIME_DETECTOR: LazyLock<infer::Infer> = LazyLock::new(|| {
+    let mut detector = infer::Infer::new();
+    detector.add("application/x-subrip", "ass", is_ass);
+    detector
+});
+
+fn is_ass(bytes: &[u8]) -> bool {
+    bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes).starts_with(b"[Script Info]")
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct SimpleFileTaggerConfig {
     #[serde(default)]
     external_mapping: HashMap<String, String>,
+    #[serde(default)]
+    extension_mapping: HashMap<String, String>,
 }
 pub const SUPPLIER: SimpleFileTaggerSupplier = SimpleFileTaggerSupplier;
 
@@ -29,10 +44,53 @@ impl ComponentSupplier for SimpleFileTaggerSupplier {
         props: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let config = deserialize_component_config::<SimpleFileTaggerConfig>(props)?;
-        let mut mapping =
-            HashMap::from([("x-subrip".to_string(), "subtitle".to_string())]);
-        mapping.extend(config.external_mapping);
-        Ok(Arc::new(SimpleFileTagger { mapping }))
+        let mut mapping: Mapping = HashMap::from([
+            ("x-subrip".into(), "subtitle".into()),
+            ("x-substation-alpha".into(), "subtitle".into()),
+            ("x-webvtt".into(), "subtitle".into()),
+            ("x-microdvd".into(), "subtitle".into()),
+            ("x-pgs".into(), "subtitle".into()),
+            ("x-vobsub".into(), "subtitle".into()),
+            ("x-sami".into(), "subtitle".into()),
+            ("ttml+xml".into(), "subtitle".into()),
+            ("x-scc".into(), "subtitle".into()),
+        ]);
+        mapping.extend(
+            config
+                .external_mapping
+                .into_iter()
+                .map(|(mime, tag)| (mime.into(), tag.into())),
+        );
+        let mut extension_mapping: Mapping = HashMap::from([
+            ("srt".into(), "application/x-subrip".into()),
+            ("ass".into(), "application/x-subrip".into()),
+            ("ssa".into(), "application/x-subrip".into()),
+            ("vtt".into(), "application/x-webvtt".into()),
+            ("sub".into(), "application/x-microdvd".into()),
+            ("sup".into(), "application/x-pgs".into()),
+            ("idx".into(), "application/x-vobsub".into()),
+            ("smi".into(), "application/x-sami".into()),
+            ("sami".into(), "application/x-sami".into()),
+            ("ttml".into(), "application/ttml+xml".into()),
+            ("dfxp".into(), "application/ttml+xml".into()),
+            ("scc".into(), "application/x-scc".into()),
+            ("nfo".into(), "text/x-nfo".into()),
+            ("txt".into(), "text/plain".into()),
+            ("css".into(), "text/css".into()),
+        ]);
+        extension_mapping.extend(config.extension_mapping.into_iter().map(
+            |(extension, mime)| {
+                (
+                    extension
+                        .trim_start_matches("*.")
+                        .trim_start_matches('.')
+                        .to_ascii_lowercase()
+                        .into(),
+                    mime.into(),
+                )
+            },
+        ));
+        Ok(Arc::new(SimpleFileTagger { mapping, extension_mapping }))
     }
     fn is_support_no_props(&self) -> bool {
         true
@@ -45,7 +103,8 @@ impl ComponentSupplier for SimpleFileTaggerSupplier {
 #[derive(Debug, SdComponent)]
 #[component(FileTagger)]
 struct SimpleFileTagger {
-    mapping: HashMap<String, String>,
+    mapping: Mapping,
+    extension_mapping: Mapping,
 }
 impl Display for SimpleFileTagger {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -57,33 +116,22 @@ impl Display for SimpleFileTagger {
 impl FileTagger for SimpleFileTagger {
     async fn tag(&self, source_file: &SourceFile) -> Option<String> {
         let extension = source_file.path.extension()?.to_str()?.to_ascii_lowercase();
-        let mime = mimetype_detector::detect_file(&source_file.path)
-            .ok()
-            .map(|value| value.mime())
-            .or_else(|| mime_from_extension(&extension))?;
-        if mime == "application/octet-stream" {
-            return None;
-        }
+        let mime = self
+            .extension_mapping
+            .get(extension.as_str())
+            .map(|mime| mime.as_ref())
+            .or_else(|| {
+                MIME_DETECTOR
+                    .get_from_path(&source_file.path)
+                    .ok()
+                    .flatten()
+                    .map(|kind| kind.mime_type())
+            })?;
         let (top_level, subtype) = mime.split_once('/')?;
         if top_level != "application" {
             return Some(top_level.to_string());
         }
-        self.mapping.get(subtype).cloned()
-    }
-}
-
-fn mime_from_extension(extension: &str) -> Option<&'static str> {
-    match extension {
-        "mkv" => Some("video/x-matroska"),
-        "mp4" => Some("video/mp4"),
-        "mp3" => Some("audio/mpeg"),
-        "flac" => Some("audio/flac"),
-        "jpg" | "jpeg" => Some("image/jpeg"),
-        "png" => Some("image/png"),
-        "txt" => Some("text/plain"),
-        "srt" => Some("application/x-subrip"),
-        "ass" => Some("text/x-ssa"),
-        _ => None,
+        self.mapping.get(subtype).map(|tag| tag.to_string())
     }
 }
 
@@ -120,12 +168,65 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn tags_common_top_level_types_and_subtitles() {
-        assert_eq!(Some("video".to_string()), tag("show.mkv", Map::new()).await);
-        assert_eq!(Some("audio".to_string()), tag("song.flac", Map::new()).await);
-        assert_eq!(Some("image".to_string()), tag("cover.png", Map::new()).await);
-        assert_eq!(Some("text".to_string()), tag("notes.txt", Map::new()).await);
-        assert_eq!(Some("subtitle".to_string()), tag("show.srt", Map::new()).await);
+    async fn tags_text_extensions_and_subtitles() {
+        for path in ["notes.txt", "theme.css", "release.nfo"] {
+            assert_eq!(Some("text".to_string()), tag(path, Map::new()).await);
+        }
+
+        for path in [
+            "show.srt",
+            "show.ass",
+            "show.ssa",
+            "show.vtt",
+            "show.sub",
+            "show.sup",
+            "show.idx",
+            "show.smi",
+            "show.sami",
+            "show.ttml",
+            "show.dfxp",
+            "show.scc",
+        ] {
+            assert_eq!(Some("subtitle".to_string()), tag(path, Map::new()).await);
+        }
+    }
+
+    #[tokio::test]
+    async fn detects_common_top_level_types_from_magic_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let video = dir.path().join("video.bin");
+        let audio = dir.path().join("audio.bin");
+        let image = dir.path().join("image.bin");
+
+        let mut matroska = vec![0; 257];
+        matroska[..4].copy_from_slice(b"\x1a\x45\xdf\xa3");
+        matroska[16..27].copy_from_slice(b"\x42\x82\x88matroska");
+        std::fs::write(&video, matroska).unwrap();
+        std::fs::write(&audio, b"fLaC").unwrap();
+        std::fs::write(&image, b"\x89PNG\r\n\x1a\n").unwrap();
+
+        for (path, expected) in [(&video, "video"), (&audio, "audio"), (&image, "image")]
+        {
+            assert_eq!(
+                Some(expected.to_string()),
+                tag(path.to_str().unwrap(), Map::new()).await
+            );
+        }
+    }
+    #[tokio::test]
+    async fn custom_infer_matcher_detects_existing_ass_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let subtitle = dir.path().join("show.bin");
+        std::fs::write(
+            &subtitle,
+            "\u{feff}[Script Info]\nScriptType: v4.00+\n[Events]\nDialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,字幕\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            Some("subtitle".to_string()),
+            tag(subtitle.to_str().unwrap(), Map::new()).await
+        );
     }
     #[tokio::test]
     async fn external_mapping_overrides_default() {
@@ -136,7 +237,19 @@ mod tests {
                 Value::String("captions".to_string()),
             )])),
         )]);
-        assert_eq!(Some("captions".to_string()), tag("show.srt", props).await);
+        assert_eq!(Some("captions".to_string()), tag("show.ass", props).await);
+    }
+    #[tokio::test]
+    async fn extension_mapping_accepts_tika_style_globs() {
+        let props = Map::from_iter([(
+            "extension-mapping".to_string(),
+            Value::Object(Map::from_iter([(
+                "*.CAP".to_string(),
+                Value::String("application/x-subrip".to_string()),
+            )])),
+        )]);
+
+        assert_eq!(Some("subtitle".to_string()), tag("show.cap", props).await);
     }
     #[tokio::test]
     async fn rejects_extensionless_and_unknown_files() {

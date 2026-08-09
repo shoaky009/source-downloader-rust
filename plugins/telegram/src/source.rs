@@ -287,7 +287,7 @@ impl TelegramSource {
             .map_err(|error| ProcessingError::non_retryable(error.to_string()))?
             .to_offset(
                 UtcOffset::current_local_offset()
-                    .map_err(|error| ProcessingError::non_retryable(error.to_string()))?
+                    .map_err(|error| ProcessingError::non_retryable(error.to_string()))?,
             );
         let mut attrs = Map::from_iter([
             ("messageId".into(), Value::from(message_id)),

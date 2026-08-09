@@ -79,12 +79,28 @@ impl FileExistsDetector for MediaTypeExistsDetector {
 }
 
 fn top_level_media_type(path: &std::path::Path) -> String {
-    mimetype_detector::detect_file(path)
-        .map(|mime| mime.to_string())
-        .unwrap_or_else(|_| "application/octet-stream".to_string())
-        .split_once('/')
-        .map(|(top_level, _)| top_level.to_string())
-        .unwrap_or_else(|| "application".to_string())
+    infer::get_from_path(path)
+        .ok()
+        .flatten()
+        .and_then(|kind| kind.mime_type().split_once('/').map(|(top_level, _)| top_level))
+        .or_else(|| top_level_from_extension(path))
+        .unwrap_or("application")
+        .to_string()
+}
+
+fn top_level_from_extension(path: &std::path::Path) -> Option<&'static str> {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif" | "heic" | "heif" | "tif"
+        | "tiff" | "bmp" | "jxr" | "psd" | "ico" | "ora" | "djvu" => Some("image"),
+        "mp4" | "m4v" | "mkv" | "webm" | "mov" | "avi" | "wmv" | "mpg" | "mpeg"
+        | "flv" | "3gp" => Some("video"),
+        "mid" | "midi" | "mp3" | "m4a" | "ogg" | "opus" | "flac" | "wav" | "amr"
+        | "aac" | "aiff" | "dsf" | "ape" | "wma" => Some("audio"),
+        "txt" | "css" | "csv" | "tsv" | "html" | "htm" | "md" | "nfo" | "srt" | "ass"
+        | "ssa" | "vtt" => Some("text"),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
