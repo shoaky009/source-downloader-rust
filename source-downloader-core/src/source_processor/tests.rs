@@ -2893,6 +2893,7 @@ async fn replacement_decider_receives_latest_prior_content_regardless_of_query_o
         .identify_files_to_replace(
             &processor,
             &SourceItem { title: "current".to_owned(), ..Default::default() },
+            "current-hash",
             &mut [file],
         )
         .await
@@ -2996,9 +2997,15 @@ async fn replacement_decider_receives_prior_item_and_replaces_target() {
     processor.options.file_replacement_decider = decider.clone();
     let process = NormalProcess {};
 
+    let current_hash = current_item.hashing();
     assert_eq!(
         process
-            .identify_files_to_replace(&processor, &current_item, &mut files)
+            .identify_files_to_replace(
+                &processor,
+                &current_item,
+                &current_hash,
+                &mut files,
+            )
             .await
             .unwrap(),
         1

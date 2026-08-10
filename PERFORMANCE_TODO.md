@@ -12,7 +12,7 @@ reason under **Decision log**.
 - [ ] Keep asynchronous storage and filesystem work outside the SourceProcessor coordination mutex. **Skipped:** the mutex protects the atomic sequence of existence checks, replacement decisions, path reservation, and in-flight registration. Moving I/O out requires an optimistic revalidation protocol; changing it without contention benchmarks and dedicated race tests risks duplicate downloads and incorrect replacement ownership.
 - [x] Batch replacement file-content reads to remove serial storage round trips.
 - [ ] Store only replacement-relevant data in the in-flight snapshot instead of cloning complete processing models. **Skipped:** replacement deciders receive the full `InProcessingItem` interface, including source item, item variables, files, status, and failure metadata. Narrowing the snapshot would either break that interface or add a second near-duplicate model; use allocation profiling before accepting that maintenance cost.
-- [ ] Compute each SourceItem hash once and pass it through the processing pipeline.
+- [x] Compute each SourceItem hash once and pass it through the processing pipeline.
 - [ ] Avoid repeated owned path, processor-name, and item-hash strings when persisting target-path metadata.
 - [ ] Skip downloader submission when an item has only inline-data files.
 

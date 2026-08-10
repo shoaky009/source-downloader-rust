@@ -580,6 +580,7 @@ enum ItemAction {
 struct CompletedItem {
     item_pointer: Arc<dyn ItemPointer>,
     source_item: SourceItem,
+    item_hash: String,
     action: ItemAction,
 }
 
@@ -638,18 +639,18 @@ impl ItemProcessRuntime {
     fn register_in_flight(
         &self,
         processor: &SourceProcessor,
+        item_hash: &str,
         source_item: &SourceItem,
         item_variables: &PatternVariables,
         files: &[FileContent],
     ) {
-        let item_hash = source_item.hashing();
         self.in_flight_items.write().insert(
-            item_hash.clone(),
+            item_hash.to_owned(),
             InFlightItem {
                 content: ProcessingContent {
                     id: None,
                     processor_name: processor.name.clone(),
-                    item_hash,
+                    item_hash: item_hash.to_owned(),
                     item_identity: source_item.identity.clone(),
                     item_content: ItemContentLite {
                         source_item: source_item.clone(),
@@ -1588,6 +1589,7 @@ trait Process {
         item_runtime: &ItemProcessRuntime,
         coordinator: &mut ProcessCoordinator,
         item_pointer: Arc<dyn ItemPointer>,
+        item_hash: String,
         source_item: SourceItem,
         files: Vec<FileContent>,
         item_variables: PatternVariables,
@@ -1596,7 +1598,6 @@ trait Process {
         failure_reason: Option<String>,
         advance_pointer: bool,
     ) -> ScheduleDecision {
-        let item_hash = source_item.hashing();
         if item_runtime.is_cancelled(&item_hash) {
             status = ProcessingStatus::Cancelled;
         }
@@ -1681,7 +1682,7 @@ trait Process {
         completed: CompletedItem,
         advance_pointer: bool,
     ) -> ScheduleDecision {
-        let CompletedItem { item_pointer, source_item, action } = completed;
+        let CompletedItem { item_pointer, source_item, item_hash, action } = completed;
         match action {
             ItemAction::Skip(reason) => self.settle_skipped_item(&source_item, reason),
             ItemAction::Filtered(reason) => {
@@ -1711,6 +1712,7 @@ trait Process {
                     item_runtime,
                     coordinator,
                     item_pointer,
+                    item_hash,
                     source_item,
                     files,
                     item_variables,
@@ -1764,11 +1766,12 @@ trait Process {
                 move |item: source_downloader_sdk::component::PointedItem| async move {
                     let item_pointer = item.item_pointer;
                     let source_item = item.source_item;
+                    let item_hash = source_item.hashing();
                     let action = process
-                        .process_item(&source_item, item_runtime, processor)
+                        .process_item(&source_item, &item_hash, item_runtime, processor)
                         .await
                         .unwrap_or_else(ItemAction::Error);
-                    CompletedItem { item_pointer, source_item, action }
+                    CompletedItem { item_pointer, source_item, item_hash, action }
                 };
             let mut remaining_items = items.into_iter();
             let mut item_results = FuturesOrdered::new();
@@ -1870,6 +1873,7 @@ trait Process {
         &self,
         p: &SourceProcessor,
         source_item: &SourceItem,
+        current_hash: &str,
         files: &mut [FileContent],
     ) -> Result<usize, ProcessingError> {
         let candidate_indices = files
@@ -1897,7 +1901,6 @@ trait Process {
             .iter()
             .map(|path| path.to_string_lossy().into_owned())
             .collect_vec();
-        let current_hash = source_item.hashing();
         let relations = p
             .processing_storage
             .find_paths(&path_strings)
@@ -2013,9 +2016,9 @@ trait Process {
         processor: &SourceProcessor,
         runtime: &ItemProcessRuntime,
         source_item: &SourceItem,
+        current_hash: &str,
         files: &mut [FileContent],
     ) -> Result<usize, ProcessingError> {
-        let current_hash = source_item.hashing();
         let mut cancellations: HashMap<String, (SourceItem, Vec<SourceFile>)> =
             HashMap::new();
         let mut replacement_count = 0;
@@ -2124,11 +2127,11 @@ trait Process {
     async fn process_item(
         &self,
         source_item: &SourceItem,
+        item_hash: &str,
         rt: &ItemProcessRuntime,
         p: &SourceProcessor,
     ) -> Result<ItemAction, ProcessingError> {
-        let item_hash = source_item.hashing();
-        if !rt.process_submitted_items.write().insert(item_hash.clone()) {
+        if !rt.process_submitted_items.write().insert(item_hash.to_owned()) {
             rt.filter_inc();
             debug!("Source item duplicated: {:?} skipped", source_item);
             return Ok(ItemAction::Skip("Source item duplicated".to_string()));
@@ -2151,7 +2154,7 @@ trait Process {
         }
         let result = SourceProcessor::apply_retry(
             || async {
-                self.process_item_attempt(source_item, &item_hash, rt, p, item_strategy)
+                self.process_item_attempt(source_item, item_hash, rt, p, item_strategy)
                     .await
             },
             "process-item",
@@ -2160,7 +2163,7 @@ trait Process {
         )
         .await;
         if result.is_err() {
-            rt.release_target_paths(&item_hash);
+            rt.release_target_paths(item_hash);
         }
         result
     }
@@ -2225,29 +2228,32 @@ trait Process {
         let (should_download, mut content_status) = {
             let _guard = rt.mutex.lock().await;
             self.update_file_content_status(p, source_item, &mut file_contents).await;
-            self.identify_files_to_replace(p, source_item, &mut file_contents).await?;
+            self.identify_files_to_replace(p, source_item, item_hash, &mut file_contents)
+                .await?;
             if self.allows_in_flight_cancellation() && p.async_downloader.is_some() {
                 self.identify_in_flight_replacements(
                     p,
                     rt,
                     source_item,
+                    item_hash,
                     &mut file_contents,
                 )
                 .await?;
             }
             let has_reserved_target_conflict =
                 rt.reserve_target_paths(item_hash, &mut file_contents);
-            rt.register_in_flight(p, source_item, &item_variables, &file_contents);
+            rt.register_in_flight(p, item_hash, source_item, &item_variables, &file_contents);
             self.probe_content_status(
                 p,
                 rt,
                 source_item,
+                item_hash,
                 &file_contents,
                 has_reserved_target_conflict,
             )
         };
         let mut rename_times = 0;
-        if should_download && self.do_download(p, source_item, &file_contents).await? {
+        if should_download && self.do_download(p, source_item, item_hash, &file_contents).await? {
             let is_sync = p.async_downloader.is_none();
             if is_sync {
                 let movement_res = self.do_movement(p, source_item, &file_contents).await;
@@ -2329,6 +2335,7 @@ trait Process {
         &self,
         p: &SourceProcessor,
         source_item: &SourceItem,
+        item_hash: &str,
         file_contents: &[FileContent],
     ) -> Result<bool, ProcessingError> {
         let downloadable_files: Vec<&FileContent> = file_contents
@@ -2388,13 +2395,12 @@ trait Process {
         };
         p.downloader.submit(&opt).await?;
         if p.options.save_processing_content {
-            let item_hash = source_item.hashing();
             let paths = downloadable_files
                 .into_iter()
                 .map(|file| ProcessingTargetPath {
                     path: file.target_path().to_string_lossy().into_owned(),
                     processor_name: p.name.clone(),
-                    item_hash: item_hash.clone(),
+                    item_hash: item_hash.to_owned(),
                 })
                 .collect();
             p.processing_storage.save_paths(paths).await.map_err(|error| {
@@ -2524,6 +2530,7 @@ trait Process {
         p: &SourceProcessor,
         rt: &ItemProcessRuntime,
         source_item: &SourceItem,
+        item_hash: &str,
         files: &[FileContent],
         has_reserved_target_conflict: bool,
     ) -> (bool, ProcessingStatus) {
@@ -2536,7 +2543,7 @@ trait Process {
         if files.iter().any(|file| file.status == ReadyReplace) {
             return (true, ProcessingStatus::WaitingToRename);
         };
-        if rt.is_cancelled(&source_item.hashing()) {
+        if rt.is_cancelled(item_hash) {
             return (false, ProcessingStatus::Cancelled);
         }
         // 预防这一批次的Item有相同的目标，并且是AsyncDownloader的情况下会重复下载
@@ -3042,6 +3049,7 @@ impl Process for DryRunProcess {
         &self,
         _: &SourceProcessor,
         _: &SourceItem,
+        _: &str,
         _: &[FileContent],
     ) -> Result<bool, ProcessingError> {
         Ok(false)
