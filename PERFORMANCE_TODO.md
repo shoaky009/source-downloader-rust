@@ -11,7 +11,7 @@ reason under **Decision log**.
 - [x] Split save-path patterns once before checking overlong directory components.
 - [ ] Keep asynchronous storage and filesystem work outside the SourceProcessor coordination mutex. **Skipped:** the mutex protects the atomic sequence of existence checks, replacement decisions, path reservation, and in-flight registration. Moving I/O out requires an optimistic revalidation protocol; changing it without contention benchmarks and dedicated race tests risks duplicate downloads and incorrect replacement ownership.
 - [x] Batch replacement file-content reads to remove serial storage round trips.
-- [ ] Store only replacement-relevant data in the in-flight snapshot instead of cloning complete processing models.
+- [ ] Store only replacement-relevant data in the in-flight snapshot instead of cloning complete processing models. **Skipped:** replacement deciders receive the full `InProcessingItem` interface, including source item, item variables, files, status, and failure metadata. Narrowing the snapshot would either break that interface or add a second near-duplicate model; use allocation profiling before accepting that maintenance cost.
 - [ ] Compute each SourceItem hash once and pass it through the processing pipeline.
 - [ ] Avoid repeated owned path, processor-name, and item-hash strings when persisting target-path metadata.
 - [ ] Skip downloader submission when an item has only inline-data files.
@@ -22,3 +22,4 @@ reason under **Decision log**.
 - Skipped items retain the existing implementation; the reason and evidence are recorded here.
 - Skipped merged-variable-tree changes: the existing `OnceLock` already removes repeated builds; a deeper expression-interface change is not justified without profiling evidence.
 - Skipped coordination-mutex changes: reducing the critical section safely requires a new revalidation protocol and concurrency regression tests; the current serialization preserves path ownership correctness.
+- Skipped in-flight snapshot narrowing: the replacement-decider interface exposes nearly the full stored model, so a smaller snapshot would not remain behaviorally equivalent without broader interface redesign.
