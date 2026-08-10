@@ -1934,22 +1934,34 @@ trait Process {
                 std::collections::hash_map::Entry::Occupied(_) => {}
             }
         }
+        let latest_contents = latest_contents
+            .into_values()
+            .map(|content| {
+                content
+                    .id
+                    .ok_or_else(|| {
+                        ProcessingError::non_retryable(
+                            "Persisted replacement content has no id",
+                        )
+                    })
+                    .map(|content_id| (content_id, content))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let content_ids =
+            latest_contents.iter().map(|(content_id, _)| *content_id).collect_vec();
+        let mut encoded_by_id = p
+            .processing_storage
+            .find_file_contents_by_ids(&content_ids)
+            .await
+            .map_err(|error| ProcessingError::non_retryable(error.message))?;
         let mut prior_by_hash = HashMap::with_capacity(latest_contents.len());
-        for content in latest_contents.into_values() {
-            let content_id = content.id.ok_or_else(|| {
-                ProcessingError::non_retryable("Persisted replacement content has no id")
+        for (content_id, content) in latest_contents {
+            let encoded_files = encoded_by_id.remove(&content_id).ok_or_else(|| {
+                ProcessingError::non_retryable(format!(
+                    "File contents not found for replacement content {}",
+                    content_id
+                ))
             })?;
-            let encoded_files = p
-                .processing_storage
-                .find_file_contents(content_id)
-                .await
-                .map_err(|error| ProcessingError::non_retryable(error.message))?
-                .ok_or_else(|| {
-                    ProcessingError::non_retryable(format!(
-                        "File contents not found for replacement content {}",
-                        content_id
-                    ))
-                })?;
             let key = content.item_hash.to_owned();
             prior_by_hash
                 .insert(key, (content, decode_files_from_compressed(&encoded_files)?));

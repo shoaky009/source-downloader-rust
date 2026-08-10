@@ -10,7 +10,7 @@ reason under **Decision log**.
 - [ ] Avoid rebuilding merged rename-variable JSON trees for repeated expression evaluation. **Skipped:** `RenameVariables::all_variables` already uses `OnceLock`, so each variable set is merged at most once. Avoiding that single materialization would require changing the compiled-expression interface and adds disproportionate complexity without benchmark evidence.
 - [x] Split save-path patterns once before checking overlong directory components.
 - [ ] Keep asynchronous storage and filesystem work outside the SourceProcessor coordination mutex. **Skipped:** the mutex protects the atomic sequence of existence checks, replacement decisions, path reservation, and in-flight registration. Moving I/O out requires an optimistic revalidation protocol; changing it without contention benchmarks and dedicated race tests risks duplicate downloads and incorrect replacement ownership.
-- [ ] Batch replacement file-content reads to remove serial storage round trips.
+- [x] Batch replacement file-content reads to remove serial storage round trips.
 - [ ] Store only replacement-relevant data in the in-flight snapshot instead of cloning complete processing models.
 - [ ] Compute each SourceItem hash once and pass it through the processing pipeline.
 - [ ] Avoid repeated owned path, processor-name, and item-hash strings when persisting target-path metadata.

@@ -388,6 +388,23 @@ impl ProcessingStorage for SeaProcessingStorage {
         if let Some(model) = model { Ok(Some(model.file_content)) } else { Ok(None) }
     }
 
+    async fn find_file_contents_by_ids(
+        &self,
+        content_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, Vec<u8>>, Error> {
+        item_file_content::Entity::find()
+            .filter(item_file_content::Column::Id.is_in(content_ids.iter().copied()))
+            .all(&self.db)
+            .await
+            .map(|models| {
+                models
+                    .into_iter()
+                    .map(|model| (model.id, model.file_content))
+                    .collect()
+            })
+            .map_err(|error| Error { message: error.to_string() })
+    }
+
     async fn find_processor_source_state(
         &self,
         processor_name: &str,

@@ -46,6 +46,19 @@ pub trait ProcessingStorage: Send + Sync {
     async fn find_file_contents(&self, content_id: i64)
     -> Result<Option<Vec<u8>>, Error>;
 
+    async fn find_file_contents_by_ids(
+        &self,
+        content_ids: &[i64],
+    ) -> Result<HashMap<i64, Vec<u8>>, Error> {
+        let mut contents = HashMap::with_capacity(content_ids.len());
+        for &content_id in content_ids {
+            if let Some(content) = self.find_file_contents(content_id).await? {
+                contents.insert(content_id, content);
+            }
+        }
+        Ok(contents)
+    }
+
     async fn find_processor_source_state(
         &self,
         processor_name: &str,
