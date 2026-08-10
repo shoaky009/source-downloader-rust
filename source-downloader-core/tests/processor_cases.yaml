@@ -30,3 +30,12 @@ sync_downloader_case:
           equals: FileConflict
         - pointer: "/files/1/status"
           equals: FileConflict
+
+flow_ctr_retry_then_ok: {}
+
+fetch_retry_exhausted:
+  expected-run-error: Mock retryable
+  assertions:
+    - select: "$[*]"
+      exact-count: 0
+      asserts: []

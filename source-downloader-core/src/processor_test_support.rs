@@ -504,11 +504,13 @@ pub mod test_support {
     //     ==========
 
     #[derive(Deserialize)]
+    #[serde(rename_all = "kebab-case")]
     pub struct Case {
-        // test case files to be created
+        #[serde(default)]
         pub files: Vec<CaseFile>,
-        // assertions to be applied on result json
+        #[serde(default)]
         pub assertions: Vec<Assertion>,
+        pub expected_run_error: Option<String>,
     }
     #[derive(Deserialize)]
     pub struct CaseFile {
@@ -525,6 +527,7 @@ pub mod test_support {
         #[serde(default)]
         // whether to allow empty result set
         pub allow_empty: bool,
+        pub exact_count: Option<usize>,
         // assertions to be applied on each selected node
         pub asserts: Vec<AssertExpr>,
     }

@@ -48,6 +48,15 @@ components:
         returning: Err
       - returning: Ok
         value: []
+  - name: fetch_retry_exhausted
+    type: mock
+    props:
+      fetch:
+      - returning: Err
+        opt:
+          once: false
+          return-once: false
+          retryable: true
   - name: metadata-smoke
     type: system-file
     props:
@@ -129,4 +138,17 @@ processors:
   downloader: mock:sync_downloader_case
   file-mover: mock:sync_downloader_case
   options:
+    retry-backoff: PT0S
+  category: test
+- name: fetch_retry_exhausted
+  enabled: true
+  save-path: test
+  triggers: []
+  source: mock:fetch_retry_exhausted
+  item-file-resolver: vfs
+  downloader: mock:sync_downloader_case
+  file-mover: mock:sync_downloader_case
+  options:
+    retry-attempts: 1
+    retry-backoff: PT0S
     download-options: {}
