@@ -138,7 +138,10 @@ async fn delete_content(
 async fn reprocess(
     State(ctx): State<Arc<ApplicationContext>>,
     Path(id): Path<i64>,
-) -> Result<(), AppError> {
+) -> Result<
+    Json<source_downloader_core::processor_run_manager::ProcessorRunSnapshot>,
+    AppError,
+> {
     let content = ctx
         .storage
         .find_content_by_id(id)
@@ -158,8 +161,10 @@ async fn reprocess(
                 "Processor {processor_name} not found or unavailable"
             ))
         })?;
-    processor.reprocess(content).await?;
-    Ok(())
+    let snapshot = ctx.core.run_manager.submit_reprocess(processor_name, async move {
+        processor.reprocess(content).await.map_err(|e| e.to_string())
+    });
+    Ok(Json(snapshot))
 }
 
 fn parse_processing_statuses(

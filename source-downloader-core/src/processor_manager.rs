@@ -18,12 +18,13 @@ use crate::process::rule::{
 use crate::process::variable::{
     AnyStrategy, SmartStrategy, VariableAggregation, VoteStrategy,
 };
+use crate::processor_run_manager::ProcessorRunManager;
 use crate::source_processor::{ProcessorOptions, SourceProcessor};
 use parking_lot::RwLock;
 use source_downloader_sdk::component::{
     ComponentError, ComponentId, ComponentRootType, FileContentFilter, FileTagger,
-    ItemContentFilter, ProcessListener, SdComponent, SourceFileFilter, SourceItemFilter,
-    Trimmer, VariableProvider, VariableReplacer,
+    ItemContentFilter, ProcessListener, ProcessTask, SdComponent, SourceFileFilter,
+    SourceItemFilter, Trimmer, VariableProvider, VariableReplacer,
 };
 use source_downloader_sdk::storage::ProcessingStorage;
 use std::collections::{HashMap, HashSet};
@@ -60,6 +61,8 @@ impl Drop for PreparedProcessor {
 pub struct ProcessorManager {
     component_manager: Arc<ComponentManager>,
     processing_storage: Arc<dyn ProcessingStorage>,
+    run_manager: Arc<ProcessorRunManager>,
+    managed_tasks: RwLock<HashMap<String, Arc<dyn ProcessTask>>>,
     processor_wrappers: RwLock<HashMap<String, Arc<ProcessorWrapper>>>,
 }
 
@@ -90,14 +93,16 @@ impl ProcessorManager {
     pub fn new(
         component_manager: Arc<ComponentManager>,
         processing_storage: Arc<dyn ProcessingStorage>,
+        run_manager: Arc<ProcessorRunManager>,
     ) -> Self {
         Self {
             component_manager,
             processing_storage,
+            run_manager,
+            managed_tasks: RwLock::new(HashMap::new()),
             processor_wrappers: RwLock::new(HashMap::new()),
         }
     }
-
     fn get_component_for_processor(
         &self,
         component_id: &ComponentId,
@@ -222,20 +227,20 @@ impl ProcessorManager {
     ) -> Option<Arc<ProcessorWrapper>> {
         prepared.activated = true;
         let name = prepared.config.name.clone();
-        if let Some(processor) = &prepared.wrapper.processor {
-            processor.start_rename_task();
-        }
         let old = self
             .processor_wrappers
             .write()
             .insert(name.clone(), prepared.wrapper.clone());
-        if prepared.wrapper.processor.is_some() {
-            self.register_task(&prepared.config, prepared.wrapper.clone());
-        } else {
-            self.component_manager.remove_processor_refs(&name);
-        }
         if let Some(old_wrapper) = old.as_ref() {
             self.detach_and_close(old_wrapper);
+        }
+        if let Some(processor) = &prepared.wrapper.processor {
+            let task = self.run_manager.managed_task(processor.clone());
+            self.register_task(&prepared.config, task.clone());
+            self.managed_tasks.write().insert(name.clone(), task);
+            self.run_manager.start_auto_rename(processor.clone());
+        } else {
+            self.component_manager.remove_processor_refs(&name);
         }
         old
     }
@@ -260,16 +265,11 @@ impl ProcessorManager {
         };
         self.activate_processor(prepared);
     }
-    fn register_task(
-        &self,
-        config: &ProcessorConfig,
-        processor_wrapper: Arc<ProcessorWrapper>,
-    ) {
-        let processor_task = processor_wrapper.processor.as_ref().unwrap();
-        for component_ref in config.triggers.iter() {
-            let id = &ComponentRootType::Trigger.parse_component_id(component_ref);
-            let component = match self.get_component_for_processor(id, &config.name) {
-                Ok(component) => component,
+    fn register_task(&self, config: &ProcessorConfig, task: Arc<dyn ProcessTask>) {
+        for component_ref in &config.triggers {
+            let id = ComponentRootType::Trigger.parse_component_id(component_ref);
+            let component = match self.get_component_for_processor(&id, &config.name) {
+                Ok(c) => c,
                 Err(error) => {
                     warn!(
                         "Processor[invalid-trigger] {} -> {}: {}",
@@ -279,22 +279,25 @@ impl ProcessorManager {
                 }
             };
             match component.as_trigger() {
-                Ok(x) => {
-                    x.add_task(processor_task.clone());
+                Ok(trigger) => {
+                    trigger.add_task(task.clone());
                     info!("Processor[task-added] {} {}", config.name, component_ref);
                 }
-                Err(e) => error!(
+                Err(error) => error!(
                     "Processor[trigger-type-error] {} -> {}: {}",
-                    config.name, component_ref, e
+                    config.name, component_ref, error
                 ),
             }
         }
     }
     fn detach_and_close(&self, wrapper: &ProcessorWrapper) {
         let Some(processor) = &wrapper.processor else { return };
-        for trigger in self.component_manager.get_all_trigger() {
-            trigger.remove_task(processor.clone());
+        if let Some(task) = self.managed_tasks.write().remove(&wrapper.name) {
+            for trigger in self.component_manager.get_all_trigger() {
+                trigger.remove_task(task.clone());
+            }
         }
+        self.run_manager.stop_auto_rename(&wrapper.name);
         processor.close();
     }
 
@@ -654,16 +657,10 @@ impl ProcessorManager {
         let Some(wrapper) = removed else { return };
         debug!("ProcessorWp[on-destroy-arc] {}", Arc::strong_count(&wrapper));
         self.component_manager.remove_processor_refs(name);
-        let Some(processor) = &wrapper.processor else {
-            return;
-        };
-        let triggers = self.component_manager.get_all_trigger();
-        for trigger in triggers {
-            let task = processor.clone();
-            trigger.remove_task(task);
+        self.detach_and_close(&wrapper);
+        if let Some(processor) = &wrapper.processor {
+            debug!("Processor[on-destroy-arc] {}", Arc::strong_count(processor));
         }
-        processor.close();
-        debug!("Processor[on-destroy-arc] {}", Arc::strong_count(processor));
     }
 
     pub fn get_all_processor_names(&self) -> HashSet<String> {
@@ -1010,6 +1007,7 @@ mod test {
         VariableReplacerConfig, YamlConfigOperator,
     };
     use crate::processor_manager::ProcessorManager;
+    use crate::processor_run_manager::ProcessorRunManager;
     use source_downloader_sdk::component::{ComponentError, ComponentRootType};
     use std::collections::HashSet;
     use std::sync::Arc;
@@ -1025,6 +1023,7 @@ mod test {
         let manager = ProcessorManager::new(
             component_manager.clone(),
             Arc::new(MemoryProcessingStorage::new()),
+            Arc::new(ProcessorRunManager::default()),
         );
         let name = "normal-case";
         manager.create_processor(&ProcessorConfig {
@@ -1083,6 +1082,7 @@ mod test {
         let manager = ProcessorManager::new(
             component_manager.clone(),
             Arc::new(MemoryProcessingStorage::new()),
+            Arc::new(ProcessorRunManager::default()),
         );
 
         let name = "normal-case";
@@ -1148,6 +1148,7 @@ mod test {
         let manager = ProcessorManager::new(
             component_manager,
             Arc::new(MemoryProcessingStorage::new()),
+            Arc::new(ProcessorRunManager::default()),
         );
         let options = ProcessorOptionConfig {
             file_content_expression_exclusions: vec![
@@ -1202,6 +1203,7 @@ mod test {
                 "./tests/resources/config.yaml",
             )))),
             Arc::new(MemoryProcessingStorage::new()),
+            Arc::new(ProcessorRunManager::default()),
         );
         let options = ProcessorOptionConfig {
             file_grouping: vec![FileRuleConfig {
@@ -1252,6 +1254,7 @@ mod test {
         let manager = ProcessorManager::new(
             component_manager.clone(),
             Arc::new(MemoryProcessingStorage::new()),
+            Arc::new(ProcessorRunManager::default()),
         );
         let name = "variable-replacer-wiring";
         let config = ProcessorConfig {

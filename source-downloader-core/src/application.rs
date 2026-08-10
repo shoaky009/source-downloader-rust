@@ -7,6 +7,7 @@ use crate::config::ConfigOperator;
 use crate::instance_manager::InstanceManager;
 use crate::plugin::PluginManager;
 use crate::processor_manager::ProcessorManager;
+use crate::processor_run_manager::ProcessorRunManager;
 use source_downloader_sdk::plugin::PluginContext;
 use std::any::Any;
 use std::collections::HashSet;
@@ -19,6 +20,7 @@ pub struct CoreApplication {
     pub component_manager: Arc<ComponentManager>,
     pub instance_manager: Arc<InstanceManager>,
     pub processor_manager: Arc<ProcessorManager>,
+    pub run_manager: Arc<ProcessorRunManager>,
     pub plugin_manager: PluginManager,
     pub data_location: Box<Path>,
     pub plugin_location: Option<Box<Path>>,

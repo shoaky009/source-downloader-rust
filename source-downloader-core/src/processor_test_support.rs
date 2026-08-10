@@ -71,7 +71,11 @@ pub mod test_support {
 
     pub async fn processor_manager() -> &'static ProcessorManager {
         _PM.get_or_init(|| async {
-            ProcessorManager::new(component_manager().clone(), storage().await.clone())
+            ProcessorManager::new(
+                component_manager().clone(),
+                storage().await.clone(),
+                Arc::new(crate::processor_run_manager::ProcessorRunManager::default()),
+            )
         })
         .await
     }

@@ -1096,6 +1096,10 @@ impl SourceProcessor {
         Ok(ProcessorContentDeletion { processing_content, target_path })
     }
 
+    pub(crate) fn automatic_rename_interval(&self) -> Option<Duration> {
+        self.async_downloader.as_ref().map(|_| self.options.rename_task_interval)
+    }
+
     pub fn start_rename_task(self: &Arc<Self>) {
         if self.async_downloader.is_none() {
             return;

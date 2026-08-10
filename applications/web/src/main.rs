@@ -99,15 +99,20 @@ fn create_core_application(
         Arc::new(CorePluginContext { data_location: config.data_location.clone() });
 
     let plugin_manager = PluginManager::new(plugin_ctx);
+    let run_manager = Arc::new(
+        source_downloader_core::processor_run_manager::ProcessorRunManager::default(),
+    );
     let processor_manager = Arc::new(ProcessorManager::new(
         component_manager.clone(),
         processing_storage.clone(),
+        run_manager.clone(),
     ));
     CoreApplication {
         config_operator,
         component_manager,
         instance_manager,
         processor_manager,
+        run_manager,
         plugin_manager,
         data_location: config.data_location.clone(),
         plugin_location: config.plugin_location.clone(),

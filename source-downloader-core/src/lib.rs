@@ -8,5 +8,6 @@ pub mod instance_manager;
 pub mod plugin;
 mod process;
 pub mod processor_manager;
+pub mod processor_run_manager;
 mod processor_test_support;
 pub mod source_processor;

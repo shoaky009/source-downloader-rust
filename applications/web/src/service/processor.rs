@@ -4,7 +4,10 @@ use crate::service::processing::ProcessingContentDetail;
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
-use axum::response::Response;
+use axum::response::{
+    Response,
+    sse::{Event, KeepAlive, Sse},
+};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use futures_util::StreamExt;
@@ -13,6 +16,7 @@ use source_downloader_core::application::CoreApplication;
 use source_downloader_core::compatibility::ProcessorCompatibilityReport;
 use source_downloader_core::config::ProcessorConfig;
 use source_downloader_core::processor_manager::ProcessorWrapper;
+use source_downloader_core::processor_run_manager::ProcessorRunSnapshot;
 #[cfg(test)]
 use source_downloader_core::source_processor::DryRunErrorKind;
 use source_downloader_core::source_processor::{
@@ -26,7 +30,6 @@ use source_downloader_sdk::storage::ProcessorSourceState;
 use source_downloader_sdk::time::{OffsetDateTime, UtcDateTime};
 use std::collections::HashSet;
 use std::sync::Arc;
-use tracing::warn;
 
 pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
     Router::new()
@@ -38,6 +41,9 @@ pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
                     "/{name}",
                     get(get_processor).put(update_processor).delete(delete_processor),
                 )
+                .route("/runs", get(list_runs))
+                .route("/runs/events", get(run_events))
+                .route("/runs/{id}", get(get_run).delete(cancel_run))
                 .route("/", get(query_processors).post(create_processor))
                 .route("/{name}/reload", post(reload_processor))
                 .route("/{name}/dry-run", get(dry_run).post(dry_run))
@@ -50,6 +56,42 @@ pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
                 .route("/{name}/contents", delete(delete_contents)),
         )
         .with_state(ctx.core.clone())
+}
+async fn list_runs(
+    State(core): State<Arc<CoreApplication>>,
+) -> Json<Vec<ProcessorRunSnapshot>> {
+    Json(core.run_manager.list())
+}
+async fn get_run(
+    State(core): State<Arc<CoreApplication>>,
+    Path(id): Path<u64>,
+) -> Result<Json<ProcessorRunSnapshot>, AppError> {
+    core.run_manager
+        .get(id)
+        .map(Json)
+        .ok_or_else(|| AppError::NotFound("Run not found".to_owned()))
+}
+async fn cancel_run(
+    State(core): State<Arc<CoreApplication>>,
+    Path(id): Path<u64>,
+) -> Result<StatusCode, AppError> {
+    if core.run_manager.cancel(id) {
+        Ok(StatusCode::ACCEPTED)
+    } else {
+        Err(AppError::NotFound("Run not found or already terminal".to_owned()))
+    }
+}
+async fn run_events(
+    State(core): State<Arc<CoreApplication>>,
+) -> Sse<impl futures_util::Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let rx = core.run_manager.subscribe();
+    let stream = futures_util::stream::unfold(rx, |mut rx| async move {
+        match rx.recv().await {
+            Ok(event) => Some((Ok(Event::default().json_data(event).unwrap()), rx)),
+            Err(_) => None,
+        }
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 fn require_processor(
@@ -217,19 +259,22 @@ async fn reload_processor(
     core.processor_manager.activate_processor(prepared);
     Ok(StatusCode::NO_CONTENT)
 }
-
 #[axum::debug_handler]
 async fn trigger_processor(
     State(core): State<Arc<CoreApplication>>,
     Path(name): Path<String>,
-) -> Result<StatusCode, AppError> {
+) -> Result<Json<ProcessorRunSnapshot>, AppError> {
     let processor = require_processor(&core, &name)?;
-    tokio::spawn(async move {
-        if let Err(error) = processor.run().await {
-            warn!("Processor[manual-trigger-error] {} {}", processor.name, error);
-        }
-    });
-    Ok(StatusCode::ACCEPTED)
+    Ok(Json(core.run_manager.submit_full(name, async move {
+        processor.run().await.map_err(|e| e.to_string())
+    })))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CollectedDryRunResponse {
+    run: ProcessorRunSnapshot,
+    events: Vec<DryRunEventResponse>,
 }
 
 #[axum::debug_handler]
@@ -237,12 +282,19 @@ async fn dry_run(
     State(core): State<Arc<CoreApplication>>,
     Path(name): Path<String>,
     options: Option<Json<DryRunOptions>>,
-) -> Result<Json<Vec<DryRunEventResponse>>, AppError> {
+) -> Result<Json<CollectedDryRunResponse>, AppError> {
     let processor = require_processor(&core, &name)?;
-    let options = options.map(|Json(options)| options).unwrap_or_default();
-    let events =
-        processor.dry_run(options.into()).await.into_iter().map(Into::into).collect();
-    Ok(Json(events))
+    let options = options.map(|Json(o)| o).unwrap_or_default();
+    let (run, rx) = core.run_manager.submit_dry_run_collected(name, async move {
+        Ok(processor.dry_run(options.into()).await)
+    });
+    let events = rx
+        .await
+        .map_err(|_| AppError::InternalError("dry-run cancelled".to_owned()))?
+        .into_iter()
+        .map(Into::into)
+        .collect();
+    Ok(Json(CollectedDryRunResponse { run, events }))
 }
 
 #[axum::debug_handler]
@@ -252,17 +304,36 @@ async fn dry_run_stream(
     options: Option<Json<DryRunOptions>>,
 ) -> Result<Response<Body>, AppError> {
     let processor = require_processor(&core, &name)?;
-    let options = options.map(|Json(options)| options).unwrap_or_default();
-    let stream = processor.dry_run_stream(options.into()).map(|event| {
-        let event = DryRunEventResponse::from(event);
-        let mut line = source_downloader_sdk::serde_json::to_vec(&event)
-            .map_err(std::io::Error::other)?;
-        line.push(b'\n');
-        Ok::<_, std::io::Error>(Bytes::from(line))
+    let options = options.map(|Json(o)| o).unwrap_or_default();
+    let (run, rx) = core.run_manager.submit_dry_run_streamed(name, async move {
+        let (tx, out) = tokio::sync::mpsc::channel(32);
+        tokio::spawn(async move {
+            let mut stream = Box::pin(processor.dry_run_stream(options.into()));
+            while let Some(event) = stream.next().await {
+                if tx.send(event).await.is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(out)
+    });
+    let body = futures_util::stream::unfold(rx, |mut rx| async move {
+        rx.recv().await.map(|event| {
+            let result = source_downloader_sdk::serde_json::to_vec(
+                &DryRunEventResponse::from(event),
+            )
+            .map(|mut line| {
+                line.push(b'\n');
+                Bytes::from(line)
+            })
+            .map_err(std::io::Error::other);
+            (result, rx)
+        })
     });
     Response::builder()
         .header(header::CONTENT_TYPE, "application/x-ndjson")
-        .body(Body::from_stream(stream))
+        .header("x-run-id", run.id.to_string())
+        .body(Body::from_stream(body))
         .map_err(|error| AppError::InternalError(error.to_string()))
 }
 
@@ -270,9 +341,11 @@ async fn dry_run_stream(
 async fn trigger_rename(
     State(core): State<Arc<CoreApplication>>,
     Path(name): Path<String>,
-) -> Result<StatusCode, AppError> {
-    require_processor(&core, &name)?.run_rename().await?;
-    Ok(StatusCode::ACCEPTED)
+) -> Result<Json<ProcessorRunSnapshot>, AppError> {
+    let processor = require_processor(&core, &name)?;
+    Ok(Json(core.run_manager.submit_rename(name, async move {
+        processor.run_rename().await.map(|_| ()).map_err(|e| e.to_string())
+    })))
 }
 
 #[axum::debug_handler]
@@ -280,9 +353,11 @@ async fn post_items(
     State(core): State<Arc<CoreApplication>>,
     Path(name): Path<String>,
     Json(items): Json<Vec<SourceItem>>,
-) -> Result<StatusCode, AppError> {
-    require_processor(&core, &name)?.run_items(items).await?;
-    Ok(StatusCode::ACCEPTED)
+) -> Result<Json<ProcessorRunSnapshot>, AppError> {
+    let processor = require_processor(&core, &name)?;
+    Ok(Json(core.run_manager.submit_items(name, async move {
+        processor.run_items(items).await.map_err(|e| e.to_string())
+    })))
 }
 
 #[axum::debug_handler]
