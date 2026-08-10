@@ -13,7 +13,7 @@ reason under **Decision log**.
 - [x] Batch replacement file-content reads to remove serial storage round trips.
 - [ ] Store only replacement-relevant data in the in-flight snapshot instead of cloning complete processing models. **Skipped:** replacement deciders receive the full `InProcessingItem` interface, including source item, item variables, files, status, and failure metadata. Narrowing the snapshot would either break that interface or add a second near-duplicate model; use allocation profiling before accepting that maintenance cost.
 - [x] Compute each SourceItem hash once and pass it through the processing pipeline.
-- [ ] Avoid repeated owned path, processor-name, and item-hash strings when persisting target-path metadata.
+- [ ] Avoid repeated owned path, processor-name, and item-hash strings when persisting target-path metadata. **Skipped:** `ProcessingTargetPath` intentionally owns all three fields and the storage call crosses an async seam. Removing the per-row processor/hash copies requires changing the shared storage model or normalizing persistence; `Arc<str>` would only move atomic-reference overhead into every adapter. No change without evidence that items commonly contain enough files for this metadata to matter.
 - [ ] Skip downloader submission when an item has only inline-data files.
 
 ## Decision log
@@ -23,3 +23,4 @@ reason under **Decision log**.
 - Skipped merged-variable-tree changes: the existing `OnceLock` already removes repeated builds; a deeper expression-interface change is not justified without profiling evidence.
 - Skipped coordination-mutex changes: reducing the critical section safely requires a new revalidation protocol and concurrency regression tests; the current serialization preserves path ownership correctness.
 - Skipped in-flight snapshot narrowing: the replacement-decider interface exposes nearly the full stored model, so a smaller snapshot would not remain behaviorally equivalent without broader interface redesign.
+- Skipped target-path metadata ownership changes: the shared async storage model requires owned rows; avoiding these strings needs a broader data-model change rather than a local optimization.
