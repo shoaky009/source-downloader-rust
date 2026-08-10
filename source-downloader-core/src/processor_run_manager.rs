@@ -4,7 +4,6 @@ use parking_lot::Mutex;
 use serde::Serialize;
 use source_downloader_sdk::component::ProcessTask;
 use source_downloader_sdk::time::OffsetDateTime;
-use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::{
     Arc,
@@ -79,7 +78,6 @@ struct Entry {
 }
 struct State {
     active: std::collections::HashMap<u64, Entry>,
-    history: VecDeque<ProcessorRunSnapshot>,
     automatic_rename_tasks: std::collections::HashMap<String, tokio::task::AbortHandle>,
 }
 #[derive(Clone)]
@@ -87,25 +85,22 @@ pub struct ProcessorRunManager {
     next_id: Arc<AtomicU64>,
     state: Arc<Mutex<State>>,
     events: broadcast::Sender<ProcessorRunEvent>,
-    history_limit: usize,
 }
 impl Default for ProcessorRunManager {
     fn default() -> Self {
-        Self::new(256)
+        Self::new()
     }
 }
 impl ProcessorRunManager {
-    pub fn new(history_limit: usize) -> Self {
+    pub fn new() -> Self {
         let (events, _) = broadcast::channel(256);
         Self {
             next_id: Arc::new(AtomicU64::new(1)),
             state: Arc::new(Mutex::new(State {
                 active: Default::default(),
-                history: VecDeque::new(),
                 automatic_rename_tasks: Default::default(),
             })),
             events,
-            history_limit: history_limit.max(1),
         }
     }
     pub fn subscribe(&self) -> broadcast::Receiver<ProcessorRunEvent> {
@@ -113,17 +108,13 @@ impl ProcessorRunManager {
     }
     pub fn list(&self) -> Vec<ProcessorRunSnapshot> {
         let s = self.state.lock();
-        let mut v = s.history.iter().cloned().collect::<Vec<_>>();
-        v.extend(s.active.values().map(|e| e.snapshot.clone()));
-        v.sort_by_key(|r| r.id);
-        v
+        let mut runs =
+            s.active.values().map(|entry| entry.snapshot.clone()).collect::<Vec<_>>();
+        runs.sort_by_key(|run| run.id);
+        runs
     }
     pub fn get(&self, id: u64) -> Option<ProcessorRunSnapshot> {
-        let s = self.state.lock();
-        s.active
-            .get(&id)
-            .map(|e| e.snapshot.clone())
-            .or_else(|| s.history.iter().find(|r| r.id == id).cloned())
+        self.state.lock().active.get(&id).map(|entry| entry.snapshot.clone())
     }
     pub fn cancel(&self, id: u64) -> bool {
         let a = { self.state.lock().active.get(&id).and_then(|e| e.abort.clone()) };
@@ -164,29 +155,15 @@ impl ProcessorRunManager {
         let _ = self.events.send(ProcessorRunEvent::Updated(r));
     }
     fn finish(&self, id: u64, status: ProcessorRunStatus, failure: Option<String>) {
-        let r = {
-            let mut s = self.state.lock();
-            let Some(mut e) = s.active.remove(&id) else { return };
-            if matches!(
-                e.snapshot.status,
-                ProcessorRunStatus::Succeeded
-                    | ProcessorRunStatus::Failed
-                    | ProcessorRunStatus::Cancelled
-            ) {
-                s.active.insert(id, e);
-                return;
-            }
-            e.snapshot.status = status;
-            e.snapshot.failure = failure;
-            e.snapshot.finished_at = Some(OffsetDateTime::now_utc());
-            let r = e.snapshot;
-            s.history.push_back(r.clone());
-            while s.history.len() > self.history_limit {
-                s.history.pop_front();
-            }
-            r
+        let run = {
+            let mut state = self.state.lock();
+            let Some(mut entry) = state.active.remove(&id) else { return };
+            entry.snapshot.status = status;
+            entry.snapshot.failure = failure;
+            entry.snapshot.finished_at = Some(OffsetDateTime::now_utc());
+            entry.snapshot
         };
-        let _ = self.events.send(ProcessorRunEvent::Updated(r));
+        let _ = self.events.send(ProcessorRunEvent::Updated(run));
     }
     pub fn submit<F>(
         &self,
@@ -381,47 +358,60 @@ impl ProcessorRunManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{ProcessorRunKind, ProcessorRunManager, ProcessorRunStatus};
+    use super::{
+        ProcessorRunEvent, ProcessorRunKind, ProcessorRunManager, ProcessorRunStatus,
+    };
     use std::sync::Arc;
     use tokio::sync::Notify;
 
-    async fn wait_for_status(
-        manager: &ProcessorRunManager,
-        id: u64,
-        status: ProcessorRunStatus,
-    ) {
+    async fn wait_until_removed(manager: &ProcessorRunManager, id: u64) {
         tokio::time::timeout(std::time::Duration::from_secs(1), async {
-            loop {
-                if manager.get(id).is_some_and(|run| run.status == status) {
-                    return;
-                }
+            while manager.get(id).is_some() {
                 tokio::task::yield_now().await;
             }
         })
         .await
-        .expect("run status transition timed out");
+        .expect("completed run was not removed");
     }
 
     #[tokio::test]
-    async fn records_success_and_failure_lifecycle() {
-        let manager = ProcessorRunManager::new(4);
+    async fn completed_runs_emit_terminal_events_then_are_removed() {
+        let manager = ProcessorRunManager::new();
+        let mut events = manager.subscribe();
         let successful = manager.submit_full("processor", async { Ok(()) });
         let failed =
             manager.submit_items("processor", async { Err("failed".to_owned()) });
 
-        wait_for_status(&manager, successful.id, ProcessorRunStatus::Succeeded).await;
-        wait_for_status(&manager, failed.id, ProcessorRunStatus::Failed).await;
+        let mut terminal_events = Vec::new();
+        while terminal_events.len() < 2 {
+            if let ProcessorRunEvent::Updated(run) = events.recv().await.unwrap()
+                && matches!(
+                    run.status,
+                    ProcessorRunStatus::Succeeded | ProcessorRunStatus::Failed
+                )
+            {
+                terminal_events.push(run);
+            }
+        }
 
-        let successful = manager.get(successful.id).unwrap();
-        assert_eq!(successful.kind, ProcessorRunKind::ManualFull);
-        assert!(successful.started_at.is_some());
-        assert!(successful.finished_at.is_some());
-        assert_eq!(manager.get(failed.id).unwrap().failure.as_deref(), Some("failed"));
+        assert_eq!(terminal_events[0].kind, ProcessorRunKind::ManualFull);
+        assert!(terminal_events.iter().all(|run| run.started_at.is_some()));
+        assert!(terminal_events.iter().all(|run| run.finished_at.is_some()));
+        assert_eq!(
+            terminal_events
+                .iter()
+                .find(|run| run.id == failed.id)
+                .and_then(|run| run.failure.as_deref()),
+            Some("failed")
+        );
+        assert!(manager.get(successful.id).is_none());
+        assert!(manager.get(failed.id).is_none());
+        assert!(manager.list().is_empty());
     }
 
     #[tokio::test]
-    async fn cancellation_aborts_running_task() {
-        let manager = ProcessorRunManager::new(4);
+    async fn cancellation_aborts_and_removes_running_task() {
+        let manager = ProcessorRunManager::new();
         let started = Arc::new(Notify::new());
         let task_started = started.clone();
         let run = manager.submit_reprocess("processor", async move {
@@ -431,27 +421,29 @@ mod tests {
         started.notified().await;
 
         assert!(manager.cancel(run.id));
-        wait_for_status(&manager, run.id, ProcessorRunStatus::Cancelled).await;
+        assert!(manager.get(run.id).is_none());
         assert!(!manager.cancel(run.id));
     }
 
     #[tokio::test]
-    async fn completed_history_is_bounded() {
-        let manager = ProcessorRunManager::new(2);
-        let first = manager.submit_full("processor", async { Ok(()) });
-        wait_for_status(&manager, first.id, ProcessorRunStatus::Succeeded).await;
-        let second = manager.submit_full("processor", async { Ok(()) });
-        wait_for_status(&manager, second.id, ProcessorRunStatus::Succeeded).await;
-        let third = manager.submit_full("processor", async { Ok(()) });
-        wait_for_status(&manager, third.id, ProcessorRunStatus::Succeeded).await;
+    async fn list_contains_only_active_runs() {
+        let manager = ProcessorRunManager::new();
+        let release = Arc::new(Notify::new());
+        let task_release = release.clone();
+        let run = manager.submit_full("processor", async move {
+            task_release.notified().await;
+            Ok(())
+        });
 
-        assert!(manager.get(first.id).is_none());
-        assert_eq!(manager.list().len(), 2);
+        assert_eq!(manager.list().iter().map(|run| run.id).collect::<Vec<_>>(), [run.id]);
+        release.notify_one();
+        wait_until_removed(&manager, run.id).await;
+        assert!(manager.list().is_empty());
     }
 
     #[tokio::test]
-    async fn automatic_and_dry_runs_reach_terminal_status() {
-        let manager = ProcessorRunManager::new(4);
+    async fn automatic_and_dry_runs_are_removed_after_completion() {
+        let manager = ProcessorRunManager::new();
         let automatic = manager.submit_automatic("processor", async { Ok(()) });
         let (collected, collected_events) =
             manager.submit_dry_run_collected("processor", async { Ok(Vec::new()) });
@@ -462,19 +454,13 @@ mod tests {
                 Ok(receiver)
             });
 
+        assert_eq!(automatic.kind, ProcessorRunKind::Automatic);
+        assert_eq!(collected.kind, ProcessorRunKind::DryRunCollected);
+        assert_eq!(streamed.kind, ProcessorRunKind::DryRunStreamed);
         assert!(collected_events.await.unwrap().is_empty());
         assert!(streamed_events.recv().await.is_none());
-        wait_for_status(&manager, automatic.id, ProcessorRunStatus::Succeeded).await;
-        wait_for_status(&manager, collected.id, ProcessorRunStatus::Succeeded).await;
-        wait_for_status(&manager, streamed.id, ProcessorRunStatus::Succeeded).await;
-        assert_eq!(manager.get(automatic.id).unwrap().kind, ProcessorRunKind::Automatic);
-        assert_eq!(
-            manager.get(collected.id).unwrap().kind,
-            ProcessorRunKind::DryRunCollected
-        );
-        assert_eq!(
-            manager.get(streamed.id).unwrap().kind,
-            ProcessorRunKind::DryRunStreamed
-        );
+        wait_until_removed(&manager, automatic.id).await;
+        wait_until_removed(&manager, collected.id).await;
+        wait_until_removed(&manager, streamed.id).await;
     }
 }
