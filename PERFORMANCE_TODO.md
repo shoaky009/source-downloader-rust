@@ -8,7 +8,7 @@ reason under **Decision log**.
 - [x] Borrow JSON values while resolving variable-process-chain inputs instead of cloning the complete variable tree for every chain.
 - [x] Reuse each file's computed download path throughout one rename operation.
 - [ ] Avoid rebuilding merged rename-variable JSON trees for repeated expression evaluation. **Skipped:** `RenameVariables::all_variables` already uses `OnceLock`, so each variable set is merged at most once. Avoiding that single materialization would require changing the compiled-expression interface and adds disproportionate complexity without benchmark evidence.
-- [ ] Split save-path patterns once before checking overlong directory components.
+- [x] Split save-path patterns once before checking overlong directory components.
 - [ ] Keep asynchronous storage and filesystem work outside the SourceProcessor coordination mutex.
 - [ ] Batch replacement file-content reads to remove serial storage round trips.
 - [ ] Store only replacement-relevant data in the in-flight snapshot instead of cloning complete processing models.

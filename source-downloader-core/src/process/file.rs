@@ -355,13 +355,12 @@ impl Renamer {
                 .unwrap_or(Path::new(""));
             let mut current_trim_vars = variables.trim_variables.clone();
             let mut needs_recalc_dir = false;
+            let pattern_segments: Vec<_> = file.save_path_pattern.pattern.split('/').collect();
 
             for (index, component) in rel_path.components().enumerate() {
                 let segment_name = component.as_os_str().to_str().unwrap_or("");
                 if segment_name.len() > self.path_name_length_limit {
-                    let segments =
-                        file.save_path_pattern.pattern.split("/").collect::<Vec<_>>();
-                    if let Some(pattern_part) = segments.get(index) {
+                    if let Some(pattern_part) = pattern_segments.get(index) {
                         self.execute_trim(
                             pattern_part,
                             segment_name,
