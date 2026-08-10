@@ -2669,7 +2669,7 @@ trait Process {
                 source_file: x,
             };
             let content =
-                p.renamer.create_file_content(source_item, raw, &item_var).await;
+                p.renamer.create_file_content(source_item, raw, &item_var).await?;
 
             // <editor-fold desc="Stage using FileContentFilter">
             let file_content_filters = file_strategy

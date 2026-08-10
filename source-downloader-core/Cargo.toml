@@ -30,6 +30,7 @@ zstd = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true, features = ["rustls", "system-proxy", "stream"] }
 itertools = { workspace = true }
+fastmurmur3 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

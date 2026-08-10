@@ -385,6 +385,7 @@ impl ProcessorManager {
             variable_replacers,
             trimming,
             path_name_length_limit: config.options.path_name_length_limit,
+            path_overflow_strategy: config.options.path_overflow_strategy,
             variable_process_chain,
         })
     }

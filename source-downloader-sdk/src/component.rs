@@ -642,6 +642,9 @@ pub trait VariableReplacer: SdComponent {
     fn replace(&self, key: &str, value: String) -> String;
 }
 
+/// Reduces a configured variable before path rendering, typically using domain-specific
+/// rules. Implementations do not guarantee that the final rendered path satisfies file
+/// system length limits; the path overflow strategy enforces that separate constraint.
 pub trait Trimmer: SdComponent {
     fn trim(&self, value: String, expect_size: usize) -> String;
 }

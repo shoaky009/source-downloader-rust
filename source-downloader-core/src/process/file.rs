@@ -66,6 +66,7 @@ pub struct Renamer {
     pub variable_process_chain: Vec<VariableProcessChain>,
     pub trimming: HashMap<String, Vec<Arc<dyn Trimmer>>>,
     pub path_name_length_limit: usize,
+    pub path_overflow_strategy: PathOverflowStrategy,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -76,6 +77,15 @@ pub enum VariableErrorStrategy {
     #[default]
     Stay,
     ToUnresolved,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PathOverflowStrategy {
+    Error,
+    Truncate,
+    #[default]
+    TruncateWithHash,
 }
 
 #[derive(Clone, Default)]
@@ -210,6 +220,7 @@ impl Default for Renamer {
             variable_process_chain: vec![],
             trimming: HashMap::new(),
             path_name_length_limit: 255,
+            path_overflow_strategy: PathOverflowStrategy::default(),
         }
     }
 }
@@ -279,7 +290,7 @@ impl Renamer {
         source_item: &SourceItem,
         file: RawFileContent<'_>,
         extra_variables: &RenameVariables,
-    ) -> FileContent {
+    ) -> Result<FileContent, source_downloader_sdk::component::ProcessingError> {
         let mut variables =
             self.file_rename_variables(source_item, &file, extra_variables).await;
         let mut dir_result = self.save_directory_path(&file, &variables);
@@ -301,7 +312,7 @@ impl Renamer {
             let target_save_path =
                 file_download_path.parent().unwrap_or(Path::new("")).to_path_buf();
             let SourceFile { tags, attrs, download_uri, data, .. } = file.source_file;
-            return FileContent {
+            return self.constrain_file_content(FileContent {
                 download_path: file.download_path.to_owned(),
                 file_download_path,
                 source_save_path: file.save_path.to_owned(),
@@ -319,7 +330,7 @@ impl Renamer {
                 target_path: OnceLock::new(),
                 data,
                 processed_variables: Some(variables.processed_variables),
-            };
+            });
         }
         if !self.trimming.is_empty() {
             // 校验文件名长度 (UTF-8 bytes)
@@ -366,7 +377,7 @@ impl Renamer {
 
         let file_download_path = file.file_download_path();
         let SourceFile { tags, attrs, download_uri, data, .. } = file.source_file;
-        FileContent {
+        self.constrain_file_content(FileContent {
             download_path: file.download_path.to_owned(),
             file_download_path,
             source_save_path: file.save_path.to_owned(),
@@ -384,7 +395,84 @@ impl Renamer {
             target_path: OnceLock::new(),
             data,
             processed_variables: Some(variables.processed_variables),
+        })
+    }
+
+    fn constrain_file_content(
+        &self,
+        mut content: FileContent,
+    ) -> Result<FileContent, source_downloader_sdk::component::ProcessingError> {
+        content.target_filename =
+            self.constrain_component(&content.target_filename, true)?;
+        let (root, relative) = if let Ok(relative) =
+            content.target_save_path.strip_prefix(&content.source_save_path)
+        {
+            (&content.source_save_path, relative)
+        } else if let Ok(relative) =
+            content.target_save_path.strip_prefix(&content.download_path)
+        {
+            (&content.download_path, relative)
+        } else {
+            return Ok(content);
+        };
+        let mut target_save_path = root.clone();
+        for component in relative.components() {
+            let value = component.as_os_str().to_string_lossy();
+            target_save_path.push(self.constrain_component(&value, false)?);
         }
+        content.target_save_path = target_save_path;
+        Ok(content)
+    }
+
+    fn constrain_component(
+        &self,
+        component: &str,
+        preserve_extension: bool,
+    ) -> Result<String, source_downloader_sdk::component::ProcessingError> {
+        let limit = self.path_name_length_limit;
+        if component.len() <= limit {
+            return Ok(component.to_owned());
+        }
+        if self.path_overflow_strategy == PathOverflowStrategy::Error {
+            return Err(
+                source_downloader_sdk::component::ProcessingError::non_retryable(
+                    format!("Path component exceeds {limit} bytes: {component}"),
+                ),
+            );
+        }
+
+        let extension = preserve_extension
+            .then(|| Path::new(component).extension().and_then(|value| value.to_str()))
+            .flatten()
+            .map(|value| format!(".{value}"))
+            .unwrap_or_default();
+        let suffix = match self.path_overflow_strategy {
+            PathOverflowStrategy::TruncateWithHash => {
+                let hash = fastmurmur3::hash(component.as_bytes()).swap_bytes();
+                format!("~{:08x}{extension}", hash as u32)
+            }
+            PathOverflowStrategy::Truncate => extension.clone(),
+            PathOverflowStrategy::Error => unreachable!(),
+        };
+        if suffix.len() > limit {
+            return Err(
+                source_downloader_sdk::component::ProcessingError::non_retryable(
+                    format!(
+                        "Path component limit {limit} cannot preserve suffix: {suffix}"
+                    ),
+                ),
+            );
+        }
+        let stem = if preserve_extension && !extension.is_empty() {
+            &component[..component.len() - extension.len()]
+        } else {
+            component
+        };
+        let mut end = (limit - suffix.len()).min(stem.len());
+        while !stem.is_char_boundary(end) {
+            end -= 1;
+        }
+        Ok(format!("{}{suffix}", &stem[..end]))
     }
 
     // =====
@@ -927,7 +1015,8 @@ mod tests {
 
         let content = renamer
             .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
-            .await;
+            .await
+            .unwrap();
 
         assert_eq!("abcdef.txt", content.target_filename);
         assert_eq!(SOURCE_SAVE_PATH.join("abcdefghij"), content.target_save_path);
@@ -973,7 +1062,8 @@ mod tests {
         let raw = RawFileContent::default();
         let content = DEFAULT_RENAMER
             .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
-            .await;
+            .await
+            .unwrap();
         assert_eq!("1.txt", content.target_filename);
 
         assert_eq!(
@@ -991,7 +1081,8 @@ mod tests {
         };
         let content = DEFAULT_RENAMER
             .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
-            .await;
+            .await
+            .unwrap();
         assert_eq!("3.txt", content.target_filename);
         assert_eq!(SOURCE_SAVE_PATH.join("2/3.txt"), *content.target_path());
     }
@@ -1011,7 +1102,8 @@ mod tests {
         };
         let content = DEFAULT_RENAMER
             .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             SOURCE_SAVE_PATH.join("2022/test/2022-01-01 - 123.txt"),
             *content.target_path()
@@ -1031,7 +1123,8 @@ mod tests {
         extra.variables.insert("season".to_string(), json!("01"));
         let content = DEFAULT_RENAMER
             .create_file_content(&SourceItem::default(), raw, &extra)
-            .await;
+            .await
+            .unwrap();
         assert_eq!(SOURCE_SAVE_PATH.join("test").join("S01"), content.target_save_path)
     }
 
@@ -1049,7 +1142,8 @@ mod tests {
 
         let content = DEFAULT_RENAMER
             .create_file_content(&SourceItem::default(), raw, &item_variables)
-            .await;
+            .await
+            .unwrap();
 
         assert_eq!("provider-value-provider-value.txt", content.target_filename);
         assert_eq!(item_variables.pattern_variables, provider_variables);
@@ -1068,7 +1162,8 @@ mod tests {
 
         let content = DEFAULT_RENAMER
             .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
-            .await;
+            .await
+            .unwrap();
 
         assert_eq!("03-03.txt", content.target_filename);
         assert_eq!(file_variables, content.pattern_variables);
@@ -1100,8 +1195,10 @@ mod tests {
         };
         let mut extra = RenameVariables::default();
         extra.variables.insert("season".to_string(), json!("01"));
-        let content =
-            DEFAULT_RENAMER.create_file_content(&Default::default(), raw, &extra).await;
+        let content = DEFAULT_RENAMER
+            .create_file_content(&Default::default(), raw, &extra)
+            .await
+            .unwrap();
         assert_eq!("test - 01.mp4", content.target_filename);
     }
 
@@ -1121,7 +1218,8 @@ mod tests {
                 raw.clone(),
                 &RenameVariables::default(),
             )
-            .await;
+            .await
+            .unwrap();
         assert_eq!(content.file_download_path, *content.target_path());
         assert_eq!(2, content.errors.len());
 
@@ -1130,7 +1228,8 @@ mod tests {
         raw.save_path_pattern = &new_pattern;
         let content = DEFAULT_RENAMER
             .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
-            .await;
+            .await
+            .unwrap();
         assert_eq!(content.file_download_path, *content.target_path());
     }
 
@@ -1151,7 +1250,8 @@ mod tests {
 
         let content = renamer
             .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
-            .await;
+            .await
+            .unwrap();
 
         assert_eq!(SOURCE_SAVE_PATH.join("S01").join("1.txt"), *content.target_path());
         assert_eq!(1, content.errors.len());
@@ -1171,7 +1271,8 @@ mod tests {
             Renamer { variable_error_strategy: Pattern, ..DEFAULT_RENAMER.clone() };
         let content = renamer
             .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             SOURCE_SAVE_PATH.join("{name}").join("S01").join("{name} - 01.txt"),
             *content.target_path()
@@ -1203,7 +1304,8 @@ mod tests {
 
         let content = renamer
             .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
-            .await;
+            .await
+            .unwrap();
 
         // 预期路径: test 01/S01/unresolved/1.txt
         let path = PathBuf::from_iter(["test 01", "S01", "unresolved", "1.txt"]);
@@ -1233,7 +1335,8 @@ mod tests {
 
         let content = renamer
             .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
-            .await;
+            .await
+            .unwrap();
 
         // {title} 缺失，进入 unresolved 分支
         let path = PathBuf::from_iter(["unresolved", "FATE", "S01E02.mp4"]);
@@ -1263,7 +1366,8 @@ mod tests {
 
         let content = renamer
             .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
-            .await;
+            .await
+            .unwrap();
 
         // 全部缺失，回退到原始路径
         let path = PathBuf::from_iter(["unresolved", "FATE", "AAAAA.mp4"]);
@@ -1370,7 +1474,8 @@ mod tests {
 
         let content = DEFAULT_RENAMER
             .create_file_content(&SourceItem::default(), raw, &item_vars)
-            .await;
+            .await
+            .unwrap();
         let expected = SOURCE_SAVE_PATH.join("Idk111").join("2022-01-01").join("2.txt");
         assert_eq!(expected, *content.target_path());
     }
@@ -1393,7 +1498,8 @@ mod tests {
         };
         let content = DEFAULT_RENAMER
             .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
-            .await;
+            .await
+            .unwrap();
         let expected =
             SOURCE_SAVE_PATH.join("wp-test").join("mp3").join("origin").join("1.mp3");
         assert_eq!(expected, *content.target_path());
@@ -1416,7 +1522,106 @@ mod tests {
 
         let content = DEFAULT_RENAMER
             .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
-            .await;
+            .await
+            .unwrap();
         assert_eq!("test", content.target_filename);
+    }
+
+    #[tokio::test]
+    async fn truncate_with_hash_constrains_rendered_filename_and_preserves_extension() {
+        let filename_pattern =
+            PathPattern::new_cel("这是一个非常长的文件名称".to_owned());
+        let raw =
+            RawFileContent { filename_pattern: &filename_pattern, ..Default::default() };
+        let renamer = Renamer {
+            path_name_length_limit: 24,
+            path_overflow_strategy: PathOverflowStrategy::TruncateWithHash,
+            ..DEFAULT_RENAMER.clone()
+        };
+
+        let content = renamer
+            .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
+            .await
+            .unwrap();
+
+        assert!(
+            content.target_filename.len() <= 24
+                && content.target_filename.ends_with(".txt")
+                && content.target_filename.contains('~'),
+            "unexpected constrained filename: {}",
+            content.target_filename
+        );
+    }
+
+    #[tokio::test]
+    async fn truncate_with_hash_constrains_each_rendered_directory_component() {
+        let save_path_pattern = PathPattern::new_cel(
+            "这是一个非常长的目录名称/另一个非常长的目录名称".to_owned(),
+        );
+        let raw = RawFileContent {
+            save_path_pattern: &save_path_pattern,
+            ..Default::default()
+        };
+        let renamer = Renamer {
+            path_name_length_limit: 20,
+            path_overflow_strategy: PathOverflowStrategy::TruncateWithHash,
+            ..DEFAULT_RENAMER.clone()
+        };
+
+        let content = renamer
+            .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
+            .await
+            .unwrap();
+
+        assert!(
+            content
+                .target_save_path
+                .strip_prefix(*SOURCE_SAVE_PATH)
+                .unwrap()
+                .components()
+                .all(|component| component.as_os_str().as_encoded_bytes().len() <= 20),
+            "unexpected constrained directory: {:?}",
+            content.target_save_path
+        );
+    }
+
+    #[tokio::test]
+    async fn error_strategy_rejects_overlong_rendered_component() {
+        let filename_pattern = PathPattern::new_cel("overlong-name".to_owned());
+        let raw =
+            RawFileContent { filename_pattern: &filename_pattern, ..Default::default() };
+        let renamer = Renamer {
+            path_name_length_limit: 8,
+            path_overflow_strategy: PathOverflowStrategy::Error,
+            ..DEFAULT_RENAMER.clone()
+        };
+
+        let error = renamer
+            .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
+            .await
+            .unwrap_err();
+        assert!(error.message().contains("Path component exceeds 8 bytes"));
+    }
+
+    #[tokio::test]
+    async fn stay_fallback_keeps_download_root_while_constraining_filename() {
+        let filename_pattern = PathPattern::new_cel("{missing}".to_owned());
+        let raw = RawFileContent {
+            source_file: SourceFile::new(PathBuf::from("nested/overlong-name.txt")),
+            filename_pattern: &filename_pattern,
+            ..Default::default()
+        };
+        let renamer = Renamer {
+            path_name_length_limit: 16,
+            path_overflow_strategy: PathOverflowStrategy::TruncateWithHash,
+            ..DEFAULT_RENAMER.clone()
+        };
+
+        let content = renamer
+            .create_file_content(&SourceItem::default(), raw, &RenameVariables::default())
+            .await
+            .unwrap();
+
+        assert_eq!(DOWNLOAD_PATH.join("nested"), content.target_save_path);
     }
 }

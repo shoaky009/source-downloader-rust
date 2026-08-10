@@ -5241,6 +5241,7 @@ dependencies = [
  "backon",
  "cel",
  "criterion",
+ "fastmurmur3",
  "futures-util",
  "http-serde",
  "humantime",

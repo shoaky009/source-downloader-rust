@@ -1,4 +1,4 @@
-use crate::process::file::VariableErrorStrategy;
+use crate::process::file::{PathOverflowStrategy, VariableErrorStrategy};
 use indexmap::IndexMap;
 #[allow(dead_code, unused)]
 use moka::sync::Cache;
@@ -73,6 +73,8 @@ pub struct ProcessorOptionConfig {
     pub trimming: Vec<TrimmingConfig>,
     #[serde(skip_serializing_if = "is_path_name_length_limit_default")]
     pub path_name_length_limit: usize,
+    #[serde(skip_serializing_if = "is_default")]
+    pub path_overflow_strategy: PathOverflowStrategy,
     #[serde(skip_serializing_if = "is_default")]
     pub item_filters: Vec<String>,
     #[serde(skip_serializing_if = "is_default")]
@@ -321,6 +323,7 @@ impl Default for ProcessorOptionConfig {
             variable_process: vec![],
             trimming: vec![],
             path_name_length_limit: 255,
+            path_overflow_strategy: PathOverflowStrategy::default(),
             item_filters: vec![],
             item_content_filters: vec![],
             item_expression_exclusions: vec![],
@@ -655,7 +658,7 @@ mod test {
         ComponentConfig, Config, ConfigOperator, ProcessorOptionConfig,
         YamlConfigOperator,
     };
-    use crate::process::file::VariableErrorStrategy;
+    use crate::process::file::{PathOverflowStrategy, VariableErrorStrategy};
     use source_downloader_sdk::component::ComponentRootType;
     use source_downloader_sdk::serde_json::Map;
     use std::collections::HashSet;
@@ -830,14 +833,15 @@ mod test {
     }
 
     #[test]
-    fn trimming_options_match_kotlin_config() {
+    fn trimming_and_path_overflow_options_match_config() {
         let config = serde_json::from_str::<ProcessorOptionConfig>(
             r#"{
                 "trimming": [{
                     "variable-name": "title",
                     "trimmers": ["regex:remove-tags", "force"]
                 }],
-                "path-name-length-limit": 128
+                "path-name-length-limit": 128,
+                "path-overflow-strategy": "ERROR"
             }"#,
         )
         .unwrap();
@@ -849,7 +853,12 @@ mod test {
             config.trimming[0].trimmers
         );
         assert_eq!(128, config.path_name_length_limit);
+        assert_eq!(PathOverflowStrategy::Error, config.path_overflow_strategy);
         assert_eq!(255, ProcessorOptionConfig::default().path_name_length_limit);
+        assert_eq!(
+            PathOverflowStrategy::TruncateWithHash,
+            ProcessorOptionConfig::default().path_overflow_strategy
+        );
     }
 
     #[test]
