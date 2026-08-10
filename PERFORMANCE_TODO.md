@@ -6,7 +6,7 @@ complexity, compatibility, or maintenance risk, leave the code unchanged and rec
 reason under **Decision log**.
 
 - [x] Borrow JSON values while resolving variable-process-chain inputs instead of cloning the complete variable tree for every chain.
-- [ ] Reuse each file's computed download path and original-layout string throughout one rename operation.
+- [x] Reuse each file's computed download path throughout one rename operation.
 - [ ] Avoid rebuilding merged rename-variable JSON trees for repeated expression evaluation.
 - [ ] Split save-path patterns once before checking overlong directory components.
 - [ ] Keep asynchronous storage and filesystem work outside the SourceProcessor coordination mutex.

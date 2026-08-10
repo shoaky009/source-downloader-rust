@@ -291,10 +291,13 @@ impl Renamer {
         file: RawFileContent<'_>,
         extra_variables: &RenameVariables,
     ) -> Result<FileContent, source_downloader_sdk::component::ProcessingError> {
-        let mut variables =
-            self.file_rename_variables(source_item, &file, extra_variables).await;
-        let mut dir_result = self.save_directory_path(&file, &variables);
-        let mut filename_result = self.target_filename(&file, &variables);
+        let file_download_path = file.file_download_path();
+        let mut variables = self
+            .file_rename_variables(source_item, &file, &file_download_path, extra_variables)
+            .await;
+        let mut dir_result =
+            self.save_directory_path(&file, &file_download_path, &variables);
+        let mut filename_result = self.target_filename(&file, &file_download_path, &variables);
 
         let mut errors = std::mem::take(&mut dir_result.failed_expressions);
         errors.append(&mut filename_result.failed_expressions);
@@ -303,7 +306,6 @@ impl Renamer {
         if !filename_result.success
             && self.variable_error_strategy == VariableErrorStrategy::Stay
         {
-            let file_download_path = file.file_download_path();
             let target_filename = file_download_path
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -343,7 +345,8 @@ impl Renamer {
                     &mut trim_vars,
                 );
                 variables.replace_trim_variables(trim_vars);
-                filename_result = self.target_filename(&file, &variables);
+                filename_result =
+                    self.target_filename(&file, &file_download_path, &variables);
             }
 
             // 校验目录段长度
@@ -371,11 +374,11 @@ impl Renamer {
             }
             if needs_recalc_dir {
                 variables.replace_trim_variables(current_trim_vars);
-                dir_result = self.save_directory_path(&file, &variables);
+                dir_result =
+                    self.save_directory_path(&file, &file_download_path, &variables);
             }
         }
 
-        let file_download_path = file.file_download_path();
         let SourceFile { tags, attrs, download_uri, data, .. } = file.source_file;
         self.constrain_file_content(FileContent {
             download_path: file.download_path.to_owned(),
@@ -568,9 +571,9 @@ impl Renamer {
     fn target_filename(
         &self,
         file: &RawFileContent,
+        file_download_path: &Path,
         variables: &RenameVariables,
     ) -> ParseResult {
-        let file_download_path = file.file_download_path();
         let pattern = &file.filename_pattern;
         if pattern.pattern.is_empty() {
             return ParseResult {
@@ -628,6 +631,7 @@ impl Renamer {
     fn save_directory_path(
         &self,
         file: &RawFileContent,
+        file_download_path: &Path,
         variables: &RenameVariables,
     ) -> ParseResult {
         let mut parse = self.parse(variables, file.save_path_pattern);
@@ -647,12 +651,11 @@ impl Renamer {
 
         let fallback_path = match self.variable_error_strategy {
             VariableErrorStrategy::Original | VariableErrorStrategy::Stay => {
-                file.file_download_path().parent().unwrap_or(Path::new("")).to_path_buf()
+                file_download_path.parent().unwrap_or(Path::new("")).to_path_buf()
             }
             VariableErrorStrategy::Pattern => source_path.join(&parse.path),
             VariableErrorStrategy::ToUnresolved => {
-                let rel = file
-                    .file_download_path()
+                let rel = file_download_path
                     .strip_prefix(file.download_path)
                     .map(|p| p.parent().unwrap_or(Path::new("")))
                     .unwrap_or(Path::new(""))
@@ -669,6 +672,7 @@ impl Renamer {
         &self,
         source_item: &SourceItem,
         file: &RawFileContent<'_>,
+        file_download_path: &Path,
         extra: &RenameVariables,
     ) -> RenameVariables {
         let mut vars = Map::new();
@@ -679,7 +683,7 @@ impl Renamer {
 
         let file_attrs = self.apply_replacers_to_attrs(&file.source_file.attrs);
         let file_obj = json!({
-            "name": self.apply_replacers("file.name", file.file_download_path().file_stem().unwrap().to_string_lossy().into_owned()),
+            "name": self.apply_replacers("file.name", file_download_path.file_stem().unwrap().to_string_lossy().into_owned()),
             "attrs": file_attrs,
             "tags": file.source_file.tags,
             "vars": file.variables,
@@ -980,8 +984,15 @@ mod tests {
             ..Default::default()
         };
 
-        let file_variables =
-            renamer.file_rename_variables(&item, &raw, &RenameVariables::default()).await;
+        let file_download_path = raw.file_download_path();
+        let file_variables = renamer
+            .file_rename_variables(
+                &item,
+                &raw,
+                &file_download_path,
+                &RenameVariables::default(),
+            )
+            .await;
         assert_eq!(json!("episode=01"), file_variables.variables["episode"]);
         assert_eq!(json!("01"), file_variables.variables["file"]["vars"]["episode"]);
         assert_eq!(json!("file.name=episode"), file_variables.variables["file"]["name"]);
