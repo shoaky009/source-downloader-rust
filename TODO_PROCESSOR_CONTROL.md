@@ -31,19 +31,19 @@ Component additions and LLM configuration generation are out of scope.
 - [x] Introduce stable run IDs and run kinds.
 - [x] Track queued/running/succeeded/failed/cancelled lifecycle states.
 - [x] Track creation, start, and completion timestamps plus failure details.
-- [x] Keep a bounded in-memory run history per application.
+- [x] Keep only active runs in memory and remove each run immediately on completion.
 - [x] Route scheduled trigger executions through the run registry.
 - [x] Route manual full runs through the run registry.
 - [x] Route submitted-item runs through the run registry.
 - [x] Route rename runs through the run registry.
 - [x] Route single-content reprocessing through the run registry.
 - [x] Route collected dry-runs through the run registry.
-- [x] Route streamed dry-runs through the run registry and retain terminal status when the client disconnects or cancels.
+- [x] Route streamed dry-runs through the run registry and emit terminal status before removal when the client disconnects or cancels.
 - [x] Support cancellation by run ID for every running kind.
 - [x] Expose list, detail, cancellation, and event-stream endpoints.
 - [x] Return a run resource from asynchronous execution endpoints.
 - [x] Preserve dry-run result/event payloads while adding run identity and management.
-- [x] Add lifecycle, automatic-run, dry-run, cancellation, and bounded-history tests.
+- [x] Add lifecycle, automatic-run, dry-run, cancellation, and completed-run removal tests.
 - [x] Commit this change separately.
 
 ## Verification
