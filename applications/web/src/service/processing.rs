@@ -212,7 +212,9 @@ struct ProcessingContentSummary {
     rename_times: u32,
     status: ProcessingStatus,
     failure_reason: Option<String>,
+    #[serde(with = "source_downloader_sdk::time::serde::rfc3339")]
     created_at: OffsetDateTime,
+    #[serde(with = "source_downloader_sdk::time::serde::rfc3339::option")]
     updated_at: Option<OffsetDateTime>,
 }
 
@@ -252,7 +254,9 @@ pub struct ProcessingContentDetail {
     rename_times: u32,
     status: ProcessingStatus,
     failure_reason: Option<String>,
+    #[serde(with = "source_downloader_sdk::time::serde::rfc3339")]
     created_at: OffsetDateTime,
+    #[serde(with = "source_downloader_sdk::time::serde::rfc3339::option")]
     updated_at: Option<OffsetDateTime>,
 }
 
@@ -364,8 +368,8 @@ mod tests {
             rename_times: 1,
             status: ProcessingStatus::Renamed,
             failure_reason: None,
-            created_at: OffsetDateTime::now_utc(),
-            updated_at: None,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            updated_at: Some(OffsetDateTime::UNIX_EPOCH),
         }
     }
 
@@ -387,6 +391,10 @@ mod tests {
         );
         assert_eq!(summary["processorName"], "processor");
         assert!(summary.get("processor_name").is_none());
+        assert_eq!(summary["createdAt"], "1970-01-01T00:00:00Z");
+        assert_eq!(summary["updatedAt"], "1970-01-01T00:00:00Z");
+        assert_eq!(detail["createdAt"], "1970-01-01T00:00:00Z");
+        assert_eq!(detail["updatedAt"], "1970-01-01T00:00:00Z");
     }
 
     #[test]

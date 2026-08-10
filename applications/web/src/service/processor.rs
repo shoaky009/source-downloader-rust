@@ -27,7 +27,7 @@ use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::ProcessTask;
 use source_downloader_sdk::serde_json::{Map, Value};
 use source_downloader_sdk::storage::ProcessorSourceState;
-use source_downloader_sdk::time::{OffsetDateTime, UtcDateTime};
+use source_downloader_sdk::time::OffsetDateTime;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -432,6 +432,7 @@ impl From<DryRunOptions> for CoreDryRunOptions {
 struct ProcessorState {
     source_id: String,
     pointer: Value,
+    #[serde(with = "source_downloader_sdk::time::serde::rfc3339::option")]
     last_active_time: Option<OffsetDateTime>,
     retry_times: u32,
 }
@@ -492,20 +493,23 @@ impl ProcessorInfo {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RuntimeSnapshot {
-    pub created_at: UtcDateTime,
+    #[serde(with = "source_downloader_sdk::time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
     pub last_process_failed_message: Option<String>,
-    pub last_start_process_time: Option<UtcDateTime>,
-    pub last_end_process_time: Option<UtcDateTime>,
+    #[serde(with = "source_downloader_sdk::time::serde::rfc3339::option")]
+    pub last_start_process_time: Option<OffsetDateTime>,
+    #[serde(with = "source_downloader_sdk::time::serde::rfc3339::option")]
+    pub last_end_process_time: Option<OffsetDateTime>,
     pub processing: bool,
 }
 
 impl From<ProcessorRuntimeSnapshot> for RuntimeSnapshot {
     fn from(snapshot: ProcessorRuntimeSnapshot) -> Self {
         Self {
-            created_at: snapshot.created_at.into(),
+            created_at: snapshot.created_at,
             last_process_failed_message: snapshot.last_process_failed_message,
-            last_start_process_time: snapshot.last_start_process_time.map(Into::into),
-            last_end_process_time: snapshot.last_end_process_time.map(Into::into),
+            last_start_process_time: snapshot.last_start_process_time,
+            last_end_process_time: snapshot.last_end_process_time,
             processing: snapshot.processing,
         }
     }
@@ -633,6 +637,24 @@ mod tests {
     }
 
     #[test]
+    fn runtime_snapshot_serializes_timestamps_as_rfc3339() {
+        let value = source_downloader_sdk::serde_json::to_value(RuntimeSnapshot::from(
+            ProcessorRuntimeSnapshot {
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                last_process_failed_message: None,
+                last_start_process_time: Some(OffsetDateTime::UNIX_EPOCH),
+                last_end_process_time: None,
+                processing: true,
+            },
+        ))
+        .unwrap();
+
+        assert_eq!(value["createdAt"], "1970-01-01T00:00:00Z");
+        assert_eq!(value["lastStartProcessTime"], "1970-01-01T00:00:00Z");
+        assert!(value["lastEndProcessTime"].is_null());
+    }
+
+    #[test]
     fn processor_state_uses_camel_case_wire_fields() {
         let value = source_downloader_sdk::serde_json::to_value(ProcessorState::from(
             ProcessorSourceState {
@@ -640,15 +662,15 @@ mod tests {
                 processor_name: "processor".to_owned(),
                 source_id: "source".to_owned(),
                 last_pointer: source_downloader_sdk::serde_json::json!({"page": 3}),
-                last_active_time: None,
+                last_active_time: Some(OffsetDateTime::UNIX_EPOCH),
                 retry_times: 0,
             },
         ))
         .unwrap();
 
         assert_eq!(value["sourceId"], "source");
+        assert_eq!(value["lastActiveTime"], "1970-01-01T00:00:00Z");
         assert_eq!(value["pointer"]["page"], 3);
-        assert!(value["lastActiveTime"].is_null());
         assert_eq!(value["retryTimes"], 0);
     }
 }

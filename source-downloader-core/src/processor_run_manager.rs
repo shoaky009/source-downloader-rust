@@ -61,8 +61,11 @@ pub struct ProcessorRunSnapshot {
     pub processor_name: String,
     pub kind: ProcessorRunKind,
     pub status: ProcessorRunStatus,
+    #[serde(with = "source_downloader_sdk::time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    #[serde(with = "source_downloader_sdk::time::serde::rfc3339::option")]
     pub started_at: Option<OffsetDateTime>,
+    #[serde(with = "source_downloader_sdk::time::serde::rfc3339::option")]
     pub finished_at: Option<OffsetDateTime>,
     pub failure: Option<String>,
 }
@@ -363,6 +366,26 @@ mod tests {
     };
     use std::sync::Arc;
     use tokio::sync::Notify;
+
+    #[test]
+    fn processor_run_snapshot_serializes_timestamps_as_rfc3339() {
+        let snapshot = super::ProcessorRunSnapshot {
+            id: 1,
+            processor_name: "processor".to_owned(),
+            kind: ProcessorRunKind::ManualFull,
+            status: ProcessorRunStatus::Running,
+            created_at: source_downloader_sdk::time::OffsetDateTime::UNIX_EPOCH,
+            started_at: Some(source_downloader_sdk::time::OffsetDateTime::UNIX_EPOCH),
+            finished_at: None,
+            failure: None,
+        };
+
+        let value = source_downloader_sdk::serde_json::to_value(snapshot).unwrap();
+
+        assert_eq!(value["createdAt"], "1970-01-01T00:00:00Z");
+        assert_eq!(value["startedAt"], "1970-01-01T00:00:00Z");
+        assert!(value["finishedAt"].is_null());
+    }
 
     async fn wait_until_removed(manager: &ProcessorRunManager, id: u64) {
         tokio::time::timeout(std::time::Duration::from_secs(1), async {
