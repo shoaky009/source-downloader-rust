@@ -164,8 +164,10 @@ impl SystemFileSource {
         };
         let uri = Url::from_file_path(absolute_path)
             .map_err(|_| ProcessingError::non_retryable("Failed to create file URI"))?;
-        let uri: source_downloader_sdk::http::Uri =
-            uri.as_str().parse().map_err(|error| {
+        let uri = source_downloader_sdk::http::Uri::builder()
+            .path_and_query(uri.as_str())
+            .build()
+            .map_err(|error| {
                 ProcessingError::non_retryable(format!("Invalid file URI: {error}"))
             })?;
         let datetime = metadata
@@ -209,4 +211,29 @@ fn is_hidden(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.starts_with('.'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SystemFileSource;
+    use std::fs;
+
+    #[test]
+    fn creates_source_item_with_file_uri() {
+        let directory = tempfile::tempdir().unwrap();
+        let file_path = directory.path().join("file name.txt");
+        fs::write(&file_path, b"content").unwrap();
+        let source = SystemFileSource {
+            path: directory.path().to_path_buf(),
+            download_path: directory.path().to_string_lossy().into_owned(),
+            mode: 0,
+        };
+
+        let items = source.create_root_file_source_items().unwrap();
+
+        assert_eq!(
+            items[0].source_item.download_uri.to_string(),
+            url::Url::from_file_path(file_path).unwrap().as_str()
+        );
+    }
 }
