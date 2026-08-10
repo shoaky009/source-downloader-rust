@@ -28,7 +28,14 @@ impl ComponentSupplier for AnimeTaggerSupplier {
     }
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Adds anime-specific tags to files.".into(),
+            props_json_schema: None,
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

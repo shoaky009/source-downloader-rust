@@ -30,7 +30,16 @@ impl ComponentSupplier for TelegramMediaTaggerSupplier {
     }
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Tags Telegram media files with their media type.".into(),
+            props_json_schema: Some(
+                source_downloader_sdk::serde_json::json!({"type": "object", "properties": {}}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

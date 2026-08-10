@@ -6,7 +6,7 @@ use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
     SdComponentMetadata, SourceFile, VariableProvider,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
@@ -44,7 +44,16 @@ impl ComponentSupplier for ChiiVariableProviderSupplier {
         true
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Resolves variables through the Chii GraphQL service.".into(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"base-url":{"type":"string","default":"https://chii.ai"}}}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 #[derive(Debug, source_downloader_sdk::SdComponent)]

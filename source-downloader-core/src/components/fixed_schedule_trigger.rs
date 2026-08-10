@@ -7,7 +7,7 @@ use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ProcessTask, SdComponent,
     SdComponentMetadata, Stateful, TaskRegistry, Trigger, deserialize_component_config,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use std::time::Duration;
@@ -44,7 +44,18 @@ impl ComponentSupplier for FixedScheduleTriggerSupplier {
         Ok(Arc::new(FixedScheduleTrigger::new(interval, config.on_start_run_tasks)))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Runs processing tasks at a fixed interval.".to_owned(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"interval":{"type":"string"},"on-start-run-tasks":{"type":"boolean","default":false}},"required":["interval"]}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: Some(
+                json!({"type":"object","properties":{"tasks":{"type":"object","additionalProperties":{"type":"array","items":{"type":"object","properties":{"processName":{"type":"string"}},"required":["processName"]}}}}}),
+            ),
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

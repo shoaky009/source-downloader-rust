@@ -7,7 +7,7 @@ use source_downloader_sdk::component::{
     ProcessingError, SdComponent, SdComponentMetadata, SourceFile,
     deserialize_component_config,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
@@ -34,7 +34,16 @@ impl ComponentSupplier for UrlDownloaderSupplier {
         Ok(Arc::new(UrlDownloader { download_path: config.download_path }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Downloads source files over HTTP.".to_owned(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"download-path":{"type":"string"}},"required":["download-path"]}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

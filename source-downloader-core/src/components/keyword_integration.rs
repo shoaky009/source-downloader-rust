@@ -8,7 +8,7 @@ use source_downloader_sdk::component::{
     SdComponentMetadata, SourceItemFilter, VariableProvider,
     deserialize_component_config,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
@@ -47,7 +47,14 @@ impl ComponentSupplier for KeywordIntegrationSupplier {
         Ok(Arc::new(KeywordIntegration::new(config.keywords, config.keyword_file)?))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Provides keyword variables and filters source items using configured keywords.".to_owned(),
+            props_json_schema: Some(json!({"type":"object","properties":{"keywords":{"type":"array","items":{"type":"string"}},"keyword-file":{"type":"string"}}})),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

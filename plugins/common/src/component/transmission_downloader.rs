@@ -45,7 +45,22 @@ impl ComponentSupplier for TransmissionDownloaderSupplier {
         }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Downloads torrents through Transmission.".to_owned(),
+            props_json_schema: Some(json!({
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string"},
+                    "username": {"type": "string"},
+                    "password": {"type": "string"}
+                },
+                "required": ["url"]
+            })),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

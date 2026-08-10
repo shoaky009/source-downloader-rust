@@ -7,7 +7,7 @@ use source_downloader_sdk::component::{
     ProcessingError, SdComponent, SdComponentMetadata, Source, SourcePointer,
 };
 use source_downloader_sdk::http::Uri;
-use source_downloader_sdk::serde_json::{self, Map, Value};
+use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use source_downloader_sdk::time::OffsetDateTime;
 use std::any::Any;
 use std::collections::HashMap;
@@ -54,7 +54,18 @@ impl ComponentSupplier for BilibiliSourceSupplier {
         Ok(Arc::new(BilibiliSource { favorites, cookie, base, client }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Provides Bilibili favorites as a source.".into(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"favorites":{"type":"array","items":{"type":"integer"},"minItems":1},"cookie":{"type":"string"},"base-url":{"type":"string","default":"https://api.bilibili.com"}},"required":["favorites"]}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: Some(
+                json!({"type":"object","properties":{"favorites":{"type":"object","additionalProperties":{"type":"object","properties":{"favorite_id":{"type":"integer"},"min_fav_time":{"type":"integer"},"max_fav_time":{"type":"integer"},"touch_bottom":{"type":"boolean"}},"required":["favorite_id","min_fav_time","max_fav_time","touch_bottom"]}}}}),
+            ),
+        }))
     }
 }
 #[derive(Debug, source_downloader_sdk::SdComponent)]

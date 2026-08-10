@@ -28,7 +28,16 @@ impl ComponentSupplier for FullWidthReplacerSupplier {
     }
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description:
+                "Replaces full-width characters with their standard-width equivalents."
+                    .to_owned(),
+            props_json_schema: None,
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

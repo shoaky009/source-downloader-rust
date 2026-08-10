@@ -8,7 +8,7 @@ use source_downloader_sdk::component::{
     SourcePointer, deserialize_component_config,
 };
 use source_downloader_sdk::http::Uri;
-use source_downloader_sdk::serde_json::{self, Map, Value};
+use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use source_downloader_sdk::time::OffsetDateTime;
 use std::any::Any;
 use std::collections::HashMap;
@@ -81,7 +81,18 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
         }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Provides Fanbox posts and resolves their media files.".into(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"cookie":{"type":"string"},"mode":{"type":"string","enum":["all","latestOnly"],"default":"all"},"headers":{"type":"object","additionalProperties":{"type":"string"}},"base-url":{"type":"string","default":"https://api.fanbox.cc"}},"required":["cookie"]}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: Some(
+                json!({"type":"object","properties":{"creators":{"type":"object","additionalProperties":{"type":"object","properties":{"creator_id":{"type":"string"},"next_max_id":{"type":["integer","null"]},"next_max_date":{"type":["string","null"]},"top_id":{"type":["integer","null"]},"top_date":{"type":["string","null"]},"touch_bottom":{"type":"boolean"}},"required":["creator_id","touch_bottom"]}}}}),
+            ),
+        }))
     }
 }
 

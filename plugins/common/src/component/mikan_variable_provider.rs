@@ -9,7 +9,7 @@ use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
     SdComponentMetadata, SourceFile, VariableProvider,
 };
-use source_downloader_sdk::serde_json::{self, Map, Value};
+use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, LazyLock};
@@ -64,7 +64,16 @@ impl ComponentSupplier for MikanVariableProviderSupplier {
     }
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Resolves anime variables using Mikanani and Bangumi.".into(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"mikan-base-url":{"type":"string","default":"https://mikanani.me"},"bgmtv-base-url":{"type":"string","default":"https://api.bgm.tv"},"token":{"type":"string"},"bgmtv-token":{"type":"string"}}}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

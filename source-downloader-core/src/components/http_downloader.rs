@@ -8,7 +8,7 @@ use source_downloader_sdk::component::{
     ProcessingError, SdComponent, SdComponentMetadata, SourceFile, SourceFileRef,
     Stateful, deserialize_component_config,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{Map, Value, json};
 use source_downloader_sdk::{SdComponent, SourceItem};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
@@ -59,7 +59,19 @@ impl ComponentSupplier for HttpDownloaderSupplier {
         }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Downloads source files over HTTP with bounded parallelism."
+                .to_owned(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"download-path":{"type":"string"},"parallelism":{"type":"integer","minimum":1,"default":5}},"required":["download-path"]}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: Some(
+                json!({"type":"object","additionalProperties":{"type":"object","properties":{"file":{"type":"string"},"speed":{"type":"string"}},"required":["file","speed"]}}),
+            ),
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

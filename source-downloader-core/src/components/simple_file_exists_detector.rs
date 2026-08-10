@@ -1,8 +1,8 @@
-use serde_json::{Map, Value};
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, FileContent, FileExistsDetector,
     FileMover, SdComponent, SdComponentMetadata,
 };
+use source_downloader_sdk::serde_json::{Map, Value};
 use source_downloader_sdk::{SdComponent, SourceItem};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
@@ -32,7 +32,14 @@ impl ComponentSupplier for SimpleFileExistsDetectorSupplier {
     }
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Detects whether target files exist.".to_owned(),
+            props_json_schema: None,
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

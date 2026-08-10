@@ -10,7 +10,7 @@ use source_downloader_sdk::component::{
     SourcePointer, deserialize_component_config,
 };
 use source_downloader_sdk::http::Uri;
-use source_downloader_sdk::serde_json::{self, Map, Value};
+use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use source_downloader_sdk::time::OffsetDateTime;
 use std::any::Any;
 use std::collections::HashMap;
@@ -70,7 +70,18 @@ impl ComponentSupplier for RssSourceSupplier {
         }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Provides items from an RSS or Atom feed.".into(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"url":{"type":"string","format":"uri"},"tags":{"type":"array","items":{"type":"string"},"default":[]},"attributes":{"type":"object","additionalProperties":{"type":"string"},"default":{}},"date-format":{"type":["string","null"]}},"required":["url"]}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: Some(
+                json!({"type":"object","properties":{"latest":{"type":["string","null"],"format":"date-time"}},"required":["latest"]}),
+            ),
+        }))
     }
 }
 #[derive(Debug, source_downloader_sdk::SdComponent)]

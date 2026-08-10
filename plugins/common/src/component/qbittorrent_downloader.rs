@@ -10,7 +10,7 @@ use source_downloader_sdk::component::{
     ComponentType, DownloadTask, Downloader, FileContent, FileMover, ProcessingError,
     SdComponent, SdComponentMetadata, SourceFile,
 };
-use source_downloader_sdk::serde_json::{self, Map, Value};
+use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use std::fmt::{Debug, Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -90,7 +90,28 @@ impl ComponentSupplier for QbittorrentDownloaderSupplier {
         }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Downloads torrents through qBittorrent and moves their files."
+                .to_owned(),
+            props_json_schema: Some(json!({
+                "type": "object",
+                "properties": {
+                    "endpoint": {"type": "string"},
+                    "host": {"type": "string"},
+                    "username": {"type": "string"},
+                    "password": {"type": "string"},
+                    "always-download-all": {"type": "boolean", "default": false}
+                },
+                "anyOf": [
+                    {"required": ["endpoint"]},
+                    {"required": ["host"]}
+                ]
+            })),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

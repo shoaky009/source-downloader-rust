@@ -7,9 +7,8 @@ pub mod test_support {
     use mockall::mock;
     use parking_lot::Mutex;
     use serde::Deserialize;
-    use serde_json::json;
     use source_downloader_sdk::component::*;
-    use source_downloader_sdk::serde_json::{Map, Value};
+    use source_downloader_sdk::serde_json::{Map, Value, json};
     use source_downloader_sdk::storage::{ProcessingContentQuery, ProcessingStorage};
     use source_downloader_sdk::time::OffsetDateTime;
     use source_downloader_sdk::{SdComponent, SourceItem, http};
@@ -103,7 +102,15 @@ pub mod test_support {
         }
 
         fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-            None
+            Some(Box::new(SdComponentMetadata {
+                description: "Provides a hard-coded VFS file resolver for tests."
+                    .to_owned(),
+                props_json_schema: None,
+                props_ui_schema: None,
+                state_json_schema: None,
+                state_ui_schema: None,
+                source_pointer_json_schema: None,
+            }))
         }
     }
 
@@ -355,7 +362,40 @@ pub mod test_support {
         }
 
         fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-            None
+            Some(Box::new(SdComponentMetadata {
+                description: "Provides a configurable mock source for tests.".to_owned(),
+                props_json_schema: Some(json!({
+                    "type": "object",
+                    "properties": {
+                        "fetch": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "returning": {
+                                        "type": "string",
+                                        "enum": ["Ok", "Err", "Some", "None"]
+                                    },
+                                    "value": {},
+                                    "opt": {
+                                        "type": "object",
+                                        "properties": {
+                                            "once": {"type": "boolean"},
+                                            "retryable": {"type": "boolean"},
+                                            "return-once": {"type": "boolean"}
+                                        }
+                                    }
+                                },
+                                "required": ["returning"]
+                            }
+                        }
+                    }
+                })),
+                props_ui_schema: None,
+                state_json_schema: None,
+                state_ui_schema: None,
+                source_pointer_json_schema: Some(json!({})),
+            }))
         }
     }
 
@@ -416,7 +456,14 @@ pub mod test_support {
         }
 
         fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-            None
+            Some(Box::new(SdComponentMetadata {
+                description: "Provides mock file, variable, download, and move components for tests.".to_owned(),
+                props_json_schema: None,
+                props_ui_schema: None,
+                state_json_schema: None,
+                state_ui_schema: None,
+                source_pointer_json_schema: None,
+            }))
         }
     }
 

@@ -7,7 +7,7 @@ use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
     SdComponentMetadata, SourceFile, VariableProvider, deserialize_component_config,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
@@ -57,7 +57,17 @@ impl ComponentSupplier for TmdbVariableProviderSupplier {
         true
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Resolves movie and TV variables through The Movie Database."
+                .into(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"base-url":{"type":"string","default":"https://api.themoviedb.org"},"api-key":{"type":"string"},"language":{"type":"string","default":"zh-CN"}},"required":["api-key"]}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 #[derive(Debug, source_downloader_sdk::SdComponent)]

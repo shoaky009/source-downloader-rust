@@ -1,9 +1,9 @@
 use async_trait::async_trait;
-use serde_json::{Map, Value};
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, ProcessingError,
     SdComponent, SdComponentMetadata, SourceFile,
 };
+use source_downloader_sdk::serde_json::{Map, Value};
 use source_downloader_sdk::{SdComponent, SourceItem};
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
@@ -32,7 +32,14 @@ impl ComponentSupplier for SystemFileResolverSupplier {
         true
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Resolves files from system-file item paths.".to_owned(),
+            props_json_schema: None,
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

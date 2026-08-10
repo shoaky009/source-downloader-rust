@@ -5,7 +5,7 @@ use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ProcessTask, SdComponent,
     SdComponentMetadata, Stateful, Trigger, deserialize_component_config,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, Weak};
 
@@ -44,7 +44,18 @@ impl ComponentSupplier for WebhookTriggerSupplier {
         Ok(Arc::new(trigger))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Triggers processing tasks through an HTTP webhook.".to_owned(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"path":{"type":"string"},"method":{"type":"string","default":"GET"}},"required":["path"]}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: Some(
+                json!({"type":"object","properties":{"running":{"type":"boolean"},"tasks":{"type":"object","additionalProperties":{"type":"array","items":{"type":"object","properties":{"processName":{"type":"string"}},"required":["processName"]}}}}}),
+            ),
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

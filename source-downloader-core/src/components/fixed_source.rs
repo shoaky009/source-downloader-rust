@@ -6,7 +6,7 @@ use source_downloader_sdk::component::{
     PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourceFile,
     SourcePointer, deserialize_component_config,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::fmt::{Debug, Display, Formatter};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -100,7 +100,16 @@ impl ComponentSupplier for FixedSourceSupplier {
         Ok(Arc::new(FixedSource { content: converted, offset_mode: config.offset_mode }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Provides a fixed set of source items and files.".to_owned(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"content":{"type":"array","items":{"type":"object","properties":{"item":{"type":"object"},"files":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"attrs":{"type":"object"},"downloadUri":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}}},"required":["path"]}}},"required":["item","files"]}},"offset-mode":{"type":"boolean","default":false}},"required":["content"]}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

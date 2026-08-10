@@ -30,7 +30,15 @@ impl ComponentSupplier for FileSizeReplacementDeciderSupplier {
     }
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Replaces existing files only when the new file is larger."
+                .to_owned(),
+            props_json_schema: None,
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

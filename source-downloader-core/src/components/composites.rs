@@ -11,7 +11,7 @@ use source_downloader_sdk::component::{
     Downloader, ItemFileResolver, ProcessingError, SdComponent, SdComponentMetadata,
     SourceFile, deserialize_component_config,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, Weak};
 
@@ -98,7 +98,18 @@ impl ComponentSupplier for CompositeDownloaderSupplier {
         Ok(Arc::new(CompositeDownloaderComponent(CompositeDownloader::new(selector)?)))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description:
+                "Selects a downloader by evaluating rules against each source item."
+                    .to_owned(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"default":{"type":"string"},"rules":{"type":"array","items":{"type":"object","properties":{"expression":{"type":"string"},"component":{"type":"string"}},"required":["expression","component"]}}},"required":["default"]}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 
@@ -142,7 +153,14 @@ impl ComponentSupplier for CompositeItemFileResolverSupplier {
         ))))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Selects an item file resolver by evaluating rules against each source item.".to_owned(),
+            props_json_schema: Some(json!({"type":"object","properties":{"default":{"type":"string"},"rules":{"type":"array","items":{"type":"object","properties":{"expression":{"type":"string"},"component":{"type":"string"}},"required":["expression","component"]}}},"required":["default"]})),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 
@@ -384,7 +402,14 @@ mod tests {
         }
 
         fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-            None
+            Some(Box::new(SdComponentMetadata {
+                description: "Test downloader supplier.".to_owned(),
+                props_json_schema: None,
+                props_ui_schema: None,
+                state_json_schema: None,
+                state_ui_schema: None,
+                source_pointer_json_schema: None,
+            }))
         }
     }
 

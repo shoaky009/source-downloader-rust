@@ -11,7 +11,7 @@ use source_downloader_sdk::component::{
     SourcePointer, deserialize_component_config,
 };
 use source_downloader_sdk::http::Uri;
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{Map, Value, json};
 use source_downloader_sdk::time::OffsetDateTime;
 use source_downloader_sdk::{SdComponent, SourceItem, serde_json};
 use std::any::Any;
@@ -58,7 +58,18 @@ impl ComponentSupplier for MikanSourceSupplier {
         }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Provides anime releases from Mikanani.".into(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"url":{"type":"string"},"all-episode":{"type":"boolean","default":false}},"required":["url"]}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: Some(
+                json!({"type":"object","properties":{"latest":{"type":"string","format":"date-time"},"shows":{"type":"object","additionalProperties":{"type":"string","format":"date-time"}}},"required":["latest","shows"]}),
+            ),
+        }))
     }
 }
 

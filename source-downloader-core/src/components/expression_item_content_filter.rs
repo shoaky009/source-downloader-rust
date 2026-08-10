@@ -8,7 +8,7 @@ use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemContent, ItemContentFilter,
     SdComponent, SdComponentMetadata, deserialize_component_config,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use tracing::warn;
@@ -48,7 +48,18 @@ impl ComponentSupplier for ExpressionItemContentFilterSupplier {
         Ok(Arc::new(ExpressionItemContentFilter { exclusions, inclusions }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description:
+                "Filters item content using inclusion and exclusion expressions."
+                    .to_owned(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"exclusions":{"type":"array","items":{"type":"string"}},"inclusions":{"type":"array","items":{"type":"string"}}}}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

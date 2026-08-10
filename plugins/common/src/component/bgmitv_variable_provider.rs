@@ -7,7 +7,7 @@ use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
     SdComponentMetadata, SourceFile, VariableProvider,
 };
-use source_downloader_sdk::serde_json::{self, Map, Value};
+use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
@@ -59,7 +59,16 @@ impl ComponentSupplier for BgmTvVariableProviderSupplier {
         true
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Resolves variables through the Bangumi API.".into(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"base-url":{"type":"string","default":"https://api.bgm.tv"},"token":{"type":"string"}}}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 #[derive(Debug, Default)]

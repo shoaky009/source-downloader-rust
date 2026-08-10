@@ -5,7 +5,7 @@ use source_downloader_sdk::component::{
     EmptyPointer, PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source,
     SourceFile, SourcePointer, deserialize_component_config,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{Map, Value, json};
 use source_downloader_sdk::time::OffsetDateTime;
 use source_downloader_sdk::{SdComponent, SourceItem};
 use std::fmt::{Display, Formatter};
@@ -53,7 +53,16 @@ impl ComponentSupplier for SystemFileSourceSupplier {
         }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Provides files from the system filesystem.".to_owned(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"path":{"type":"string"},"mode":{"type":"integer","enum":[0,1],"default":0}},"required":["path"]}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

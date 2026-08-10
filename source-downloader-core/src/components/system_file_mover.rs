@@ -1,9 +1,9 @@
-use serde_json::{Map, Value};
 use source_downloader_sdk::SdComponent;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, FileMover, SdComponent,
     SdComponentMetadata,
 };
+use source_downloader_sdk::serde_json::{Map, Value};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
@@ -29,7 +29,14 @@ impl ComponentSupplier for SystemFileMoverSupplier {
     }
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Moves files using the system file operation.".to_owned(),
+            props_json_schema: None,
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

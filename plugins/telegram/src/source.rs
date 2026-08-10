@@ -117,7 +117,29 @@ impl ComponentSupplier for TelegramSourceSupplier {
     }
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Provides Telegram chats as a source.".into(),
+            props_json_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "client": {"type": "string"},
+                    "chats": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": {"chat-id": {"type": ["integer", "string"]}, "begin-date": {"type": ["string", "null"], "format": "date"}}, "required": ["chat-id"]}},
+                    "sites": {"type": "array", "items": {"type": "string"}, "default": ["Telegraph"]},
+                    "include-non-media": {"type": "boolean", "default": false}
+                },
+                "required": ["client", "chats"]
+            })),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "chatLastMessageIds": {"type": "object", "additionalProperties": {"type": "integer"}}
+                },
+                "required": ["chatLastMessageIds"]
+            })),
+        }))
     }
 }
 

@@ -61,7 +61,35 @@ impl ComponentSupplier for TelegramIntegrationSupplier {
     }
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Resolves and downloads Telegram media.".into(),
+            props_json_schema: Some(source_downloader_sdk::serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "client": {"type": "string"},
+                    "download-path": {"type": "string"}
+                },
+                "required": ["client", "download-path"]
+            })),
+            props_ui_schema: None,
+            state_json_schema: Some(source_downloader_sdk::serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "downloaded": {"type": "integer", "minimum": 0},
+                    "downloading": {"type": "array", "items": {"type": "object", "properties": {
+                        "path": {"type": "string"},
+                        "totalSize": {"type": "integer", "minimum": 0},
+                        "downloadedSize": {"type": "integer", "minimum": 0},
+                        "progress": {"type": "number", "minimum": 0},
+                        "rate": {"type": "string"},
+                        "duration": {"type": "integer", "minimum": 0}
+                    }, "required": ["path", "totalSize", "downloadedSize", "progress", "rate", "duration"]}}
+                },
+                "required": ["downloaded", "downloading"]
+            })),
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

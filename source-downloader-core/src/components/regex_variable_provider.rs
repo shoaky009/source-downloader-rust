@@ -6,7 +6,7 @@ use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
     SdComponentMetadata, SourceFile, VariableProvider, deserialize_component_config,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
@@ -59,7 +59,11 @@ impl ComponentSupplier for RegexVariableProviderSupplier {
         Ok(Arc::new(RegexVariableProvider { regexes, primary: config.primary }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Extracts variables from source item fields using configured regular expressions.".to_owned(),
+            props_json_schema: Some(json!({"type":"object","properties":{"regexes":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"regex":{"type":"string"},"field":{"type":"string","default":"title"}},"required":["name","regex"]}},"primary":{"type":"string"}},"required":["regexes"]})),
+            props_ui_schema: None, state_json_schema: None, state_ui_schema: None, source_pointer_json_schema: None,
+        }))
     }
 }
 

@@ -6,7 +6,7 @@ use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, ProcessingError,
     SdComponent, SdComponentMetadata, SourceFile,
 };
-use source_downloader_sdk::serde_json::{self, Map, Value};
+use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -69,7 +69,16 @@ impl ComponentSupplier for HtmlFileResolverSupplier {
         Ok(Arc::new(HtmlFileResolver { client, selector, attr, direct }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Resolves file URLs from HTML using a CSS selector.".into(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"css-selector":{"type":"string"},"extract-attribute":{"type":"string"},"direct-mode":{"type":"boolean","default":false},"no-proxy":{"type":"boolean","default":false}},"required":["css-selector","extract-attribute"]}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 #[derive(Debug, source_downloader_sdk::SdComponent)]

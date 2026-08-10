@@ -5,7 +5,7 @@ use source_downloader_sdk::component::{
     ProcessContext, ProcessListener, ProcessingError, ProcessorInfo, SdComponent,
     SdComponentMetadata, deserialize_component_config,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::future::Future;
@@ -60,7 +60,16 @@ impl ComponentSupplier for SendHttpRequestSupplier {
         Ok(Arc::new(SendHttpRequest { config, client: reqwest::Client::new() }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Sends HTTP requests for processing events.".to_owned(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string","default":"POST"},"headers":{"type":"object","additionalProperties":{"type":"string"}},"body":{"type":["string","null"]},"with-content-body":{"type":"boolean","default":false}},"required":["url"]}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

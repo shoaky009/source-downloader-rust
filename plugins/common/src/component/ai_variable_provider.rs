@@ -7,7 +7,7 @@ use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
     SdComponentMetadata, SourceFile, VariableProvider, deserialize_component_config,
 };
-use source_downloader_sdk::serde_json::{self, Map, Value};
+use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
@@ -80,7 +80,17 @@ impl ComponentSupplier for AiVariableProviderSupplier {
         }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Uses an OpenAI-compatible API to resolve filename variables."
+                .into(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"api-keys":{"type":"array","items":{"type":"string"},"minItems":1},"resolve-variables":{"type":"array","items":{"type":"string"},"default":[]},"api-host":{"type":"string","default":"https://api.openai.com"},"system-role":{"type":"string"},"model":{"type":"string","default":"gpt-3.5-turbo"},"temperature":{"type":"number","default":0.85},"primary":{"type":"string"}},"required":["api-keys"]}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

@@ -4,7 +4,7 @@ use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ProcessTask, SdComponent,
     SdComponentMetadata, Stateful, Trigger, deserialize_component_config,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
@@ -34,7 +34,19 @@ impl ComponentSupplier for CronTriggerSupplier {
         Ok(Arc::new(CronTrigger::new(config.expression)))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Runs processing tasks according to a cron expression."
+                .to_owned(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"expression":{"type":"string"}},"required":["expression"]}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: Some(
+                json!({"type":"object","properties":{"tasks":{"type":"object","additionalProperties":{"type":"array","items":{"type":"object","properties":{"processName":{"type":"string"}},"required":["processName"]}}}}}),
+            ),
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

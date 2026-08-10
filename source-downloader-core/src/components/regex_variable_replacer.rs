@@ -4,7 +4,7 @@ use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, SdComponent, SdComponentMetadata,
     VariableReplacer, deserialize_component_config,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
@@ -36,7 +36,17 @@ impl ComponentSupplier for RegexVariableReplacerSupplier {
         Ok(Arc::new(RegexVariableReplacer { regex, replacement: config.replacement }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Replaces variable values using a regular expression."
+                .to_owned(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"regex":{"type":"string"},"replacement":{"type":"string"}},"required":["regex","replacement"]}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

@@ -5,7 +5,7 @@ use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, FileTagger, SdComponent,
     SdComponentMetadata, SourceFile, deserialize_component_config,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
@@ -96,7 +96,16 @@ impl ComponentSupplier for SimpleFileTaggerSupplier {
         true
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Tags files using MIME type and extension mappings.".into(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"external-mapping":{"type":"object","additionalProperties":{"type":"string"},"default":{}},"extension-mapping":{"type":"object","additionalProperties":{"type":"string"},"default":{}}}}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

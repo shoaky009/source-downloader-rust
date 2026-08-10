@@ -6,7 +6,7 @@ use source_downloader_sdk::component::{
     ProcessingError, SdComponent, SdComponentMetadata, Source, SourcePointer,
     deserialize_component_config,
 };
-use source_downloader_sdk::serde_json::{Map, Value};
+use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
@@ -37,7 +37,16 @@ impl ComponentSupplier for UriSourceSupplier {
         Ok(Arc::new(UriSource { uri }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Loads source items from a URI.".to_owned(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"uri":{"type":"string"}},"required":["uri"]}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 

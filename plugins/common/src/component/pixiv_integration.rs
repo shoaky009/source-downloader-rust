@@ -10,7 +10,7 @@ use source_downloader_sdk::component::{
     SourcePointer, deserialize_component_config,
 };
 use source_downloader_sdk::http::Uri;
-use source_downloader_sdk::serde_json::{self, Map, Value};
+use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use source_downloader_sdk::time::OffsetDateTime;
 use std::any::Any;
 use std::collections::HashMap;
@@ -84,7 +84,14 @@ impl ComponentSupplier for PixivIntegrationSupplier {
         }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Provides Pixiv bookmarks or followed-user illustrations and resolves media files.".into(),
+            props_json_schema: Some(json!({"type":"object","properties":{"session-id":{"type":"string"},"user-id":{"type":"integer"},"mode":{"type":"string","enum":["bookmark","following"],"default":"bookmark"},"base-url":{"type":"string","default":"https://www.pixiv.net"}},"required":["session-id"]})),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: Some(json!({"type":"object","properties":{"last_illustrations":{"type":"object","additionalProperties":{"type":"integer"}},"top_bookmark_id":{"type":"string"},"current_bookmark_id":{"type":["string","null"]},"touch_bottom":{"type":"boolean"}},"required":["last_illustrations","top_bookmark_id","current_bookmark_id","touch_bottom"]})),
+        }))
     }
 }
 #[derive(Debug, source_downloader_sdk::SdComponent)]

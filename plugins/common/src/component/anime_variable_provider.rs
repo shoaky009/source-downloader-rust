@@ -93,7 +93,17 @@ impl ComponentSupplier for AnimeVariableProviderSupplier {
     }
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
-        None
+        Some(Box::new(SdComponentMetadata {
+            description: "Resolves anime title variables using AniList and Bangumi."
+                .into(),
+            props_json_schema: Some(
+                json!({"type":"object","properties":{"anilist-base-url":{"type":"string","default":"https://graphql.anilist.co"},"bgmtv-base-url":{"type":"string","default":"https://api.bgm.tv"},"bgmtv-token":{"type":"string"},"prefer-bgm-tv":{"type":"boolean","default":false}}}),
+            ),
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
+        }))
     }
 }
 
