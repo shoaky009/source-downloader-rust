@@ -277,7 +277,7 @@ impl ProcessingStorage for SeaProcessingStorage {
             if let Some(title) = &item.title {
                 db_query = db_query.filter(Expr::cust_with_values(
                     "json_extract(item_content, ?) GLOB ?",
-                    ["$.source_item.title".to_owned(), format!("*{title}*")],
+                    ["$.sourceItem.title".to_owned(), format!("*{title}*")],
                 ));
             }
             if let Some(attrs) = &item.attrs {
@@ -285,7 +285,7 @@ impl ProcessingStorage for SeaProcessingStorage {
                     db_query = db_query.filter(Expr::cust_with_values(
                         "json_extract(item_content, ?) = ?",
                         [
-                            Self::json_key_path("$.source_item.attrs", key),
+                            Self::json_key_path("$.sourceItem.attrs", key),
                             value.to_owned(),
                         ],
                     ));
@@ -295,21 +295,21 @@ impl ProcessingStorage for SeaProcessingStorage {
                 for (key, value) in variables {
                     db_query = db_query.filter(Expr::cust_with_values(
                         "json_extract(item_content, ?) = ?",
-                        [Self::json_key_path("$.item_variables", key), value.to_owned()],
+                        [Self::json_key_path("$.itemVariables", key), value.to_owned()],
                     ));
                 }
             }
             if let Some(content_type) = &item.content_type {
                 db_query = db_query.filter(Expr::cust_with_values(
                     "json_extract(item_content, ?) = ?",
-                    ["$.source_item.contentType".to_owned(), content_type.to_owned()],
+                    ["$.sourceItem.contentType".to_owned(), content_type.to_owned()],
                 ));
             }
             if let Some(tags) = &item.tags {
                 for tag in tags {
                     db_query = db_query.filter(Expr::cust_with_values(
                         "EXISTS (SELECT 1 FROM json_each(item_content, \
-                         '$.source_item.tags') WHERE value = ?)",
+                         '$.sourceItem.tags') WHERE value = ?)",
                         [tag.to_owned()],
                     ));
                 }
