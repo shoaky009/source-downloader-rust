@@ -28,7 +28,6 @@ use source_downloader_sdk::component::{
 use source_downloader_sdk::storage::ProcessingStorage;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
-use std::ops::Not;
 use std::path::Path;
 use std::string::ToString;
 use std::sync::Arc;
@@ -40,6 +39,22 @@ fn parse_duration(value: &str) -> Result<std::time::Duration, String> {
     duration
         .to_std()
         .ok_or_else(|| format!("ISO 8601 duration '{value}' contains years or months"))
+}
+
+pub struct PreparedProcessor {
+    config: ProcessorConfig,
+    wrapper: Arc<ProcessorWrapper>,
+    component_manager: Arc<ComponentManager>,
+    cleanup_refs_on_drop: bool,
+    activated: bool,
+}
+
+impl Drop for PreparedProcessor {
+    fn drop(&mut self) {
+        if !self.activated && self.cleanup_refs_on_drop {
+            self.component_manager.remove_processor_refs(&self.config.name);
+        }
+    }
 }
 
 pub struct ProcessorManager {
@@ -158,44 +173,93 @@ impl ProcessorManager {
         evaluate_compatibility(&components)
     }
 
-    pub fn create_processor(&self, config: &ProcessorConfig) {
-        if config.enabled.not() {
-            info!("Processor[disabled] {}", config.name);
-            return;
-        }
-        let compatibility = self.validate_compatibility(config);
-        let processor_wrapper = match if compatibility.valid {
-            self.create_internal(config)
+    pub fn prepare_processor(
+        &self,
+        config: &ProcessorConfig,
+    ) -> Result<PreparedProcessor, ComponentError> {
+        let cleanup_refs_on_drop = !self.processor_exists(&config.name);
+        let result = if config.enabled {
+            let compatibility = self.validate_compatibility(config);
+            if compatibility.valid {
+                self.create_internal(config)
+            } else {
+                Err(ComponentError::new(
+                    compatibility
+                        .violations
+                        .iter()
+                        .map(|v| format!("{}: {}", v.rule_code, v.message))
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                ))
+            }
         } else {
-            Err(ComponentError::new(
-                compatibility
-                    .violations
-                    .iter()
-                    .map(|violation| {
-                        format!("{}: {}", violation.rule_code, violation.message)
-                    })
-                    .collect::<Vec<_>>()
-                    .join("; "),
-            ))
-        } {
-            Ok(processor) => processor,
+            Ok(Arc::new(ProcessorWrapper {
+                name: config.name.clone(),
+                processor: None,
+                error_message: None,
+            }))
+        };
+        match result {
+            Ok(wrapper) => Ok(PreparedProcessor {
+                config: config.clone(),
+                wrapper,
+                component_manager: self.component_manager.clone(),
+                cleanup_refs_on_drop,
+                activated: false,
+            }),
             Err(error) => {
-                self.component_manager.remove_processor_refs(&config.name);
+                if cleanup_refs_on_drop {
+                    self.component_manager.remove_processor_refs(&config.name);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    pub fn activate_processor(
+        &self,
+        mut prepared: PreparedProcessor,
+    ) -> Option<Arc<ProcessorWrapper>> {
+        prepared.activated = true;
+        let name = prepared.config.name.clone();
+        if let Some(processor) = &prepared.wrapper.processor {
+            processor.start_rename_task();
+        }
+        let old = self
+            .processor_wrappers
+            .write()
+            .insert(name.clone(), prepared.wrapper.clone());
+        if prepared.wrapper.processor.is_some() {
+            self.register_task(&prepared.config, prepared.wrapper.clone());
+        } else {
+            self.component_manager.remove_processor_refs(&name);
+        }
+        if let Some(old_wrapper) = old.as_ref() {
+            self.detach_and_close(old_wrapper);
+        }
+        old
+    }
+
+    pub fn create_processor(&self, config: &ProcessorConfig) {
+        let prepared = match self.prepare_processor(config) {
+            Ok(prepared) => prepared,
+            Err(error) => {
                 error!("Processor[create-failed] {} {}", config.name, error);
-                self.processor_wrappers.write().insert(
-                    config.name.to_owned(),
-                    Arc::new(ProcessorWrapper {
-                        name: config.name.to_owned(),
-                        processor: None,
-                        error_message: Some(error.message),
-                    }),
-                );
+                if !self.processor_exists(&config.name) {
+                    self.processor_wrappers.write().insert(
+                        config.name.to_owned(),
+                        Arc::new(ProcessorWrapper {
+                            name: config.name.to_owned(),
+                            processor: None,
+                            error_message: Some(error.message),
+                        }),
+                    );
+                }
                 return;
             }
         };
-        self.register_task(config, processor_wrapper);
+        self.activate_processor(prepared);
     }
-
     fn register_task(
         &self,
         config: &ProcessorConfig,
@@ -219,14 +283,19 @@ impl ProcessorManager {
                     x.add_task(processor_task.clone());
                     info!("Processor[task-added] {} {}", config.name, component_ref);
                 }
-                Err(e) => {
-                    error!(
-                        "Processor[trigger-type-error] {} -> {}: {}",
-                        config.name, component_ref, e
-                    );
-                }
+                Err(e) => error!(
+                    "Processor[trigger-type-error] {} -> {}: {}",
+                    config.name, component_ref, e
+                ),
             }
         }
+    }
+    fn detach_and_close(&self, wrapper: &ProcessorWrapper) {
+        let Some(processor) = &wrapper.processor else { return };
+        for trigger in self.component_manager.get_all_trigger() {
+            trigger.remove_task(processor.clone());
+        }
+        processor.close();
     }
 
     fn create_internal(
@@ -296,15 +365,13 @@ impl ProcessorManager {
             self.create_options(config, task_group)
                 .map_err(|error| Self::creation_error("options", error))?,
         ));
-        let instance_id = processor.instance_id();
-        processor.start_rename_task();
+
         let wrapper = Arc::new(ProcessorWrapper {
             name: config.name.to_owned(),
             processor: Some(processor),
             error_message: None,
         });
-        self.processor_wrappers.write().insert(config.name.to_owned(), wrapper.clone());
-        info!("Processor[created] {} ({instance_id:?})", config.name);
+        info!("Processor[prepared] {}", config.name);
         Ok(wrapper)
     }
 

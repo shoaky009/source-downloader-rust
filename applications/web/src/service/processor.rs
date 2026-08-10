@@ -144,12 +144,11 @@ fn validate_processor_config(
     core.processor_manager.validate_compatibility(config)
 }
 
-fn require_compatible_processor(
+fn prepare_processor(
     core: &CoreApplication,
     config: &ProcessorConfig,
-) -> Result<(), AppError> {
-    let report = validate_processor_config(core, config);
-    if report.valid { Ok(()) } else { Err(AppError::ProcessorCompatibility(report)) }
+) -> Result<source_downloader_core::processor_manager::PreparedProcessor, AppError> {
+    core.processor_manager.prepare_processor(config).map_err(AppError::from)
 }
 
 #[axum::debug_handler]
@@ -175,10 +174,9 @@ async fn update_processor(
             body.name
         )));
     }
-    require_compatible_processor(&core, &body)?;
+    let prepared = prepare_processor(&core, &body)?;
     core.config_operator.save_processor(body.clone())?;
-    core.processor_manager.destroy_processor(&name);
-    core.processor_manager.create_processor(&body);
+    core.processor_manager.activate_processor(prepared);
     Ok(Json(body))
 }
 
@@ -200,9 +198,9 @@ async fn create_processor(
     if core.processor_manager.processor_exists(&body.name) {
         return Err(AppError::BadRequest("Processor already exists".to_string()));
     }
-    require_compatible_processor(&core, &body)?;
+    let prepared = prepare_processor(&core, &body)?;
     core.config_operator.save_processor(body.clone())?;
-    core.processor_manager.create_processor(&body);
+    core.processor_manager.activate_processor(prepared);
     Ok(StatusCode::CREATED)
 }
 
@@ -215,11 +213,8 @@ async fn reload_processor(
         .config_operator
         .get_processor_config(&name)
         .ok_or_else(|| AppError::NotFound("Processor config not found".to_string()))?;
-    require_compatible_processor(&core, &config)?;
-    if core.processor_manager.processor_exists(&name) {
-        core.processor_manager.destroy_processor(&name);
-    }
-    core.processor_manager.create_processor(&config);
+    let prepared = prepare_processor(&core, &config)?;
+    core.processor_manager.activate_processor(prepared);
     Ok(StatusCode::NO_CONTENT)
 }
 

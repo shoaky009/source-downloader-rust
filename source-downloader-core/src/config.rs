@@ -571,16 +571,16 @@ impl ConfigOperator for YamlConfigOperator {
         processor_config: ProcessorConfig,
     ) -> Result<(), ComponentError> {
         let mut config = self.get_config()?;
-        match config.processors.iter().position(|p| p.name == processor_config.name) {
-            Some(index) => {
-                // 只更新 enabled 状态
-                config.processors[index].enabled = processor_config.enabled;
+        match config.processors.iter_mut().find(|p| p.name == processor_config.name) {
+            Some(existing) => {
+                *existing = processor_config;
             }
             None => {
                 config.processors.push(processor_config);
             }
         }
-        Ok(())
+        self.write_config(&config)
+            .map_err(|e| ComponentError::new(format!("Failed to save config: {}", e)))
     }
 
     fn delete_component(
@@ -776,6 +776,33 @@ mod test {
         let cfg_from_file: Config = operator.load_yaml().unwrap();
         let sources = cfg_from_file.components.get("source").expect("未找到 source 组件");
         assert!(!sources.iter().any(|c| c.name == "system-file"));
+    }
+    #[test]
+    fn save_processor_replaces_complete_config_and_writes_file() {
+        let temp_operator = TempFileOperator::new_from_config(CONFIG_PATH);
+        let operator = temp_operator.operator;
+        let original = operator.get_all_processor_config().into_iter().next().unwrap();
+        let mut replacement = original.clone();
+        replacement.save_path = "/tmp/replaced-save-path".to_owned();
+        replacement.source = "replaced-source".to_owned();
+        replacement.tags = HashSet::from(["replacement".to_owned()]);
+
+        operator.save_processor(replacement.clone()).unwrap();
+
+        assert_eq!(
+            operator.get_processor_config(&replacement.name).unwrap().save_path,
+            replacement.save_path
+        );
+        let persisted = operator.load_yaml().unwrap();
+        assert_eq!(
+            persisted
+                .processors
+                .iter()
+                .find(|p| p.name == replacement.name)
+                .unwrap()
+                .source,
+            replacement.source
+        );
     }
     #[test]
     fn ser_de_config() {
