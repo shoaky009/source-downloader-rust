@@ -752,16 +752,19 @@ impl Renamer {
             {
                 continue;
             }
-            let value = process
-                .input
-                .split('.')
-                .try_fold(Value::Object(variables.clone()), |current, key| {
-                    current.get(key).cloned()
-                });
-            let Some(Value::String(value)) = value else {
+            let mut path = process.input.split('.');
+            let Some(first) = path.next() else {
                 continue;
             };
-            for (key, value) in process.process(item, &value, variables).await {
+            let value = variables
+                .get(first)
+                .and_then(|initial| path.try_fold(initial, |value, key| value.get(key)))
+                .and_then(Value::as_str);
+            let Some(value) = value else {
+                continue;
+            };
+            let extracted = process.process(item, value, variables).await;
+            for (key, value) in extracted {
                 variables.insert(key.clone(), Value::String(value.clone()));
                 processed.insert(key, value);
             }
