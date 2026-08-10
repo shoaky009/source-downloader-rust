@@ -293,11 +293,17 @@ impl Renamer {
     ) -> Result<FileContent, source_downloader_sdk::component::ProcessingError> {
         let file_download_path = file.file_download_path();
         let mut variables = self
-            .file_rename_variables(source_item, &file, &file_download_path, extra_variables)
+            .file_rename_variables(
+                source_item,
+                &file,
+                &file_download_path,
+                extra_variables,
+            )
             .await;
         let mut dir_result =
             self.save_directory_path(&file, &file_download_path, &variables);
-        let mut filename_result = self.target_filename(&file, &file_download_path, &variables);
+        let mut filename_result =
+            self.target_filename(&file, &file_download_path, &variables);
 
         let mut errors = std::mem::take(&mut dir_result.failed_expressions);
         errors.append(&mut filename_result.failed_expressions);
@@ -355,20 +361,21 @@ impl Renamer {
                 .unwrap_or(Path::new(""));
             let mut current_trim_vars = variables.trim_variables.clone();
             let mut needs_recalc_dir = false;
-            let pattern_segments: Vec<_> = file.save_path_pattern.pattern.split('/').collect();
+            let pattern_segments: Vec<_> =
+                file.save_path_pattern.pattern.split('/').collect();
 
             for (index, component) in rel_path.components().enumerate() {
                 let segment_name = component.as_os_str().to_str().unwrap_or("");
-                if segment_name.len() > self.path_name_length_limit {
-                    if let Some(pattern_part) = pattern_segments.get(index) {
-                        self.execute_trim(
-                            pattern_part,
-                            segment_name,
-                            &variables.variables,
-                            &mut current_trim_vars,
-                        );
-                        needs_recalc_dir = true;
-                    }
+                if segment_name.len() > self.path_name_length_limit
+                    && let Some(pattern_part) = pattern_segments.get(index)
+                {
+                    self.execute_trim(
+                        pattern_part,
+                        segment_name,
+                        &variables.variables,
+                        &mut current_trim_vars,
+                    );
+                    needs_recalc_dir = true;
                 }
             }
             if needs_recalc_dir {

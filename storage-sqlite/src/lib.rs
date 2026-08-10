@@ -397,10 +397,7 @@ impl ProcessingStorage for SeaProcessingStorage {
             .all(&self.db)
             .await
             .map(|models| {
-                models
-                    .into_iter()
-                    .map(|model| (model.id, model.file_content))
-                    .collect()
+                models.into_iter().map(|model| (model.id, model.file_content)).collect()
             })
             .map_err(|error| Error { message: error.to_string() })
     }

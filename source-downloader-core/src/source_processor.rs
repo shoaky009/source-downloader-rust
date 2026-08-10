@@ -2030,7 +2030,7 @@ trait Process {
                 let Some(owner_hash) = reserved_paths.get(&target_path) else {
                     continue;
                 };
-                if owner_hash == &current_hash {
+                if owner_hash == current_hash {
                     continue;
                 }
                 let Some(before) = in_flight_items.get(owner_hash) else {
@@ -2242,7 +2242,13 @@ trait Process {
             }
             let has_reserved_target_conflict =
                 rt.reserve_target_paths(item_hash, &mut file_contents);
-            rt.register_in_flight(p, item_hash, source_item, &item_variables, &file_contents);
+            rt.register_in_flight(
+                p,
+                item_hash,
+                source_item,
+                &item_variables,
+                &file_contents,
+            );
             self.probe_content_status(
                 p,
                 rt,
@@ -2253,7 +2259,9 @@ trait Process {
             )
         };
         let mut rename_times = 0;
-        if should_download && self.do_download(p, source_item, item_hash, &file_contents).await? {
+        if should_download
+            && self.do_download(p, source_item, item_hash, &file_contents).await?
+        {
             let is_sync = p.async_downloader.is_none();
             if is_sync {
                 let movement_res = self.do_movement(p, source_item, &file_contents).await;
