@@ -4,6 +4,7 @@ use crate::config::ListenerMode;
 use crate::process::file::{PathPattern, RawFileContent, Renamer, VariableErrorStrategy};
 use crate::process::rule::{FileRule, ItemRule, ItemStrategy};
 use crate::process::variable::VariableAggregation;
+use crate::processor_run_state::{ProcessorItemStage, ProcessorRunItemGuard};
 use async_trait::async_trait;
 use backon::Retryable;
 use backon::{BackoffBuilder, ConstantBuilder};
@@ -582,6 +583,7 @@ struct CompletedItem {
     source_item: SourceItem,
     item_hash: String,
     action: ItemAction,
+    progress: crate::processor_run_state::ProcessorRunItemGuard,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1132,6 +1134,9 @@ impl SourceProcessor {
     }
 
     pub async fn run_rename(&self) -> Result<usize, ProcessingError> {
+        crate::processor_run_state::set_run_stage(
+            crate::processor_run_state::ProcessorRunStage::Initializing,
+        );
         if self.closed.load(Ordering::Acquire) {
             return Err(ProcessingError::non_retryable("Processor is closed"));
         }
@@ -1139,6 +1144,9 @@ impl SourceProcessor {
             warn!("Processor[rename-skip] {} downloader is synchronous", self.name);
             return Ok(0);
         };
+        crate::processor_run_state::set_run_stage(
+            crate::processor_run_state::ProcessorRunStage::ScanningItems,
+        );
         let contents = self
             .processing_storage
             .query_processing_content(&ProcessingContentQuery {
@@ -1150,7 +1158,7 @@ impl SourceProcessor {
             .await
             .map_err(|error| ProcessingError::non_retryable(error.message))?;
         let mut listener_context = ListenerContext::new(self);
-        let mut finished = 0;
+        let mut movable = Vec::new();
 
         for mut content in contents {
             match async_downloader.is_finished(&content.item_content.source_item).await {
@@ -1168,76 +1176,87 @@ impl SourceProcessor {
                         .map_err(|error| ProcessingError::non_retryable(error.message))?;
                 }
                 Some(false) => {}
-                Some(true) => {
-                    finished += 1;
-                    match self.process_rename_content(&mut content).await {
-                        Ok(files) => {
-                            let renamed = content.status == ProcessingStatus::Renamed;
-                            let item_hash = content.item_hash.to_owned();
-                            listener_context.add(content, files);
-                            let completed = listener_context
-                                .get_item_content_by_hash(&item_hash)
-                                .expect("renamed item content was just inserted");
-                            let item_content = ItemContent {
-                                source_item: completed.source_item,
-                                file_contents: completed.file_contents,
-                                item_variables: completed.item_variables,
-                                status: *completed.status,
-                            };
-                            if renamed {
-                                self.notify_process_listeners(
-                                    ListenerMode::Each,
-                                    "item-success",
-                                    |listener| {
-                                        listener.on_item_success(
-                                            &listener_context,
-                                            &item_content,
-                                        )
-                                    },
-                                );
-                            }
-                        }
-                        Err(error) => {
-                            listener_context.has_error = true;
+                Some(true) => movable.push(content),
+            }
+        }
+        crate::processor_run_state::set_total_items(movable.len());
+        crate::processor_run_state::set_run_stage(
+            crate::processor_run_state::ProcessorRunStage::ProcessingItems,
+        );
+        let finished = movable.len();
+        for mut content in movable {
+            let progress = ProcessorRunItemGuard::new(
+                &content.item_content.source_item.title,
+                ProcessorItemStage::CheckingFiles,
+            );
+            match self.process_rename_content(&mut content, &progress).await {
+                Ok(files) => {
+                    let renamed = content.status == ProcessingStatus::Renamed;
+                    let item_hash = content.item_hash.to_owned();
+                    listener_context.add(content, files);
+                    let completed = listener_context
+                        .get_item_content_by_hash(&item_hash)
+                        .expect("renamed item content was just inserted");
+                    let item_content = ItemContent {
+                        source_item: completed.source_item,
+                        file_contents: completed.file_contents,
+                        item_variables: completed.item_variables,
+                        status: *completed.status,
+                    };
+                    progress.set_stage(ProcessorItemStage::Notifying);
+                    if renamed {
+                        self.notify_process_listeners(
+                            ListenerMode::Each,
+                            "item-success",
+                            |listener| {
+                                listener.on_item_success(&listener_context, &item_content)
+                            },
+                        );
+                    }
+                }
+                Err(error) => {
+                    listener_context.has_error = true;
+                    warn!(
+                        "Processor[rename-item-error] {} item={} {}",
+                        self.name,
+                        content.item_content.source_item,
+                        error.message()
+                    );
+                    let item_hash = content.item_hash.to_owned();
+                    let files = match self.load_file_contents(&content).await {
+                        Ok(files) => files,
+                        Err(load_error) => {
                             warn!(
-                                "Processor[rename-item-error] {} item={} {}",
+                                "Processor[rename-item-files-load-error] {} item={} {}",
                                 self.name,
                                 content.item_content.source_item,
-                                error.message()
+                                load_error.message()
                             );
-                            let item_hash = content.item_hash.to_owned();
-                            let files = match self.load_file_contents(&content).await {
-                                Ok(files) => files,
-                                Err(load_error) => {
-                                    warn!(
-                                        "Processor[rename-item-files-load-error] {} item={} {}",
-                                        self.name,
-                                        content.item_content.source_item,
-                                        load_error.message()
-                                    );
-                                    Vec::new()
-                                }
-                            };
-                            listener_context.add(content, files);
-                            let failed = listener_context
-                                .get_item_content_by_hash(&item_hash)
-                                .expect("failed rename item content was just inserted");
-                            self.notify_process_listeners(
-                                ListenerMode::Each,
-                                "item-error",
-                                |listener| {
-                                    listener.on_item_error(
-                                        &listener_context,
-                                        failed.source_item,
-                                        &error,
-                                    )
-                                },
-                            );
+                            Vec::new()
                         }
-                    }
+                    };
+                    listener_context.add(content, files);
+                    let failed = listener_context
+                        .get_item_content_by_hash(&item_hash)
+                        .expect("failed rename item content was just inserted");
+                    progress.set_stage(ProcessorItemStage::Notifying);
+                    self.notify_process_listeners(
+                        ListenerMode::Each,
+                        "item-error",
+                        |listener| {
+                            listener.on_item_error(
+                                &listener_context,
+                                failed.source_item,
+                                &error,
+                            )
+                        },
+                    );
                 }
             }
         }
+        crate::processor_run_state::set_run_stage(
+            crate::processor_run_state::ProcessorRunStage::Finalizing,
+        );
         if finished > 0 {
             self.notify_process_listeners(
                 ListenerMode::Batch,
@@ -1284,6 +1303,7 @@ impl SourceProcessor {
     async fn process_rename_content(
         &self,
         content: &mut ProcessingContent,
+        progress: &ProcessorRunItemGuard,
     ) -> Result<Vec<FileContent>, ProcessingError> {
         let mut files = self.load_file_contents(content).await?;
         let target_paths = files.iter().map(FileContent::target_path).collect_vec();
@@ -1303,9 +1323,11 @@ impl SourceProcessor {
                     &mut files,
                 )
                 .await;
+            progress.set_stage(ProcessorItemStage::MovingFiles);
             let movement_result = process
                 .do_movement(self, &content.item_content.source_item, &files)
                 .await;
+            progress.set_stage(ProcessorItemStage::ReplacingFiles);
             let replacement_result = process
                 .do_replacement(self, &content.item_content.source_item, &files)
                 .await;
@@ -1321,6 +1343,7 @@ impl SourceProcessor {
             content.updated_at = Some(OffsetDateTime::now_utc());
         }
 
+        progress.set_stage(ProcessorItemStage::Persisting);
         self.processing_storage
             .save_processing_content(content)
             .await
@@ -1686,7 +1709,9 @@ trait Process {
         completed: CompletedItem,
         advance_pointer: bool,
     ) -> ScheduleDecision {
-        let CompletedItem { item_pointer, source_item, item_hash, action } = completed;
+        let CompletedItem { item_pointer, source_item, item_hash, action, progress } =
+            completed;
+        progress.set_stage(ProcessorItemStage::Persisting);
         match action {
             ItemAction::Skip(reason) => self.settle_skipped_item(&source_item, reason),
             ItemAction::Filtered(reason) => {
@@ -1731,6 +1756,9 @@ trait Process {
     }
 
     async fn execute(&self, p: &SourceProcessor) -> Result<(), ProcessingError> {
+        crate::processor_run_state::set_run_stage(
+            crate::processor_run_state::ProcessorRunStage::Initializing,
+        );
         let span_exec = tracing::info_span!("", processor = p.name);
         let start_time = Instant::now();
         let _span_exec_entered = span_exec.enter();
@@ -1756,8 +1784,15 @@ trait Process {
             let mut p_rt = self.init_process_context(p, start_time).await?;
             debug!("Fetch with pointer: {}", p_rt.coordinator.source_pointer.dump());
             p_rt.fetch_start_at = Some(Instant::now());
+            crate::processor_run_state::set_run_stage(
+                crate::processor_run_state::ProcessorRunStage::FetchingItems,
+            );
             let items =
                 self.fetch_items(p, p_rt.coordinator.source_pointer.as_ref()).await?;
+            crate::processor_run_state::set_total_items(items.len());
+            crate::processor_run_state::set_run_stage(
+                crate::processor_run_state::ProcessorRunStage::ProcessingItems,
+            );
             p_rt.fetch_end_at = Some(Instant::now());
             let parallelism = p.options.parallelism.max(1) as usize;
             if p.options.parallelism == 0 {
@@ -1771,11 +1806,28 @@ trait Process {
                     let item_pointer = item.item_pointer;
                     let source_item = item.source_item;
                     let item_hash = source_item.hashing();
+                    let progress = crate::processor_run_state::ProcessorRunItemGuard::new(
+                        &source_item.title,
+                        crate::processor_run_state::ProcessorItemStage::FilteringItem,
+                    );
                     let action = process
-                        .process_item(&source_item, &item_hash, item_runtime, processor)
+                        .process_item(
+                            &source_item,
+                            &item_hash,
+                            item_runtime,
+                            processor,
+                            &progress,
+                        )
                         .await
                         .unwrap_or_else(ItemAction::Error);
-                    CompletedItem { item_pointer, source_item, item_hash, action }
+                    progress.set_stage(crate::processor_run_state::ProcessorItemStage::AwaitingSettlement);
+                    CompletedItem {
+                        item_pointer,
+                        source_item,
+                        item_hash,
+                        action,
+                        progress,
+                    }
                 };
             let mut remaining_items = items.into_iter();
             let mut item_results = FuturesOrdered::new();
@@ -1809,6 +1861,9 @@ trait Process {
                     content.status = ProcessingStatus::Cancelled;
                 }
             }
+            crate::processor_run_state::set_run_stage(
+                crate::processor_run_state::ProcessorRunStage::Finalizing,
+            );
             self.on_process_complete(p, &p_rt).await?;
             p_rt.process_end_at = Some(Instant::now());
             info!("[run-done] {} {}", p.name, p_rt.summary());
@@ -2134,6 +2189,7 @@ trait Process {
         item_hash: &str,
         rt: &ItemProcessRuntime,
         p: &SourceProcessor,
+        progress: &ProcessorRunItemGuard,
     ) -> Result<ItemAction, ProcessingError> {
         if !rt.process_submitted_items.write().insert(item_hash.to_owned()) {
             rt.filter_inc();
@@ -2158,8 +2214,15 @@ trait Process {
         }
         let result = SourceProcessor::apply_retry(
             || async {
-                self.process_item_attempt(source_item, item_hash, rt, p, item_strategy)
-                    .await
+                self.process_item_attempt(
+                    source_item,
+                    item_hash,
+                    rt,
+                    p,
+                    item_strategy,
+                    progress,
+                )
+                .await
             },
             "process-item",
             p.options.retry_attempts,
@@ -2179,7 +2242,9 @@ trait Process {
         rt: &ItemProcessRuntime,
         p: &SourceProcessor,
         item_strategy: Option<&ItemStrategy>,
+        progress: &ProcessorRunItemGuard,
     ) -> Result<ItemAction, ProcessingError> {
+        progress.set_stage(ProcessorItemStage::ResolvingVariables);
         let opt = &p.options;
         let mut item_raw_vars = vec![];
         let variable_providers = item_strategy
@@ -2191,6 +2256,7 @@ trait Process {
         let item_variables = opt.variable_aggregation.merge(&item_raw_vars);
 
         let resolved_files = self.resolve_files(source_item, p).await?;
+        progress.set_stage(ProcessorItemStage::ResolvingFiles);
         let mut file_contents = self
             .process_source_files(
                 p,
@@ -2229,9 +2295,11 @@ trait Process {
                 failure_reason,
             });
         }
+        progress.set_stage(ProcessorItemStage::CheckingFiles);
         let (should_download, mut content_status) = {
             let _guard = rt.mutex.lock().await;
             self.update_file_content_status(p, source_item, &mut file_contents).await;
+            progress.set_stage(ProcessorItemStage::DecidingReplacements);
             self.identify_files_to_replace(p, source_item, item_hash, &mut file_contents)
                 .await?;
             if self.allows_in_flight_cancellation() && p.async_downloader.is_some() {
@@ -2262,13 +2330,16 @@ trait Process {
                 has_reserved_target_conflict,
             )
         };
+        progress.set_stage(ProcessorItemStage::SubmittingDownload);
         let mut rename_times = 0;
         if should_download
             && self.do_download(p, source_item, item_hash, &file_contents).await?
         {
             let is_sync = p.async_downloader.is_none();
             if is_sync {
+                progress.set_stage(ProcessorItemStage::MovingFiles);
                 let movement_res = self.do_movement(p, source_item, &file_contents).await;
+                progress.set_stage(ProcessorItemStage::ReplacingFiles);
                 let replacement_res =
                     self.do_replacement(p, source_item, &file_contents).await;
                 let has_replacements =

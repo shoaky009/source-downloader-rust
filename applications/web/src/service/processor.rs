@@ -16,7 +16,9 @@ use source_downloader_core::application::CoreApplication;
 use source_downloader_core::compatibility::ProcessorCompatibilityReport;
 use source_downloader_core::config::ProcessorConfig;
 use source_downloader_core::processor_manager::ProcessorWrapper;
-use source_downloader_core::processor_run_manager::ProcessorRunSnapshot;
+use source_downloader_core::processor_run_manager::{
+    ProcessorRunEvent, ProcessorRunSnapshot,
+};
 #[cfg(test)]
 use source_downloader_core::source_processor::DryRunErrorKind;
 use source_downloader_core::source_processor::{
@@ -84,13 +86,28 @@ async fn cancel_run(
 async fn run_events(
     State(core): State<Arc<CoreApplication>>,
 ) -> Sse<impl futures_util::Stream<Item = Result<Event, std::convert::Infallible>>> {
-    let rx = core.run_manager.subscribe();
-    let stream = futures_util::stream::unfold(rx, |mut rx| async move {
-        match rx.recv().await {
-            Ok(event) => Some((Ok(Event::default().json_data(event).unwrap()), rx)),
-            Err(_) => None,
-        }
-    });
+    let receiver = core.run_manager.subscribe();
+    let initial = ProcessorRunEvent::Resync { runs: core.run_manager.list() };
+    let stream = futures_util::stream::unfold(
+        (receiver, core.run_manager.clone(), Some(initial)),
+        |(mut receiver, manager, pending)| async move {
+            let event = if let Some(event) = pending {
+                event
+            } else {
+                match receiver.recv().await {
+                    Ok(event) => event,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        ProcessorRunEvent::Resync { runs: manager.list() }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                }
+            };
+            Some((
+                Ok(Event::default().event("processor-run").json_data(event).unwrap()),
+                (receiver, manager, None),
+            ))
+        },
+    );
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
