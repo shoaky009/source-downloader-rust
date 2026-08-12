@@ -1767,7 +1767,7 @@ trait Process {
             return Err(ProcessingError::non_retryable("Processor is closed"));
         }
         if p.processing.swap(true, Ordering::AcqRel) {
-            info!("[run-reject] {}({}) Already processing", p.name, p.instance_id);
+            debug!("[run-reject] {}({}) Already processing", p.name, p.instance_id);
             return Err(ProcessingError::non_retryable("Already processing"));
         }
         let (abort_handle, abort_registration) = AbortHandle::new_pair();
@@ -2144,7 +2144,7 @@ trait Process {
             if !runtime.begin_cancel(&item_hash) {
                 continue;
             }
-            info!("[item-cancel-for-replacement] {}", item);
+            debug!("[item-cancel-for-replacement] {}", item);
             if let Err(error) = processor.downloader.cancel(&item, &files).await {
                 runtime.undo_cancel(&item_hash);
                 return Err(error);
@@ -2631,10 +2631,10 @@ trait Process {
         }
         // 预防这一批次的Item有相同的目标，并且是AsyncDownloader的情况下会重复下载
         if files.iter().all(|x| x.status == TargetExists) {
-            warn!(
-                "Item files already exists:{}, files:{:?}",
+            debug!(
+                "Item files already exist: {}, files: {:?}",
                 source_item,
-                files.iter().map(|f| f.target_path.get()).collect_vec()
+                files.iter().map(|file| file.target_path.get()).collect_vec()
             );
             return (false, ProcessingStatus::TargetAlreadyExists);
         }
