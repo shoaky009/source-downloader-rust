@@ -2936,22 +2936,21 @@ impl NormalProcess {}
 pub fn encode_files_and_compress(
     files: &[FileContent],
 ) -> Result<Vec<u8>, ProcessingError> {
-    let bytes = if files.is_empty() {
-        vec![]
-    } else {
-        let bytes = postcard::to_stdvec(&files).map_err(|x| {
-            ProcessingError::non_retryable(format!("Failed to desc file content {}", x))
-        })?;
-        // 压缩比待定
-        let level = 6;
-        zstd::encode_all(Cursor::new(bytes), level).map_err(|x| {
-            ProcessingError::non_retryable(format!(
-                "Failed to compress file content {}",
-                x
-            ))
-        })?
-    };
-    Ok(bytes)
+    if files.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let bytes = serde_json::to_vec(files).map_err(|error| {
+        ProcessingError::non_retryable(format!(
+            "Failed to serialize file content: {error}"
+        ))
+    })?;
+
+    zstd::encode_all(Cursor::new(bytes), 6).map_err(|error| {
+        ProcessingError::non_retryable(format!(
+            "Failed to compress file content: {error}"
+        ))
+    })
 }
 
 #[allow(dead_code)]
@@ -2959,18 +2958,19 @@ pub fn decode_files_from_compressed(
     bytes: &[u8],
 ) -> Result<Vec<FileContent>, ProcessingError> {
     if bytes.is_empty() {
-        return Ok(vec![]);
+        return Ok(Vec::new());
     }
-    let decompressed = zstd::decode_all(bytes).map_err(|x| {
-        ProcessingError::non_retryable(format!("Failed to decompress file content {}", x))
-    })?;
-    let files: Vec<FileContent> = postcard::from_bytes(&decompressed).map_err(|x| {
+
+    let decompressed = zstd::decode_all(bytes).map_err(|error| {
         ProcessingError::non_retryable(format!(
-            "Failed to deserialize file content {}",
-            x
+            "Failed to decompress file content: {error}"
         ))
     })?;
-    Ok(files)
+    serde_json::from_slice(&decompressed).map_err(|error| {
+        ProcessingError::non_retryable(format!(
+            "Failed to deserialize file content: {error}"
+        ))
+    })
 }
 
 enum DryRunOutput {
