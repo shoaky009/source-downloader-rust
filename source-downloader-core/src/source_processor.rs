@@ -1393,7 +1393,10 @@ impl SourceProcessor {
             .map_err(|error| ProcessingError::non_retryable(error.message))?;
         if let Some(content_id) = content.id {
             self.processing_storage
-                .save_file_contents(content_id, encode_files_and_compress(&files)?)
+                .save_file_contents(
+                    content_id,
+                    encode_files_and_compress_async(&files).await?,
+                )
                 .await
                 .map_err(|error| ProcessingError::non_retryable(error.message))?;
         }
@@ -2901,7 +2904,7 @@ impl Process for NormalProcess {
                 ))
             })?;
         p.processing_storage
-            .save_file_contents(content_id, encode_files_and_compress(files)?)
+            .save_file_contents(content_id, encode_files_and_compress_async(files).await?)
             .await
             .map_err(|error| {
                 ProcessingError::non_retryable(format!(
@@ -2977,19 +2980,38 @@ impl Process for NormalProcess {
 
 impl NormalProcess {}
 
+async fn encode_files_and_compress_async(
+    files: &[FileContent],
+) -> Result<Vec<u8>, ProcessingError> {
+    if files.is_empty() {
+        return Ok(Vec::new());
+    }
+    let bytes = serialize_files(files)?;
+    tokio::task::spawn_blocking(move || compress_files(bytes)).await.map_err(|error| {
+        ProcessingError::non_retryable(format!(
+            "File content compression task failed: {error}"
+        ))
+    })?
+}
+
 pub fn encode_files_and_compress(
     files: &[FileContent],
 ) -> Result<Vec<u8>, ProcessingError> {
     if files.is_empty() {
         return Ok(Vec::new());
     }
+    compress_files(serialize_files(files)?)
+}
 
-    let bytes = serde_json::to_vec(files).map_err(|error| {
+fn serialize_files(files: &[FileContent]) -> Result<Vec<u8>, ProcessingError> {
+    serde_json::to_vec(files).map_err(|error| {
         ProcessingError::non_retryable(format!(
             "Failed to serialize file content: {error}"
         ))
-    })?;
+    })
+}
 
+fn compress_files(bytes: Vec<u8>) -> Result<Vec<u8>, ProcessingError> {
     zstd::encode_all(Cursor::new(bytes), 6).map_err(|error| {
         ProcessingError::non_retryable(format!(
             "Failed to compress file content: {error}"
@@ -3251,7 +3273,7 @@ impl Process for Reprocess {
             .map_err(|error| ProcessingError::non_retryable(error.message))?;
         processor
             .processing_storage
-            .save_file_contents(content_id, encode_files_and_compress(files)?)
+            .save_file_contents(content_id, encode_files_and_compress_async(files).await?)
             .await
             .map_err(|error| ProcessingError::non_retryable(error.message))?;
         Ok(Some(content_id))
@@ -3311,7 +3333,7 @@ impl Process for FixedItemProcess {
             .map_err(|error| ProcessingError::non_retryable(error.message))?;
         processor
             .processing_storage
-            .save_file_contents(content_id, encode_files_and_compress(files)?)
+            .save_file_contents(content_id, encode_files_and_compress_async(files).await?)
             .await
             .map_err(|error| ProcessingError::non_retryable(error.message))?;
         Ok(Some(content_id))

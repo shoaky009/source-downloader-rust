@@ -12,6 +12,7 @@ use source_downloader_sdk::storage::{
 };
 use std::any::Any;
 use std::fmt::{Display, Formatter};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
 /// 测试用的可比较 item pointer，只模拟 pointer 身份，不推进真实 source 状态。
@@ -795,6 +796,35 @@ fn pointer_test_processor_with_settings(
         },
     );
     (processor, storage)
+}
+
+#[tokio::test]
+async fn async_file_compression_matches_sync_encoding() {
+    let file = FileContent {
+        download_path: PathBuf::new(),
+        file_download_path: PathBuf::from("episode.mkv"),
+        source_save_path: PathBuf::new(),
+        pattern_variables: HashMap::new(),
+        file_save_path_pattern: String::new(),
+        filename_pattern: String::new(),
+        tags: Vec::new(),
+        attrs: Default::default(),
+        file_uri: None,
+        target_save_path: PathBuf::new(),
+        target_filename: "episode.mkv".to_owned(),
+        exist_target_path: None,
+        errors: Vec::new(),
+        status: Normal,
+        target_path: OnceLock::new(),
+        data: None,
+        processed_variables: None,
+    };
+
+    let compressed =
+        encode_files_and_compress_async(std::slice::from_ref(&file)).await.unwrap();
+
+    let decoded = decode_files_from_compressed(&compressed).unwrap();
+    assert_eq!(decoded[0].target_filename, file.target_filename);
 }
 
 #[tokio::test]
