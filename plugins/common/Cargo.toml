@@ -64,5 +64,9 @@ harness = false
 name = "episode_variable_provider"
 harness = false
 
+[[bench]]
+name = "resolution_variable_provider"
+harness = false
+
 #[lib]
 #crate-type = ["dylib", "rlib"]
