@@ -81,3 +81,7 @@ harness = false
 [[bench]]
 name = "file_size_replacement_decider"
 harness = false
+
+[[bench]]
+name = "fixed_source"
+harness = false
