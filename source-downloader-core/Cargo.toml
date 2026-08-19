@@ -97,3 +97,7 @@ harness = false
 [[bench]]
 name = "url_file_resolver"
 harness = false
+
+[[bench]]
+name = "keyword_integration"
+harness = false
