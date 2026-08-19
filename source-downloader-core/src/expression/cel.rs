@@ -1,14 +1,18 @@
 use crate::expression::{CompiledExpression, CompiledExpressionFactory, ExprValue};
 use cel::extractors::This;
-use cel::{Context, Program, Value};
+use cel::{Context, FunctionContext, Program, Value};
+use moka::sync::Cache;
 use source_downloader_sdk::serde_json::Map;
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 pub struct CelCompiledExpressionFactory {}
 pub const FACTORY: CelCompiledExpressionFactory = CelCompiledExpressionFactory {};
+
+static REGEX_CACHE: LazyLock<Cache<String, Arc<regex::Regex>>> =
+    LazyLock::new(|| Cache::new(256));
 
 impl CompiledExpressionFactory for CelCompiledExpressionFactory {
     fn create<T>(
@@ -35,6 +39,7 @@ where
     fn execute(&self, vars: &Map<String, serde_json::Value>) -> Result<T, String> {
         let mut context = Context::default();
         context.add_function("containsAny", contains_any);
+        context.add_function("matches", matches);
         for (k, v) in vars.iter() {
             // 预期不应该错误
             context.add_variable(k.as_str(), Self::json_to_cel(v)).unwrap();
@@ -140,6 +145,21 @@ impl ExprValue for String {
     }
 }
 
+fn matches(
+    context: &FunctionContext,
+    This(value): This<Arc<String>>,
+    pattern: Arc<String>,
+) -> Result<bool, cel::ExecutionError> {
+    let regex = REGEX_CACHE
+        .try_get_with_by_ref(pattern.as_str(), || {
+            regex::Regex::new(pattern.as_str()).map(Arc::new)
+        })
+        .map_err(|error| {
+            context.error(format!("'{pattern}' not a valid regex:\n{error}"))
+        })?;
+    Ok(regex.is_match(value.as_str()))
+}
+
 fn contains_any(
     This(source): This<Arc<Vec<Value>>>,
     target: Arc<Vec<Value>>,
@@ -189,5 +209,27 @@ mod tests {
         let result = expression.unwrap().execute(&vars);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 4);
+    }
+
+    #[test]
+    fn test_matches_expression() {
+        let expression =
+            FACTORY.create::<bool>("item.title.matches('^show-[0-9]{3}$')").unwrap();
+        let vars = serde_json::from_value(serde_json::json!({
+            "item": { "title": "show-042" }
+        }))
+        .unwrap();
+
+        assert!(expression.execute(&vars).unwrap());
+        assert!(expression.execute(&vars).unwrap());
+    }
+
+    #[test]
+    fn test_invalid_matches_expression_returns_error() {
+        let expression = FACTORY.create::<bool>("'show-042'.matches('(show')").unwrap();
+
+        let error = expression.execute(&Map::new()).unwrap_err();
+
+        assert!(error.contains("not a valid regex"), "{error}");
     }
 }

@@ -27,7 +27,7 @@ syn = "3.0"
 quote = "1.0"
 tempfile = "3"
 parking_lot = "0.12"
-cel = "0.14"
+cel = { version = "0.14", default-features = false }
 humantime = "2.3"
 iso8601-duration = "0.2"
 clap = { version = "4", features = ["derive", "env"] }
