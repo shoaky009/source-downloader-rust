@@ -57,14 +57,12 @@ impl ItemFileResolver for UrlFileResolver {
         &self,
         source_item: &SourceItem,
     ) -> Result<Vec<SourceFile>, ProcessingError> {
-        let raw_path = source_item.download_uri.path();
-        let filename = url::Url::parse(&source_item.download_uri.to_string())
-            .ok()
-            .and_then(|url| {
-                url.path_segments()
-                    .and_then(|mut segments| segments.next_back().map(str::to_owned))
-            })
-            .or_else(|| raw_path.rsplit('/').next().map(str::to_owned))
+        let filename = source_item
+            .download_uri
+            .path()
+            .rsplit('/')
+            .next()
+            .map(str::to_owned)
             .filter(|filename| !filename.trim().is_empty())
             .unwrap_or_else(|| source_item.hashing());
         Ok(vec![SourceFile::new(PathBuf::from(filename))])

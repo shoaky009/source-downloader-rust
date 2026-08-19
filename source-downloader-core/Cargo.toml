@@ -93,3 +93,7 @@ harness = false
 [[bench]]
 name = "sequence_variable_provider"
 harness = false
+
+[[bench]]
+name = "url_file_resolver"
+harness = false
