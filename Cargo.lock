@@ -1026,6 +1026,7 @@ dependencies = [
  "anitomy",
  "bytes",
  "chardetng",
+ "criterion",
  "encoding_rs",
  "hex",
  "imagesize",
