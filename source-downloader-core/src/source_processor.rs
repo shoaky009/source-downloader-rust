@@ -374,6 +374,8 @@ pub struct SourceProcessor {
     instance_id: i64,
     /// 表示处理器当前是否正在处理的原子标志。
     processing: AtomicBool,
+    /// 表示处理器当前是否正在执行重命名扫描。
+    renaming: AtomicBool,
     /// 表示处理器是否已关闭的原子标志。
     closed: AtomicBool,
     /// 当前处理任务的取消句柄。
@@ -757,6 +759,17 @@ impl Drop for ProcessingGuard<'_> {
     }
 }
 
+/// 重命名运行状态的 RAII 记录器，保证取消和错误路径均释放 CAS 标志。
+struct RenamingGuard<'a> {
+    processor: &'a SourceProcessor,
+}
+
+impl Drop for RenamingGuard<'_> {
+    fn drop(&mut self) {
+        self.processor.renaming.store(false, Ordering::Release);
+    }
+}
+
 fn absolute_processor_path(path: &Path) -> Box<Path> {
     match std::path::absolute(path) {
         Ok(path) => path.into_boxed_path(),
@@ -835,6 +848,7 @@ impl SourceProcessor {
             options,
             instance_id: INSTANCE_ID_GENERATOR.fetch_add(1, Ordering::Relaxed),
             processing: AtomicBool::new(false),
+            renaming: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             active_process: SyncMutex::new(None),
             runtime: ProcessorRuntime::new(),
@@ -1134,6 +1148,15 @@ impl SourceProcessor {
     }
 
     pub async fn run_rename(&self) -> Result<usize, ProcessingError> {
+        if self
+            .renaming
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            warn!("Processor[rename-reject] {} already renaming", self.name);
+            return Err(ProcessingError::non_retryable("Already renaming"));
+        }
+        let _renaming_guard = RenamingGuard { processor: self };
         crate::processor_run_state::set_run_stage(
             crate::processor_run_state::ProcessorRunStage::Initializing,
         );

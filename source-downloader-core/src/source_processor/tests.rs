@@ -1590,6 +1590,25 @@ async fn rename_task_checks_immediately() {
     .await
     .expect("rename task should check before its configured interval");
 }
+#[tokio::test]
+async fn concurrent_rename_is_rejected() {
+    let (processor, _) = pointer_test_processor(false, 0, false);
+    processor.renaming.store(true, AtomicOrdering::Release);
+
+    let error = processor.run_rename().await.unwrap_err();
+
+    assert_eq!(error.message(), "Already renaming");
+}
+
+#[tokio::test]
+async fn rename_flag_is_released_after_failure() {
+    let (processor, _) = pointer_test_processor(false, 0, false);
+    processor.close();
+
+    processor.run_rename().await.unwrap_err();
+
+    assert!(!processor.renaming.load(AtomicOrdering::Acquire));
+}
 
 #[tokio::test]
 async fn item_error_stops_new_work_and_drains_started_items() {
