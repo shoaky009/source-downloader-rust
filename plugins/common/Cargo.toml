@@ -72,5 +72,9 @@ harness = false
 name = "season_variable_provider"
 harness = false
 
+[[bench]]
+name = "language_variable_provider"
+harness = false
+
 #[lib]
 #crate-type = ["dylib", "rlib"]
