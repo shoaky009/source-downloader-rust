@@ -544,7 +544,7 @@ struct ItemProcessRuntime {
     process_submitted_items: RwLock<HashSet<String>>,
     processed_count: AtomicU32,
     filter_count: AtomicU32,
-    reserved_target_paths: RwLock<HashMap<PathBuf, String>>,
+    reserved_target_paths: RwLock<ReservedTargetPaths>,
     in_flight_items: RwLock<HashMap<String, InFlightItem>>,
     cancelled_items: RwLock<HashSet<String>>,
 }
@@ -553,6 +553,12 @@ struct ItemProcessRuntime {
 struct InFlightItem {
     content: ProcessingContent,
     files: Vec<FileContent>,
+}
+
+#[derive(Default)]
+struct ReservedTargetPaths {
+    owners_by_path: HashMap<PathBuf, String>,
+    paths_by_owner: HashMap<String, Vec<PathBuf>>,
 }
 
 /// 一次运行的 source 状态、当前 pointer 和监听器上下文；负责连接这些状态，不执行 item 逻辑。
@@ -621,9 +627,17 @@ impl ItemProcessRuntime {
             .filter(|file| matches!(file.status, Normal | TargetExists | ReadyReplace))
         {
             let target_path = file.target_path();
-            match reserved.get(target_path) {
+            match reserved.owners_by_path.get(target_path) {
                 None => {
-                    reserved.insert(target_path.to_path_buf(), item_hash.to_owned());
+                    let target_path = target_path.to_path_buf();
+                    reserved
+                        .owners_by_path
+                        .insert(target_path.clone(), item_hash.to_owned());
+                    reserved
+                        .paths_by_owner
+                        .entry(item_hash.to_owned())
+                        .or_default()
+                        .push(target_path);
                 }
                 Some(owner) if owner == item_hash => {}
                 Some(_) => {
@@ -637,7 +651,13 @@ impl ItemProcessRuntime {
     }
 
     fn release_target_paths(&self, item_hash: &str) {
-        self.reserved_target_paths.write().retain(|_, owner| owner != item_hash);
+        let mut reserved = self.reserved_target_paths.write();
+        let Some(paths) = reserved.paths_by_owner.remove(item_hash) else {
+            return;
+        };
+        for path in paths {
+            reserved.owners_by_path.remove(&path);
+        }
     }
 
     fn register_in_flight(
@@ -1934,7 +1954,7 @@ trait Process {
                 process_submitted_items: RwLock::new(HashSet::new()),
                 processed_count: AtomicU32::new(0),
                 filter_count: AtomicU32::new(0),
-                reserved_target_paths: RwLock::new(HashMap::new()),
+                reserved_target_paths: RwLock::new(ReservedTargetPaths::default()),
                 in_flight_items: RwLock::new(HashMap::new()),
                 cancelled_items: RwLock::new(HashSet::new()),
             },
@@ -2109,7 +2129,8 @@ trait Process {
             let in_flight_items = runtime.in_flight_items.read();
             for file in files.iter_mut() {
                 let target_path = file.target_path().clone();
-                let Some(owner_hash) = reserved_paths.get(&target_path) else {
+                let Some(owner_hash) = reserved_paths.owners_by_path.get(&target_path)
+                else {
                     continue;
                 };
                 if owner_hash == current_hash {

@@ -1421,6 +1421,36 @@ async fn parallel_items_reserve_shared_target_once() {
     assert_eq!(storage.saved_pointers(), vec![json!(1), json!(2)]);
 }
 
+#[test]
+fn releasing_target_paths_removes_only_owned_paths() {
+    let runtime = ItemProcessRuntime {
+        mutex: Mutex::new(()),
+        process_submitted_items: RwLock::new(HashSet::new()),
+        processed_count: AtomicU32::new(0),
+        filter_count: AtomicU32::new(0),
+        reserved_target_paths: RwLock::new(ReservedTargetPaths::default()),
+        in_flight_items: RwLock::new(HashMap::new()),
+        cancelled_items: RwLock::new(HashSet::new()),
+    };
+    {
+        let mut reserved = runtime.reserved_target_paths.write();
+        reserved.owners_by_path.insert(PathBuf::from("first"), "item-1".to_owned());
+        reserved.owners_by_path.insert(PathBuf::from("second"), "item-2".to_owned());
+        reserved.paths_by_owner.insert("item-1".to_owned(), vec![PathBuf::from("first")]);
+        reserved
+            .paths_by_owner
+            .insert("item-2".to_owned(), vec![PathBuf::from("second")]);
+    }
+
+    runtime.release_target_paths("item-1");
+
+    let reserved = runtime.reserved_target_paths.read();
+    assert_eq!(
+        reserved.owners_by_path,
+        HashMap::from([(PathBuf::from("second"), "item-2".to_owned())])
+    );
+}
+
 #[tokio::test]
 async fn later_item_replaces_and_cancels_in_flight_download() {
     let submit_count = Arc::new(AtomicUsize::new(0));
