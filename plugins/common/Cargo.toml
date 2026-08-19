@@ -56,5 +56,9 @@ harness = false
 name = "anime_tagger"
 harness = false
 
+[[bench]]
+name = "anitom_variable_provider"
+harness = false
+
 #[lib]
 #crate-type = ["dylib", "rlib"]
