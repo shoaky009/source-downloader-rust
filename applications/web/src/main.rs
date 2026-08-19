@@ -1,6 +1,6 @@
 mod webhook_adapter;
 
-use axum::http::StatusCode;
+use axum::http::{HeaderName, HeaderValue, Method, StatusCode};
 use axum::{Router, middleware, response::IntoResponse};
 use clap::{Args, Parser};
 use problem_details::ProblemDetails;
@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use storage_sqlite::SeaProcessingStorage;
 use tokio::net::TcpListener;
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::{info, log};
 use tracing_subscriber::EnvFilter;
@@ -143,7 +144,11 @@ async fn run_web_server(
         .fallback(handle_api_fallback)
         .layer(middleware::from_fn(error_handle::error_handler));
     let webhook_router = webhook_adapter.router();
-    let base_router = Router::new().merge(webhook_router).nest("/api", api_routers);
+    let base_router = apply_cors(
+        Router::new().merge(webhook_router).nest("/api", api_routers),
+        &config.server.cors,
+    )
+    .unwrap_or_else(|error| panic!("Invalid CORS configuration: {error}"));
 
     let root_router = match &config.server.static_dir {
         None => base_router,
@@ -157,6 +162,61 @@ async fn run_web_server(
         .with_graceful_shutdown(shutdown_signal(core_application.core.clone()))
         .await
         .unwrap();
+}
+
+fn apply_cors(router: Router, config: &Cors) -> Result<Router, String> {
+    let Some(layer) = cors_layer(config)? else {
+        return Ok(router);
+    };
+    Ok(router.layer(layer))
+}
+
+fn cors_layer(config: &Cors) -> Result<Option<CorsLayer>, String> {
+    if config.allowed_origins.is_empty() {
+        return Ok(None);
+    }
+
+    let wildcard = config.allowed_origins.iter().any(|origin| origin == "*");
+    if wildcard && config.allowed_origins.len() != 1 {
+        return Err("'*' must be the only allowed origin".to_owned());
+    }
+    if wildcard && config.allow_credentials {
+        return Err("'*' cannot be combined with allow-credentials=true".to_owned());
+    }
+
+    let allow_origin = if wildcard {
+        Any.into()
+    } else {
+        let origins = config
+            .allowed_origins
+            .iter()
+            .map(|origin| {
+                origin.parse::<HeaderValue>().map_err(|error| {
+                    format!("invalid allowed origin '{origin}': {error}")
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        AllowOrigin::list(origins)
+    };
+
+    Ok(Some(
+        CorsLayer::new()
+            .allow_origin(allow_origin)
+            .allow_methods([
+                Method::GET,
+                Method::POST,
+                Method::PUT,
+                Method::DELETE,
+                Method::OPTIONS,
+            ])
+            .allow_headers([
+                HeaderName::from_static("authorization"),
+                HeaderName::from_static("content-type"),
+                HeaderName::from_static("accept"),
+            ])
+            .allow_credentials(config.allow_credentials)
+            .max_age(std::time::Duration::from_secs(config.max_age)),
+    ))
 }
 
 async fn shutdown_signal(core_application: Arc<CoreApplication>) {
@@ -214,7 +274,12 @@ struct ApplicationConfig {
 
 impl Default for Server {
     fn default() -> Self {
-        Self { host: "0.0.0.0".to_string(), port: 8080, static_dir: None }
+        Self {
+            host: "0.0.0.0".to_string(),
+            port: 8080,
+            static_dir: None,
+            cors: Cors::default(),
+        }
     }
 }
 
@@ -285,6 +350,31 @@ struct Server {
     port: u16,
     #[arg(long = "server.static_dir", env = "SOURCE_DOWNLOADER_SERVER_STATIC_DIR")]
     static_dir: Option<String>,
+    #[command(flatten)]
+    cors: Cors,
+}
+
+#[derive(Args, Debug, Default)]
+struct Cors {
+    #[arg(
+        long = "server.cors.allowed-origins",
+        env = "SOURCE_DOWNLOADER_SERVER_CORS_ALLOWED_ORIGINS",
+        value_delimiter = ','
+    )]
+    allowed_origins: Vec<String>,
+    #[arg(
+        long = "server.cors.allow-credentials",
+        env = "SOURCE_DOWNLOADER_SERVER_CORS_ALLOW_CREDENTIALS",
+        default_value_t = false,
+        action = clap::ArgAction::Set
+    )]
+    allow_credentials: bool,
+    #[arg(
+        long = "server.cors.max-age",
+        env = "SOURCE_DOWNLOADER_SERVER_CORS_MAX_AGE",
+        default_value_t = 3600
+    )]
+    max_age: u64,
 }
 
 #[cfg(test)]
@@ -322,6 +412,89 @@ mod tests {
             to_bytes(response.into_body(), usize::MAX).await.unwrap(),
             "console.log('loaded');"
         );
+    }
+
+    #[tokio::test]
+    async fn configured_origin_receives_preflight_headers() {
+        let cors = Cors {
+            allowed_origins: vec!["https://source.example.com".to_owned()],
+            allow_credentials: true,
+            max_age: 7200,
+        };
+        let router = apply_cors(
+            Router::new().route("/api/test", axum::routing::get(|| async {})),
+            &cors,
+        )
+        .unwrap();
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/api/test")
+                    .header("origin", "https://source.example.com")
+                    .header("access-control-request-method", "GET")
+                    .header("access-control-request-headers", "authorization")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.headers().get("access-control-allow-origin").unwrap(),
+            "https://source.example.com"
+        );
+        assert_eq!(
+            response.headers().get("access-control-allow-credentials").unwrap(),
+            "true"
+        );
+        assert_eq!(response.headers().get("access-control-max-age").unwrap(), "7200");
+    }
+
+    #[tokio::test]
+    async fn unconfigured_origin_does_not_receive_allow_origin_header() {
+        let cors = Cors {
+            allowed_origins: vec!["https://source.example.com".to_owned()],
+            allow_credentials: false,
+            max_age: 3600,
+        };
+        let router = apply_cors(
+            Router::new().route("/api/test", axum::routing::get(|| async {})),
+            &cors,
+        )
+        .unwrap();
+
+        let response = router
+            .oneshot(
+                Request::get("/api/test")
+                    .header("origin", "https://other.example.com")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert!(response.headers().get("access-control-allow-origin").is_none());
+    }
+
+    #[test]
+    fn wildcard_origin_rejects_credentials() {
+        let cors = Cors {
+            allowed_origins: vec!["*".to_owned()],
+            allow_credentials: true,
+            max_age: 3600,
+        };
+
+        assert_eq!(
+            cors_layer(&cors).unwrap_err(),
+            "'*' cannot be combined with allow-credentials=true"
+        );
+    }
+
+    #[test]
+    fn missing_origins_disables_cors() {
+        assert!(cors_layer(&Cors::default()).unwrap().is_none());
     }
 
     #[test]

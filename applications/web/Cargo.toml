@@ -25,7 +25,7 @@ serde = { workspace = true }
 serde_qs = { workspace = true }
 clap = { workspace = true }
 problem_details = { workspace = true }
-tower-http = { workspace = true, features = ["fs", "trace"] }
+tower-http = { workspace = true, features = ["cors", "fs", "trace"] }
 futures-util = { workspace = true, features = ["sink", "std"] }
 build-info = { workspace = true }
 
