@@ -36,5 +36,9 @@ criterion = { workspace = true }
 name = "anime_file_filter"
 harness = false
 
+[[bench]]
+name = "doujin_title_trimmer"
+harness = false
+
 #[lib]
 #crate-type = ["dylib", "rlib"]

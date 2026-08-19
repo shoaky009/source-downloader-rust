@@ -54,12 +54,9 @@ static AD_BRACKET_REGEX: LazyLock<Regex> =
 
 impl Trimmer for DoujinTitleTrimmer {
     fn trim(&self, value: String, expect_size: usize) -> String {
-        let matches: Vec<_> = AD_BRACKET_REGEX
-            .find_iter(&value)
-            .map(|found| found.as_str().to_string())
-            .collect();
         let mut result = value;
-        for matched in matches {
+        while let Some(found) = AD_BRACKET_REGEX.find(&result) {
+            let matched = found.as_str().to_owned();
             result = result.replace(&matched, "");
             if utf16_len(&result) <= expect_size {
                 return result;
