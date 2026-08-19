@@ -89,3 +89,7 @@ harness = false
 [[bench]]
 name = "mapped_file_tagger"
 harness = false
+
+[[bench]]
+name = "sequence_variable_provider"
+harness = false
