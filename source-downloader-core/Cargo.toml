@@ -85,3 +85,7 @@ harness = false
 [[bench]]
 name = "fixed_source"
 harness = false
+
+[[bench]]
+name = "mapped_file_tagger"
+harness = false
