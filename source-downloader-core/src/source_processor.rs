@@ -442,6 +442,47 @@ pub struct ProcessorOptions {
     pub download_options: DownloadOptions,
 }
 
+impl Default for ProcessorOptions {
+    fn default() -> Self {
+        Self {
+            save_path_pattern: PathPattern::new_cel(String::new()),
+            filename_pattern: PathPattern::new_cel(String::new()),
+            variable_providers: Vec::new(),
+            item_filters: Vec::new(),
+            item_content_filters: Vec::new(),
+            source_file_filters: Vec::new(),
+            file_content_filters: Vec::new(),
+            file_taggers: Vec::new(),
+            variable_aggregation: VariableAggregation::new(
+                Box::new(crate::process::variable::SmartStrategy),
+                HashMap::new(),
+            ),
+            save_processing_content: false,
+            rename_task_interval: Duration::from_secs(300),
+            rename_times_threshold: 3,
+            parallelism: 1,
+            retry_attempts: 3,
+            retry_backoff: Duration::from_secs(5),
+            task_group: None,
+            fetch_limit: 50,
+            item_error_continue: false,
+            pointer_batch_mode: true,
+            item_rules: Vec::new(),
+            file_rules: Vec::new(),
+            process_listeners: HashMap::new(),
+            file_exists_detector: Arc::new(SimpleFileExistsDetector {}),
+            file_replacement_decider: Arc::new(
+                crate::components::never_replace_decider::NeverReplaceDecider,
+            ),
+            download_options: DownloadOptions {
+                category: None,
+                tags: None,
+                headers: None,
+            },
+        }
+    }
+}
+
 #[async_trait]
 impl ProcessTask for SourceProcessor {
     async fn run(&self) -> Result<(), String> {
