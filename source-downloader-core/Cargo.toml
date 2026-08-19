@@ -53,3 +53,7 @@ harness = false
 [[bench]]
 name = "source_processor_execute"
 harness = false
+
+[[bench]]
+name = "force_trimmer"
+harness = false
