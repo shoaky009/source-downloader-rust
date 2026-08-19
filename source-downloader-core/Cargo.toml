@@ -77,3 +77,7 @@ harness = false
 [[bench]]
 name = "regex_variable_replacer"
 harness = false
+
+[[bench]]
+name = "file_size_replacement_decider"
+harness = false
