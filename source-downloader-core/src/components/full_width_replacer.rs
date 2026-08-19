@@ -47,18 +47,17 @@ struct FullWidthReplacer;
 
 impl VariableReplacer for FullWidthReplacer {
     fn replace(&self, _: &str, value: String) -> String {
-        value
-            .chars()
-            .map(|character| match character {
-                '【' => '[',
-                '】' => ']',
-                '　' => ' ',
-                '\u{ff01}'..='\u{ff5e}' => {
-                    char::from_u32(character as u32 - 0xfee0).unwrap_or(character)
-                }
-                character => character,
-            })
-            .collect()
+        let mut output = String::with_capacity(value.len());
+        output.extend(value.chars().map(|character| match character {
+            '【' => '[',
+            '】' => ']',
+            '　' => ' ',
+            '\u{ff01}'..='\u{ff5e}' => {
+                char::from_u32(character as u32 - 0xfee0).unwrap_or(character)
+            }
+            character => character,
+        }));
+        output
     }
 }
 

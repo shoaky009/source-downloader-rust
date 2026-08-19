@@ -57,3 +57,7 @@ harness = false
 [[bench]]
 name = "force_trimmer"
 harness = false
+
+[[bench]]
+name = "full_width_replacer"
+harness = false
