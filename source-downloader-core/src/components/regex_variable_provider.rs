@@ -96,7 +96,7 @@ impl VariableProvider for RegexVariableProvider {
                 let value = resolve_field(source_item, &variable.field)?;
                 variable
                     .regex
-                    .find(&value)
+                    .find(value.as_ref())
                     .map(|matched| (variable.name.clone(), matched.as_str().to_owned()))
             })
             .collect()
@@ -133,13 +133,16 @@ impl VariableProvider for RegexVariableProvider {
     }
 }
 
-fn resolve_field(source_item: &SourceItem, field: &str) -> Option<String> {
+fn resolve_field<'a>(
+    source_item: &'a SourceItem,
+    field: &str,
+) -> Option<std::borrow::Cow<'a, str>> {
     match field {
-        "title" => Some(source_item.title.clone()),
-        "link" => Some(source_item.link.to_string()),
-        "downloadUri" => Some(source_item.download_uri.to_string()),
-        "contentType" => Some(source_item.content_type.clone()),
-        "datetime" => Some(source_item.datetime.to_string()),
+        "title" => Some(source_item.title.as_str().into()),
+        "link" => Some(source_item.link.to_string().into()),
+        "downloadUri" => Some(source_item.download_uri.to_string().into()),
+        "contentType" => Some(source_item.content_type.as_str().into()),
+        "datetime" => Some(source_item.datetime.to_string().into()),
         unknown => {
             tracing::error!(field = unknown, "Unknown regex variable provider field");
             None

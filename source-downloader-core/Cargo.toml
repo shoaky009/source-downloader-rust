@@ -65,3 +65,7 @@ harness = false
 [[bench]]
 name = "regex_trimmer"
 harness = false
+
+[[bench]]
+name = "regex_variable_provider"
+harness = false
