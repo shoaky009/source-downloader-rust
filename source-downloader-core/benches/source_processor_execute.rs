@@ -1,6 +1,10 @@
 use async_trait::async_trait;
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
+use source_downloader_core::components::expression_file_content_filter::SUPPLIER as FILE_EXPRESSION_FILTER_SUPPLIER;
+use source_downloader_core::components::expression_item_content_filter::SUPPLIER as ITEM_CONTENT_EXPRESSION_FILTER_SUPPLIER;
+use source_downloader_core::components::expression_item_filter::SUPPLIER as ITEM_EXPRESSION_FILTER_SUPPLIER;
 use source_downloader_core::components::fixed_source::SUPPLIER as FIXED_SOURCE_SUPPLIER;
+use source_downloader_core::components::regex_variable_provider::SUPPLIER as REGEX_VARIABLE_PROVIDER_SUPPLIER;
 use source_downloader_core::source_processor::{ProcessorOptions, SourceProcessor};
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
@@ -52,6 +56,13 @@ impl Downloader for NoopIo {
 }
 
 impl FileMover for NoopIo {
+    fn move_file(
+        &self,
+        _: &SourceItem,
+        _: &source_downloader_sdk::component::FileContent,
+    ) -> Result<(), ProcessingError> {
+        Ok(())
+    }
     fn exists(&self, paths: &[&PathBuf]) -> Vec<bool> {
         vec![false; paths.len()]
     }
@@ -147,16 +158,27 @@ fn fixed_source() -> Arc<dyn SdComponent> {
         .map(|index| {
             json!({
                 "item": {
-                    "title": format!("item-{index}"),
-                    "link": format!("https://example.com/items/{index}"),
+                    "title": format!("show-{index:03}-S01E{index:03}-1080p"),
+                    "link": format!("https://example.com/items/{index:03}/season/01"),
                     "datetime": "1970-01-01T00:00:00Z",
-                    "contentType": "benchmark",
-                    "downloadUri": format!("https://example.com/download/{index}"),
-                    "attrs": {},
-                    "tags": [],
+                    "contentType": "video",
+                    "downloadUri": format!("https://example.com/download/{index:03}"),
+                    "attrs": { "priority": index % 4, "source": "benchmark" },
+                    "tags": ["benchmark", "video"],
                     "identity": null
                 },
-                "files": []
+                "files": [
+                    {
+                        "path": format!("show-{index:03}-S01E{index:03}.mkv"),
+                        "attrs": { "size": 1073741824, "kind": "video" },
+                        "tags": ["video", "primary"]
+                    },
+                    {
+                        "path": format!("show-{index:03}-S01E{index:03}.srt"),
+                        "attrs": { "size": 65536, "kind": "subtitle" },
+                        "tags": ["subtitle"]
+                    }
+                ]
             })
         })
         .collect::<Vec<_>>();
@@ -167,6 +189,103 @@ fn fixed_source() -> Arc<dyn SdComponent> {
     FIXED_SOURCE_SUPPLIER
         .apply(&EMPTY_COMPONENT_CREATE_CONTEXT, &props)
         .expect("fixed source benchmark configuration must be valid")
+}
+
+fn component_props(
+    value: source_downloader_sdk::serde_json::Value,
+) -> Map<String, source_downloader_sdk::serde_json::Value> {
+    serde_json::from_value(value)
+        .expect("benchmark component configuration must be an object")
+}
+
+fn regex_variable_provider(
+    regexes: source_downloader_sdk::serde_json::Value,
+) -> Arc<dyn source_downloader_sdk::component::VariableProvider> {
+    REGEX_VARIABLE_PROVIDER_SUPPLIER
+        .apply(
+            &EMPTY_COMPONENT_CREATE_CONTEXT,
+            &component_props(json!({ "regexes": regexes, "primary": "series" })),
+        )
+        .expect("regex variable provider benchmark configuration must be valid")
+        .as_variable_provider()
+        .expect("regex variable provider capability")
+}
+
+fn expression_filter(
+    supplier: &dyn ComponentSupplier,
+    exclusions: &[&str],
+    inclusions: &[&str],
+) -> Arc<dyn SdComponent> {
+    supplier
+        .apply(
+            &EMPTY_COMPONENT_CREATE_CONTEXT,
+            &component_props(json!({
+                "exclusions": exclusions,
+                "inclusions": inclusions,
+            })),
+        )
+        .expect("expression filter benchmark configuration must be valid")
+}
+
+fn benchmark_options() -> ProcessorOptions {
+    let title_provider = regex_variable_provider(json!([
+        { "name": "series", "regex": "show-[0-9]{3}", "field": "title" },
+        { "name": "season", "regex": "S[0-9]{2}", "field": "title" },
+        { "name": "episode", "regex": "E[0-9]{3}", "field": "title" },
+        { "name": "quality", "regex": "[0-9]{4}p", "field": "title" },
+        { "name": "mediaType", "regex": "video", "field": "contentType" }
+    ]));
+    let uri_provider = regex_variable_provider(json!([
+        { "name": "series", "regex": "items/[0-9]{3}", "field": "link" },
+        { "name": "season", "regex": "season/[0-9]{2}", "field": "link" },
+        { "name": "episode", "regex": "[0-9]{3}", "field": "downloadUri" },
+        { "name": "mediaType", "regex": "video", "field": "contentType" }
+    ]));
+    let item_filter = expression_filter(
+        &ITEM_EXPRESSION_FILTER_SUPPLIER,
+        &["item.contentType == 'audio'", "'blocked' in item.tags"],
+        &[
+            "item.title.matches('^show-[0-9]{3}-S[0-9]{2}E[0-9]{3}-1080p$')",
+            "item.contentType == 'video'",
+            "'benchmark' in item.tags",
+            "item.attrs.source == 'benchmark'",
+        ],
+    )
+    .as_source_item_filter()
+    .expect("item expression filter capability");
+    let item_content_filter = expression_filter(
+        &ITEM_CONTENT_EXPRESSION_FILTER_SUPPLIER,
+        &["item.vars.mediaType == 'audio'", "item.vars.quality == '720p'"],
+        &[
+            "item.vars.series.matches('show-[0-9]{3}|items/[0-9]{3}')",
+            "item.vars.season.matches('S[0-9]{2}|season/[0-9]{2}')",
+            "item.vars.episode.matches('E?[0-9]{3}')",
+            "item.vars.mediaType == 'video'",
+        ],
+    )
+    .as_item_content_filter()
+    .expect("item content expression filter capability");
+    let file_content_filter = expression_filter(
+        &FILE_EXPRESSION_FILTER_SUPPLIER,
+        &["file.extension == 'tmp'", "file.attrs.size == 0"],
+        &[
+            "file.name.matches('^show-[0-9]{3}-S[0-9]{2}E[0-9]{3}.*')",
+            "file.extension in ['mkv', 'srt']",
+            "file.attrs.size > 1024",
+        ],
+    )
+    .as_file_content_filter()
+    .expect("file content expression filter capability");
+
+    ProcessorOptions {
+        variable_providers: vec![title_provider, uri_provider],
+        item_filters: vec![item_filter],
+        item_content_filters: vec![item_content_filter],
+        file_content_filters: vec![file_content_filter],
+        parallelism: 16,
+        retry_backoff: Duration::ZERO,
+        ..Default::default()
+    }
 }
 
 fn processor(download_path: &Path) -> SourceProcessor {
@@ -185,11 +304,7 @@ fn processor(download_path: &Path) -> SourceProcessor {
         None,
         Default::default(),
         Default::default(),
-        ProcessorOptions {
-            parallelism: 16,
-            retry_backoff: Duration::ZERO,
-            ..Default::default()
-        },
+        benchmark_options(),
     )
 }
 
@@ -201,15 +316,18 @@ fn benchmark_execute(criterion: &mut Criterion) {
         .expect("benchmark runtime");
     let temp = tempfile::tempdir().expect("benchmark temporary directory");
 
-    criterion.bench_function("source_processor/execute/fixed_256", |bencher| {
-        bencher.to_async(&runtime).iter_batched(
-            || processor(temp.path()),
-            |processor| async move {
-                processor.run().await.expect("benchmark processor run");
-            },
-            BatchSize::SmallInput,
-        );
-    });
+    criterion.bench_function(
+        "source_processor/execute/expression_variables_256",
+        |bencher| {
+            bencher.to_async(&runtime).iter_batched(
+                || processor(temp.path()),
+                |processor| async move {
+                    processor.run().await.expect("benchmark processor run");
+                },
+                BatchSize::SmallInput,
+            );
+        },
+    );
 }
 
 criterion_group!(benches, benchmark_execute);
