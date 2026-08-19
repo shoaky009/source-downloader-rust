@@ -52,5 +52,9 @@ harness = false
 name = "anime_replacement_decider"
 harness = false
 
+[[bench]]
+name = "anime_tagger"
+harness = false
+
 #[lib]
 #crate-type = ["dylib", "rlib"]
