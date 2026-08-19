@@ -45,21 +45,20 @@ struct WindowsPathReplacer;
 
 impl VariableReplacer for WindowsPathReplacer {
     fn replace(&self, _: &str, value: String) -> String {
-        value
-            .chars()
-            .map(|character| match character {
-                '<' => '＜',
-                '>' => '＞',
-                ':' => '：',
-                '"' => '＂',
-                '/' => '／',
-                '\\' => '＼',
-                '|' => '｜',
-                '?' => '？',
-                '*' => '＊',
-                character => character,
-            })
-            .collect()
+        let mut output = String::with_capacity(value.len());
+        output.extend(value.chars().map(|character| match character {
+            '<' => '＜',
+            '>' => '＞',
+            ':' => '：',
+            '"' => '＂',
+            '/' => '／',
+            '\\' => '＼',
+            '|' => '｜',
+            '?' => '？',
+            '*' => '＊',
+            character => character,
+        }));
+        output
     }
 }
 

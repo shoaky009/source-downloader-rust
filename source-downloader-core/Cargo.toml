@@ -69,3 +69,7 @@ harness = false
 [[bench]]
 name = "regex_variable_provider"
 harness = false
+
+[[bench]]
+name = "windows_path_replacer"
+harness = false
