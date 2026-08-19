@@ -8,8 +8,8 @@ use crate::processor_run_state::{ProcessorItemStage, ProcessorRunItemGuard};
 use async_trait::async_trait;
 use backon::Retryable;
 use backon::{BackoffBuilder, ConstantBuilder};
-use futures_util::future::{AbortHandle, Abortable};
-use futures_util::stream::{FuturesOrdered, StreamExt};
+use futures_util::future::{AbortHandle, Abortable, FutureExt};
+use futures_util::stream::{FuturesOrdered, FuturesUnordered, StreamExt};
 use humantime::format_duration;
 use itertools::Itertools;
 use parking_lot::{Mutex as SyncMutex, RwLock};
@@ -39,7 +39,7 @@ use source_downloader_sdk::storage::{
 };
 use source_downloader_sdk::time::OffsetDateTime;
 use std::any::TypeId;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Cursor;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -1875,33 +1875,72 @@ trait Process {
                         progress,
                     }
                 };
+            let make_sequenced_future = |sequence, item| {
+                make_item_future(item).map(move |completed| (sequence, completed))
+            };
             let mut remaining_items = items.into_iter();
-            let mut item_results = FuturesOrdered::new();
-            for item in remaining_items.by_ref().take(parallelism) {
-                item_results.push_back(make_item_future(item));
-            }
-
             let mut stop_scheduling = false;
-            while let Some(completed) = item_results.next().await {
-                let advance_pointer = !stop_scheduling;
-                if self
-                    .settle_completed_item(
-                        p,
-                        item_runtime,
-                        &mut p_rt.coordinator,
-                        completed,
-                        advance_pointer,
-                    )
-                    .await
-                    .should_stop()
+            if p.options.item_error_continue {
+                let mut item_results = FuturesUnordered::new();
+                for (sequence, item) in
+                    remaining_items.by_ref().enumerate().take(parallelism)
                 {
-                    stop_scheduling = true;
+                    item_results.push(make_sequenced_future(sequence, item));
                 }
-                if !stop_scheduling && let Some(item) = remaining_items.next() {
+                let mut next_sequence = 0;
+                let mut next_submit_sequence = item_results.len();
+                let mut completed_by_sequence = BTreeMap::new();
+                while let Some((sequence, completed)) = item_results.next().await {
+                    completed_by_sequence.insert(sequence, completed);
+                    while let Some(completed) =
+                        completed_by_sequence.remove(&next_sequence)
+                    {
+                        if self
+                            .settle_completed_item(
+                                p,
+                                item_runtime,
+                                &mut p_rt.coordinator,
+                                completed,
+                                true,
+                            )
+                            .await
+                            .should_stop()
+                        {
+                            stop_scheduling = true;
+                        }
+                        next_sequence += 1;
+                    }
+                    if !stop_scheduling && let Some(item) = remaining_items.next() {
+                        let sequence = next_submit_sequence;
+                        next_submit_sequence += 1;
+                        item_results.push(make_sequenced_future(sequence, item));
+                    }
+                }
+            } else {
+                let mut item_results = FuturesOrdered::new();
+                for item in remaining_items.by_ref().take(parallelism) {
                     item_results.push_back(make_item_future(item));
                 }
+                while let Some(completed) = item_results.next().await {
+                    let advance_pointer = !stop_scheduling;
+                    if self
+                        .settle_completed_item(
+                            p,
+                            item_runtime,
+                            &mut p_rt.coordinator,
+                            completed,
+                            advance_pointer,
+                        )
+                        .await
+                        .should_stop()
+                    {
+                        stop_scheduling = true;
+                    }
+                    if !stop_scheduling && let Some(item) = remaining_items.next() {
+                        item_results.push_back(make_item_future(item));
+                    }
+                }
             }
-            drop(item_results);
             for (content, _) in &mut p_rt.coordinator.listener_context.contents {
                 if item_runtime.is_cancelled(&content.item_hash) {
                     content.status = ProcessingStatus::Cancelled;

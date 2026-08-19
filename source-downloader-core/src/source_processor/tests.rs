@@ -1405,7 +1405,28 @@ async fn parallel_items_commit_pointers_in_fetch_order() {
 
     assert_eq!(probe.max_active.load(AtomicOrdering::Acquire), 2);
     assert_ne!(probe.completed.lock().first(), Some(&1));
+    assert_eq!(storage.saved_pointers(), vec![json!(1), json!(2), json!(3)]);
+}
 
+#[tokio::test]
+async fn continue_mode_refills_parallelism_before_slow_head_settles() {
+    let probe = Arc::new(ParallelismProbe::new(2));
+    let (processor, storage) = pointer_test_processor_with_settings(
+        false,
+        3,
+        false,
+        PointerTestSettings {
+            parallelism: 2,
+            item_error_continue: true,
+            probe: Some(probe.clone()),
+            unique_files: true,
+            ..Default::default()
+        },
+    );
+
+    processor.run().await.unwrap();
+
+    assert_eq!(*probe.completed.lock(), vec![2, 3, 1]);
     assert_eq!(storage.saved_pointers(), vec![json!(1), json!(2), json!(3)]);
 }
 #[tokio::test]
