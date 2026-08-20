@@ -129,7 +129,12 @@ impl ComponentSupplier for TelegramSourceSupplier {
                 },
                 "required": ["client", "chats"]
             })),
-            props_ui_schema: None,
+            props_ui_schema: Some(serde_json::json!({
+                "client": {
+                    "ui:field": "instanceField",
+                    "ui:options": {"factoryType": std::any::type_name::<crate::client::TelegramClientInstanceFactory>()}
+                }
+            })),
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: Some(serde_json::json!({

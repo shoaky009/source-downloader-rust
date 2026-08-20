@@ -8,7 +8,7 @@ use grammers_client::tl;
 use qrcode::QrCode;
 use serde::Deserialize;
 use source_downloader_sdk::component::{ComponentError, ProcessingError};
-use source_downloader_sdk::instance::InstanceFactory;
+use source_downloader_sdk::instance::{InstanceFactory, InstanceFactoryMetadata};
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::any::{Any, TypeId};
 use std::path::PathBuf;
@@ -62,6 +62,26 @@ impl InstanceFactory for TelegramClientInstanceFactory {
 
     fn instance_type_id(&self) -> TypeId {
         TypeId::of::<TelegramClientInstance>()
+    }
+
+    fn get_metadata(&self) -> Option<Box<InstanceFactoryMetadata>> {
+        Some(Box::new(InstanceFactoryMetadata {
+            description: "Telegram client connection and session configuration.".into(),
+            props_json_schema: Some(source_downloader_sdk::serde_json::json!({
+                "type": "object",
+                "required": ["api-id", "api-hash", "metadata-path"],
+                "properties": {
+                    "api-id": {"type": "integer", "title": "API ID"},
+                    "api-hash": {"type": "string", "title": "API Hash"},
+                    "metadata-path": {"type": "string", "title": "会话文件路径"},
+                    "proxy": {"type": ["string", "null"], "title": "SOCKS5 代理"},
+                    "timeout": {"type": "integer", "minimum": 1, "default": 5, "title": "超时（秒）"}
+                }
+            })),
+            props_ui_schema: Some(source_downloader_sdk::serde_json::json!({
+                "api-hash": {"ui:widget": "password"}
+            })),
+        }))
     }
 }
 

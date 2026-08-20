@@ -16,8 +16,12 @@ use std::{env, fs};
 use tracing::{error, info};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InstanceConfig {
     pub name: String,
+    #[serde(default, rename = "type")]
+    pub factory_type: String,
+    #[serde(default)]
     pub props: Map<String, Value>,
 }
 
@@ -403,6 +407,15 @@ pub trait ConfigOperator: Send + Sync {
 
     fn get_all_component_config(&self) -> IndexMap<String, Vec<ComponentConfig>>;
 
+    fn get_all_instance_config(&self) -> Vec<InstanceConfig>;
+
+    fn save_instance(
+        &self,
+        instance_config: InstanceConfig,
+    ) -> Result<(), ComponentError>;
+
+    fn delete_instance(&self, name: &str) -> Result<bool, ComponentError>;
+
     fn save_component(
         &self,
         root_type: &ComponentRootType,
@@ -544,6 +557,38 @@ impl ConfigOperator for YamlConfigOperator {
         })
     }
 
+    fn get_all_instance_config(&self) -> Vec<InstanceConfig> {
+        self.get_config().map(|config| config.instances.clone()).unwrap_or_else(|e| {
+            tracing::warn!("Failed to get instance config: {}", e);
+            vec![]
+        })
+    }
+
+    fn save_instance(
+        &self,
+        instance_config: InstanceConfig,
+    ) -> Result<(), ComponentError> {
+        let mut config = self.get_config()?;
+        match config.instances.iter_mut().find(|item| item.name == instance_config.name) {
+            Some(existing) => *existing = instance_config,
+            None => config.instances.push(instance_config),
+        }
+        self.write_config(&config).map_err(|e| {
+            ComponentError::new(format!("Failed to save instance config: {e}"))
+        })
+    }
+
+    fn delete_instance(&self, name: &str) -> Result<bool, ComponentError> {
+        let mut config = self.get_config()?;
+        let Some(position) = config.instances.iter().position(|item| item.name == name)
+        else {
+            return Ok(false);
+        };
+        config.instances.remove(position);
+        self.write_config(&config)?;
+        Ok(true)
+    }
+
     fn save_component(
         &self,
         root_type: &ComponentRootType,
@@ -655,7 +700,7 @@ impl ConfigOperator for YamlConfigOperator {
 #[cfg(test)]
 mod test {
     use crate::config::{
-        ComponentConfig, Config, ConfigOperator, ProcessorOptionConfig,
+        ComponentConfig, Config, ConfigOperator, InstanceConfig, ProcessorOptionConfig,
         YamlConfigOperator,
     };
     use crate::process::file::{PathOverflowStrategy, VariableErrorStrategy};
@@ -956,5 +1001,33 @@ mod test {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn instance_config_crud_persists_factory_type_and_props() {
+        let file = NamedTempFile::new().unwrap();
+        fs::write(file.path(), "instances: []\ncomponents: {}\nprocessors: []\n")
+            .unwrap();
+        let operator = YamlConfigOperator::new_path(file.path());
+        let mut props = Map::new();
+        props.insert("token".to_owned(), "secret".into());
+
+        operator
+            .save_instance(InstanceConfig {
+                name: "client".to_owned(),
+                factory_type: "telegram::client::TelegramClientInstanceFactory"
+                    .to_owned(),
+                props: props.clone(),
+            })
+            .unwrap();
+
+        let saved = operator.get_all_instance_config();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(
+            saved[0].factory_type,
+            "telegram::client::TelegramClientInstanceFactory"
+        );
+        assert_eq!(saved[0].props, props);
+        assert!(operator.delete_instance("client").unwrap());
+        assert!(operator.get_all_instance_config().is_empty());
     }
 }

@@ -71,7 +71,12 @@ impl ComponentSupplier for TelegramIntegrationSupplier {
                 },
                 "required": ["client", "download-path"]
             })),
-            props_ui_schema: None,
+            props_ui_schema: Some(source_downloader_sdk::serde_json::json!({
+                "client": {
+                    "ui:field": "instanceField",
+                    "ui:options": {"factoryType": std::any::type_name::<crate::client::TelegramClientInstanceFactory>()}
+                }
+            })),
             state_json_schema: Some(source_downloader_sdk::serde_json::json!({
                 "type": "object",
                 "properties": {

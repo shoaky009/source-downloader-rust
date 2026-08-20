@@ -99,10 +99,11 @@ async fn instance_capabilities(
         .into_iter()
         .map(|factory| {
             let type_name = factory.factory_name();
+            let metadata = factory.get_metadata();
             InstanceCapabilitySummary {
                 simple_name: simple_type_name(&type_name).to_owned(),
                 type_name,
-                description: None,
+                description: metadata.map(|metadata| metadata.description),
             }
         })
         .collect::<Vec<_>>();
@@ -120,11 +121,14 @@ async fn instance_capability(
         .find(|factory| factory.factory_name() == type_name)
         .map(|factory| {
             let type_name = factory.factory_name();
+            let metadata = factory.get_metadata();
             Json(InstanceCapabilityDetail {
                 simple_name: simple_type_name(&type_name).to_owned(),
                 type_name,
-                description: None,
-                metadata: None,
+                description: metadata
+                    .as_ref()
+                    .map(|metadata| metadata.description.clone()),
+                metadata,
             })
         })
         .ok_or_else(|| {
@@ -254,7 +258,7 @@ struct InstanceCapabilityDetail {
     type_name: String,
     simple_name: String,
     description: Option<String>,
-    metadata: Option<SdComponentMetadata>,
+    metadata: Option<Box<source_downloader_sdk::instance::InstanceFactoryMetadata>>,
 }
 
 const ROOT_TYPES: &[(ComponentRootType, &str, &str)] = &[

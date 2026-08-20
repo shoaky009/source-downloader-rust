@@ -97,6 +97,40 @@ impl InstanceManager {
         self.factories.read().values().cloned().collect()
     }
 
+    pub fn get_factory_by_name(
+        &self,
+        factory_name: &str,
+    ) -> Option<Arc<dyn InstanceFactory>> {
+        self.factories
+            .read()
+            .values()
+            .find(|factory| factory.factory_name() == factory_name)
+            .cloned()
+    }
+
+    pub fn validate_instance(
+        &self,
+        factory_name: &str,
+        props: &source_downloader_sdk::serde_json::Map<
+            String,
+            source_downloader_sdk::serde_json::Value,
+        >,
+    ) -> Result<(), ComponentError> {
+        self.get_factory_by_name(factory_name)
+            .ok_or_else(|| {
+                ComponentError::new(format!(
+                    "Instance factory '{}' is not registered",
+                    factory_name
+                ))
+            })?
+            .create_instance(props)
+            .map(|_| ())
+    }
+
+    pub fn is_instance_loaded(&self, name: &str) -> bool {
+        self.instances.read().contains_key(name)
+    }
+
     pub fn register_instance_factory(
         &self,
         factory: Arc<dyn InstanceFactory>,
