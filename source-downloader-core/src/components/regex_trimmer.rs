@@ -37,9 +37,14 @@ impl ComponentSupplier for RegexTrimmerSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Trims regex matches from values.".to_owned(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"regex":{"type":"string"}},"required":["regex"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "regex":{"type":"string"}
+                },
+                "required":["regex"]
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

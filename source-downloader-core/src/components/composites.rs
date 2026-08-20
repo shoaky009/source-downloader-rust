@@ -102,9 +102,25 @@ impl ComponentSupplier for CompositeDownloaderSupplier {
             description:
                 "Selects a downloader by evaluating rules against each source item."
                     .to_owned(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"default":{"type":"string"},"rules":{"type":"array","items":{"type":"object","properties":{"expression":{"type":"string"},"component":{"type":"string"}},"required":["expression","component"]}}},"required":["default"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "default":{"type":"string"},
+                    "rules":{
+                        "type":"array",
+                        "items":{
+                            "type":"object",
+                            "properties":{
+                                "expression":{"type":"string"},
+                                "component":{"type":"string"}
+                            },
+                            "required":["expression","component"]
+                        }
+                    }
+                },
+                "required":["default"]
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,
@@ -155,7 +171,25 @@ impl ComponentSupplier for CompositeItemFileResolverSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Selects an item file resolver by evaluating rules against each source item.".to_owned(),
-            props_json_schema: Some(json!({"type":"object","properties":{"default":{"type":"string"},"rules":{"type":"array","items":{"type":"object","properties":{"expression":{"type":"string"},"component":{"type":"string"}},"required":["expression","component"]}}},"required":["default"]})),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "default":{"type":"string"},
+                    "rules":{
+                        "type":"array",
+                        "items":{
+                            "type":"object",
+                            "properties":{
+                                "expression":{"type":"string"},
+                                "component":{"type":"string"}
+                            },
+                            "required":["expression","component"]
+                        }
+                    }
+                },
+                "required":["default"]
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

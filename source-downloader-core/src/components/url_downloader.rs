@@ -36,9 +36,14 @@ impl ComponentSupplier for UrlDownloaderSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Downloads source files over HTTP.".to_owned(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"download-path":{"type":"string"}},"required":["download-path"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "download-path":{"type":"string"}
+                },
+                "required":["download-path"]
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

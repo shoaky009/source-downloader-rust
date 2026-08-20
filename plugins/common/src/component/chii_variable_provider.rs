@@ -46,9 +46,13 @@ impl ComponentSupplier for ChiiVariableProviderSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Resolves variables through the Chii GraphQL service.".into(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"base-url":{"type":"string","default":"https://chii.ai"}}}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "base-url":{"type":"string","default":"https://chii.ai"}
+                }
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

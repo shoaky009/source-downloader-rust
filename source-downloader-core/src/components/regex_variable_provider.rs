@@ -61,7 +61,26 @@ impl ComponentSupplier for RegexVariableProviderSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Extracts variables from source item fields using configured regular expressions.".to_owned(),
-            props_json_schema: Some(json!({"type":"object","properties":{"regexes":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"regex":{"type":"string"},"field":{"type":"string","default":"title"}},"required":["name","regex"]}},"primary":{"type":"string"}},"required":["regexes"]})),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "regexes":{
+                        "type":"array",
+                        "items":{
+                            "type":"object",
+                            "properties":{
+                                "name":{"type":"string"},
+                                "regex":{"type":"string"},
+                                "field":{"type":"string","default":"title"}
+                            },
+                            "required":["name","regex"]
+                        }
+                    },
+                    "primary":{"type":"string"}
+                },
+                "required":["regexes"]
+            })),
             props_ui_schema: None, state_json_schema: None, state_ui_schema: None, source_pointer_json_schema: None,
         }))
     }

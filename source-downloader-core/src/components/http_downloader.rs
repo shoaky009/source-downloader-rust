@@ -62,13 +62,28 @@ impl ComponentSupplier for HttpDownloaderSupplier {
         Some(Box::new(SdComponentMetadata {
             description: "Downloads source files over HTTP with bounded parallelism."
                 .to_owned(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"download-path":{"type":"string"},"parallelism":{"type":"integer","minimum":1,"default":5}},"required":["download-path"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "download-path":{"type":"string"},
+                    "parallelism":{"type":"integer","minimum":1,"default":5}
+                },
+                "required":["download-path"]
+            })),
             props_ui_schema: None,
-            state_json_schema: Some(
-                json!({"type":"object","additionalProperties":{"type":"object","properties":{"file":{"type":"string"},"speed":{"type":"string"}},"required":["file","speed"]}}),
-            ),
+            #[rustfmt::skip]
+            state_json_schema: Some(json!({
+                "type":"object",
+                "additionalProperties":{
+                    "type":"object",
+                    "properties":{
+                        "file":{"type":"string"},
+                        "speed":{"type":"string"}
+                    },
+                    "required":["file","speed"]
+                }
+            })),
             state_ui_schema: None,
             source_pointer_json_schema: None,
         }))

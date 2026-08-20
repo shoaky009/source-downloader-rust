@@ -368,29 +368,30 @@ pub mod test_support {
         fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
             Some(Box::new(SdComponentMetadata {
                 description: "Provides a configurable mock source for tests.".to_owned(),
+                #[rustfmt::skip]
                 props_json_schema: Some(json!({
-                    "type": "object",
-                    "properties": {
-                        "fetch": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "returning": {
-                                        "type": "string",
-                                        "enum": ["Ok", "Err", "Some", "None"]
+                    "type":"object",
+                    "properties":{
+                        "fetch":{
+                            "type":"array",
+                            "items":{
+                                "type":"object",
+                                "properties":{
+                                    "returning":{
+                                        "type":"string",
+                                        "enum":["Ok","Err","Some","None"]
                                     },
-                                    "value": {},
-                                    "opt": {
-                                        "type": "object",
-                                        "properties": {
-                                            "once": {"type": "boolean"},
-                                            "retryable": {"type": "boolean"},
-                                            "return-once": {"type": "boolean"}
+                                    "value":{},
+                                    "opt":{
+                                        "type":"object",
+                                        "properties":{
+                                            "once":{"type":"boolean"},
+                                            "retryable":{"type":"boolean"},
+                                            "return-once":{"type":"boolean"}
                                         }
                                     }
                                 },
-                                "required": ["returning"]
+                                "required":["returning"]
                             }
                         }
                     }

@@ -35,9 +35,14 @@ impl ComponentSupplier for MappedFileTaggerSupplier {
         Some(Box::new(SdComponentMetadata {
             description: "Tags files by mapping their file names to configured tags."
                 .to_owned(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"mapping":{"type":"object"}},"required":["mapping"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "mapping":{"type":"object"}
+                },
+                "required":["mapping"]
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

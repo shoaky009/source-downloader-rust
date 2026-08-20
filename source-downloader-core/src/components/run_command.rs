@@ -82,9 +82,23 @@ impl ComponentSupplier for RunCommandSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Runs a configured command when processing events.".to_owned(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"command":{"oneOf":[{"type":"array","items":{}},{"type":"object"}]},"withSubjectSummary":{"type":"boolean","default":false}},"required":["command"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "command":{
+                        "oneOf":[
+                            {
+                                "type":"array",
+                                "items":{}
+                            },
+                            {"type":"object"}
+                        ]
+                    },
+                    "withSubjectSummary":{"type":"boolean","default":false}
+                },
+                "required":["command"]
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

@@ -59,9 +59,13 @@ impl ComponentSupplier for NoneDownloaderSupplier {
             description:
                 "Discards downloads while exposing a configured destination path."
                     .to_owned(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"downloadPath":{"type":"string"}}}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "downloadPath":{"type":"string"}
+                }
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

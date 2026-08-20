@@ -62,9 +62,23 @@ impl ComponentSupplier for SendHttpRequestSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Sends HTTP requests for processing events.".to_owned(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string","default":"POST"},"headers":{"type":"object","additionalProperties":{"type":"string"}},"body":{"type":["string","null"]},"with-content-body":{"type":"boolean","default":false}},"required":["url"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "url":{"type":"string"},
+                    "method":{"type":"string","default":"POST"},
+                    "headers":{
+                        "type":"object",
+                        "additionalProperties":{"type":"string"}
+                    },
+                    "body":{
+                        "type":["string","null"]
+                    },
+                    "with-content-body":{"type":"boolean","default":false}
+                },
+                "required":["url"]
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

@@ -39,9 +39,15 @@ impl ComponentSupplier for RegexVariableReplacerSupplier {
         Some(Box::new(SdComponentMetadata {
             description: "Replaces variable values using a regular expression."
                 .to_owned(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"regex":{"type":"string"},"replacement":{"type":"string"}},"required":["regex","replacement"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "regex":{"type":"string"},
+                    "replacement":{"type":"string"}
+                },
+                "required":["regex","replacement"]
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

@@ -64,15 +64,44 @@ impl ComponentSupplier for PatreonIntegrationSupplier {
         Some(Box::new(SdComponentMetadata {
             description:
                 "Provides Patreon campaign posts and resolves their media files.".into(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"session-id":{"type":"string"},"headers":{"type":"object","additionalProperties":{"type":"string"}},"base-url":{"type":"string","default":"https://www.patreon.com"}},"required":["session-id"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "session-id":{"type":"string"},
+                    "headers":{
+                        "type":"object",
+                        "additionalProperties":{"type":"string"}
+                    },
+                    "base-url":{"type":"string","default":"https://www.patreon.com"}
+                },
+                "required":["session-id"]
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,
-            source_pointer_json_schema: Some(
-                json!({"type":"object","properties":{"campaigns":{"type":"object","additionalProperties":{"type":"object","properties":{"campaign_id":{"type":"integer"},"last_year_month":{"type":["string","null"]},"last_of_month":{"type":"boolean"},"last_post_id":{"type":"integer"}},"required":["campaign_id","last_year_month","last_of_month","last_post_id"]}}},"required":["campaigns"]}),
-            ),
+            #[rustfmt::skip]
+            source_pointer_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "campaigns":{
+                        "type":"object",
+                        "additionalProperties":{
+                            "type":"object",
+                            "properties":{
+                                "campaign_id":{"type":"integer"},
+                                "last_year_month":{
+                                    "type":["string","null"]
+                                },
+                                "last_of_month":{"type":"boolean"},
+                                "last_post_id":{"type":"integer"}
+                            },
+                            "required":["campaign_id","last_year_month","last_of_month","last_post_id"]
+                        }
+                    }
+                },
+                "required":["campaigns"]
+            })),
         }))
     }
 }

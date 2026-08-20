@@ -46,13 +46,35 @@ impl ComponentSupplier for FixedScheduleTriggerSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Runs processing tasks at a fixed interval.".to_owned(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"interval":{"type":"string"},"on-start-run-tasks":{"type":"boolean","default":false}},"required":["interval"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "interval":{"type":"string"},
+                    "on-start-run-tasks":{"type":"boolean","default":false}
+                },
+                "required":["interval"]
+            })),
             props_ui_schema: None,
-            state_json_schema: Some(
-                json!({"type":"object","properties":{"tasks":{"type":"object","additionalProperties":{"type":"array","items":{"type":"object","properties":{"processName":{"type":"string"}},"required":["processName"]}}}}}),
-            ),
+            #[rustfmt::skip]
+            state_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "tasks":{
+                        "type":"object",
+                        "additionalProperties":{
+                            "type":"array",
+                            "items":{
+                                "type":"object",
+                                "properties":{
+                                    "processName":{"type":"string"}
+                                },
+                                "required":["processName"]
+                            }
+                        }
+                    }
+                }
+            })),
             state_ui_schema: None,
             source_pointer_json_schema: None,
         }))

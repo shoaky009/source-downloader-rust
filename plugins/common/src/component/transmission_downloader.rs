@@ -47,14 +47,15 @@ impl ComponentSupplier for TransmissionDownloaderSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Downloads torrents through Transmission.".to_owned(),
+            #[rustfmt::skip]
             props_json_schema: Some(json!({
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string"},
-                    "username": {"type": "string"},
-                    "password": {"type": "string"}
+                "type":"object",
+                "properties":{
+                    "url":{"type":"string"},
+                    "username":{"type":"string"},
+                    "password":{"type":"string"}
                 },
-                "required": ["url"]
+                "required":["url"]
             })),
             props_ui_schema: None,
             state_json_schema: None,

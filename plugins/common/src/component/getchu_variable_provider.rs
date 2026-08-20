@@ -52,9 +52,13 @@ impl ComponentSupplier for GetchuVariableProviderSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Resolves Getchu work variables from its website.".into(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"base-url":{"type":"string","default":"https://www.getchu.com"}}}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "base-url":{"type":"string","default":"https://www.getchu.com"}
+                }
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

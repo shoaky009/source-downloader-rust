@@ -37,13 +37,34 @@ impl ComponentSupplier for CronTriggerSupplier {
         Some(Box::new(SdComponentMetadata {
             description: "Runs processing tasks according to a cron expression."
                 .to_owned(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"expression":{"type":"string"}},"required":["expression"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "expression":{"type":"string"}
+                },
+                "required":["expression"]
+            })),
             props_ui_schema: None,
-            state_json_schema: Some(
-                json!({"type":"object","properties":{"tasks":{"type":"object","additionalProperties":{"type":"array","items":{"type":"object","properties":{"processName":{"type":"string"}},"required":["processName"]}}}}}),
-            ),
+            #[rustfmt::skip]
+            state_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "tasks":{
+                        "type":"object",
+                        "additionalProperties":{
+                            "type":"array",
+                            "items":{
+                                "type":"object",
+                                "properties":{
+                                    "processName":{"type":"string"}
+                                },
+                                "required":["processName"]
+                            }
+                        }
+                    }
+                }
+            })),
             state_ui_schema: None,
             source_pointer_json_schema: None,
         }))

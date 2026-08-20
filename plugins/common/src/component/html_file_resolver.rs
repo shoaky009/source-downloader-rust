@@ -71,9 +71,17 @@ impl ComponentSupplier for HtmlFileResolverSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Resolves file URLs from HTML using a CSS selector.".into(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"css-selector":{"type":"string"},"extract-attribute":{"type":"string"},"direct-mode":{"type":"boolean","default":false},"no-proxy":{"type":"boolean","default":false}},"required":["css-selector","extract-attribute"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "css-selector":{"type":"string"},
+                    "extract-attribute":{"type":"string"},
+                    "direct-mode":{"type":"boolean","default":false},
+                    "no-proxy":{"type":"boolean","default":false}
+                },
+                "required":["css-selector","extract-attribute"]
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

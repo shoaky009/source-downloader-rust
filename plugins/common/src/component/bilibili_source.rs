@@ -56,15 +56,42 @@ impl ComponentSupplier for BilibiliSourceSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Provides Bilibili favorites as a source.".into(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"favorites":{"type":"array","items":{"type":"integer"},"minItems":1},"cookie":{"type":"string"},"base-url":{"type":"string","default":"https://api.bilibili.com"}},"required":["favorites"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "favorites":{
+                        "type":"array",
+                        "items":{"type":"integer"},
+                        "minItems":1
+                    },
+                    "cookie":{"type":"string"},
+                    "base-url":{"type":"string","default":"https://api.bilibili.com"}
+                },
+                "required":["favorites"]
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,
-            source_pointer_json_schema: Some(
-                json!({"type":"object","properties":{"favorites":{"type":"object","additionalProperties":{"type":"object","properties":{"favorite_id":{"type":"integer"},"min_fav_time":{"type":"integer"},"max_fav_time":{"type":"integer"},"touch_bottom":{"type":"boolean"}},"required":["favorite_id","min_fav_time","max_fav_time","touch_bottom"]}}}}),
-            ),
+            #[rustfmt::skip]
+            source_pointer_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "favorites":{
+                        "type":"object",
+                        "additionalProperties":{
+                            "type":"object",
+                            "properties":{
+                                "favorite_id":{"type":"integer"},
+                                "min_fav_time":{"type":"integer"},
+                                "max_fav_time":{"type":"integer"},
+                                "touch_bottom":{"type":"boolean"}
+                            },
+                            "required":["favorite_id","min_fav_time","max_fav_time","touch_bottom"]
+                        }
+                    }
+                }
+            })),
         }))
     }
 }

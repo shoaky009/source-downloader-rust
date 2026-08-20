@@ -46,13 +46,36 @@ impl ComponentSupplier for WebhookTriggerSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Triggers processing tasks through an HTTP webhook.".to_owned(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"path":{"type":"string"},"method":{"type":"string","default":"GET"}},"required":["path"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "path":{"type":"string"},
+                    "method":{"type":"string","default":"GET"}
+                },
+                "required":["path"]
+            })),
             props_ui_schema: None,
-            state_json_schema: Some(
-                json!({"type":"object","properties":{"running":{"type":"boolean"},"tasks":{"type":"object","additionalProperties":{"type":"array","items":{"type":"object","properties":{"processName":{"type":"string"}},"required":["processName"]}}}}}),
-            ),
+            #[rustfmt::skip]
+            state_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "running":{"type":"boolean"},
+                    "tasks":{
+                        "type":"object",
+                        "additionalProperties":{
+                            "type":"array",
+                            "items":{
+                                "type":"object",
+                                "properties":{
+                                    "processName":{"type":"string"}
+                                },
+                                "required":["processName"]
+                            }
+                        }
+                    }
+                }
+            })),
             state_ui_schema: None,
             source_pointer_json_schema: None,
         }))

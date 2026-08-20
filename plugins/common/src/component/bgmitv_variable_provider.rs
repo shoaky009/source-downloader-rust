@@ -61,9 +61,14 @@ impl ComponentSupplier for BgmTvVariableProviderSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Resolves variables through the Bangumi API.".into(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"base-url":{"type":"string","default":"https://api.bgm.tv"},"token":{"type":"string"}}}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "base-url":{"type":"string","default":"https://api.bgm.tv"},
+                    "token":{"type":"string"}
+                }
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

@@ -28,7 +28,7 @@ static CLEANERS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
     .map(|(pattern, replacement)| (Regex::new(pattern).unwrap(), replacement))
     .collect()
 });
-static BRACKETS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[.*?\]").unwrap());
+static BRACKETS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[.*?]").unwrap());
 static MULTI_SPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s{2,}").unwrap());
 static TRAILING_DIGITS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\d+$").unwrap());
 
@@ -96,9 +96,16 @@ impl ComponentSupplier for AnimeVariableProviderSupplier {
         Some(Box::new(SdComponentMetadata {
             description: "Resolves anime title variables using AniList and Bangumi."
                 .into(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"anilist-base-url":{"type":"string","default":"https://graphql.anilist.co"},"bgmtv-base-url":{"type":"string","default":"https://api.bgm.tv"},"bgmtv-token":{"type":"string"},"prefer-bgm-tv":{"type":"boolean","default":false}}}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "anilist-base-url":{"type":"string","default":"https://graphql.anilist.co"},
+                    "bgmtv-base-url":{"type":"string","default":"https://api.bgm.tv"},
+                    "bgmtv-token":{"type":"string"},
+                    "prefer-bgm-tv":{"type":"boolean","default":false}
+                }
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

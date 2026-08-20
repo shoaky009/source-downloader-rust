@@ -60,15 +60,30 @@ impl ComponentSupplier for MikanSourceSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Provides anime releases from Mikanani.".into(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"url":{"type":"string"},"all-episode":{"type":"boolean","default":false}},"required":["url"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "url":{"type":"string"},
+                    "all-episode":{"type":"boolean","default":false}
+                },
+                "required":["url"]
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,
-            source_pointer_json_schema: Some(
-                json!({"type":"object","properties":{"latest":{"type":"string","format":"date-time"},"shows":{"type":"object","additionalProperties":{"type":"string","format":"date-time"}}},"required":["latest","shows"]}),
-            ),
+            #[rustfmt::skip]
+            source_pointer_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "latest":{"type":"string","format":"date-time"},
+                    "shows":{
+                        "type":"object",
+                        "additionalProperties":{"type":"string","format":"date-time"}
+                    }
+                },
+                "required":["latest","shows"]
+            })),
         }))
     }
 }

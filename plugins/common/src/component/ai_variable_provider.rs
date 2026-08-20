@@ -83,9 +83,28 @@ impl ComponentSupplier for AiVariableProviderSupplier {
         Some(Box::new(SdComponentMetadata {
             description: "Uses an OpenAI-compatible API to resolve filename variables."
                 .into(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"api-keys":{"type":"array","items":{"type":"string"},"minItems":1},"resolve-variables":{"type":"array","items":{"type":"string"},"default":[]},"api-host":{"type":"string","default":"https://api.openai.com"},"system-role":{"type":"string"},"model":{"type":"string","default":"gpt-3.5-turbo"},"temperature":{"type":"number","default":0.85},"primary":{"type":"string"}},"required":["api-keys"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "api-keys":{
+                        "type":"array",
+                        "items":{"type":"string"},
+                        "minItems":1
+                    },
+                    "resolve-variables":{
+                        "type":"array",
+                        "items":{"type":"string"},
+                        "default":[]
+                    },
+                    "api-host":{"type":"string","default":"https://api.openai.com"},
+                    "system-role":{"type":"string"},
+                    "model":{"type":"string","default":"gpt-3.5-turbo"},
+                    "temperature":{"type":"number","default":0.85},
+                    "primary":{"type":"string"}
+                },
+                "required":["api-keys"]
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

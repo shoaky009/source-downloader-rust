@@ -93,18 +93,23 @@ impl ComponentSupplier for QbittorrentDownloaderSupplier {
         Some(Box::new(SdComponentMetadata {
             description: "Downloads torrents through qBittorrent and moves their files."
                 .to_owned(),
+            #[rustfmt::skip]
             props_json_schema: Some(json!({
-                "type": "object",
-                "properties": {
-                    "endpoint": {"type": "string"},
-                    "host": {"type": "string"},
-                    "username": {"type": "string"},
-                    "password": {"type": "string"},
-                    "always-download-all": {"type": "boolean", "default": false}
+                "type":"object",
+                "properties":{
+                    "endpoint":{"type":"string"},
+                    "host":{"type":"string"},
+                    "username":{"type":"string"},
+                    "password":{"type":"string"},
+                    "always-download-all":{"type":"boolean","default":false}
                 },
-                "anyOf": [
-                    {"required": ["endpoint"]},
-                    {"required": ["host"]}
+                "anyOf":[
+                    {
+                        "required":["endpoint"]
+                    },
+                    {
+                        "required":["host"]
+                    }
                 ]
             })),
             props_ui_schema: None,

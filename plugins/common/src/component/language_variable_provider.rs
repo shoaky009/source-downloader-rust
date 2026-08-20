@@ -44,9 +44,13 @@ impl ComponentSupplier for LanguageVariableProviderSupplier {
         Some(Box::new(SdComponentMetadata {
             description: "Detects subtitle languages and exposes language variables."
                 .into(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"read-content":{"type":"boolean","default":true}}}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "read-content":{"type":"boolean","default":true}
+                }
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

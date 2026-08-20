@@ -78,9 +78,16 @@ impl ComponentSupplier for DlsiteVariableProviderSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Resolves DLsite work variables from its web API.".into(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"locale":{"type":"string","default":"ja-jp"},"only-extract-id":{"type":"boolean","default":false},"prefer-suggest":{"type":"boolean","default":true},"base-url":{"type":"string","default":"https://www.dlsite.com"}}}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "locale":{"type":"string","default":"ja-jp"},
+                    "only-extract-id":{"type":"boolean","default":false},
+                    "prefer-suggest":{"type":"boolean","default":true},
+                    "base-url":{"type":"string","default":"https://www.dlsite.com"}
+                }
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

@@ -55,9 +55,19 @@ impl ComponentSupplier for SystemFileSourceSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Provides files from the system filesystem.".to_owned(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"path":{"type":"string"},"mode":{"type":"integer","enum":[0,1],"default":0}},"required":["path"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "path":{"type":"string"},
+                    "mode":{
+                        "type":"integer",
+                        "enum":[0,1],
+                        "default":0
+                    }
+                },
+                "required":["path"]
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

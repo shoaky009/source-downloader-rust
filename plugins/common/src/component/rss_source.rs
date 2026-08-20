@@ -72,15 +72,41 @@ impl ComponentSupplier for RssSourceSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Provides items from an RSS or Atom feed.".into(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"url":{"type":"string","format":"uri"},"tags":{"type":"array","items":{"type":"string"},"default":[]},"attributes":{"type":"object","additionalProperties":{"type":"string"},"default":{}},"date-format":{"type":["string","null"]}},"required":["url"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "url":{"type":"string","format":"uri"},
+                    "tags":{
+                        "type":"array",
+                        "items":{"type":"string"},
+                        "default":[]
+                    },
+                    "attributes":{
+                        "type":"object",
+                        "additionalProperties":{"type":"string"},
+                        "default":{}
+                    },
+                    "date-format":{
+                        "type":["string","null"]
+                    }
+                },
+                "required":["url"]
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,
-            source_pointer_json_schema: Some(
-                json!({"type":"object","properties":{"latest":{"type":["string","null"],"format":"date-time"}},"required":["latest"]}),
-            ),
+            #[rustfmt::skip]
+            source_pointer_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "latest":{
+                        "type":["string","null"],
+                        "format":"date-time"
+                    }
+                },
+                "required":["latest"]
+            })),
         }))
     }
 }

@@ -60,9 +60,16 @@ impl ComponentSupplier for TmdbVariableProviderSupplier {
         Some(Box::new(SdComponentMetadata {
             description: "Resolves movie and TV variables through The Movie Database."
                 .into(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"base-url":{"type":"string","default":"https://api.themoviedb.org"},"api-key":{"type":"string"},"language":{"type":"string","default":"zh-CN"}},"required":["api-key"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "base-url":{"type":"string","default":"https://api.themoviedb.org"},
+                    "api-key":{"type":"string"},
+                    "language":{"type":"string","default":"zh-CN"}
+                },
+                "required":["api-key"]
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

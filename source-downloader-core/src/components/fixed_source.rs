@@ -102,9 +102,40 @@ impl ComponentSupplier for FixedSourceSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Provides a fixed set of source items and files.".to_owned(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"content":{"type":"array","items":{"type":"object","properties":{"item":{"type":"object"},"files":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"attrs":{"type":"object"},"downloadUri":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}}},"required":["path"]}}},"required":["item","files"]}},"offset-mode":{"type":"boolean","default":false}},"required":["content"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "content":{
+                        "type":"array",
+                        "items":{
+                            "type":"object",
+                            "properties":{
+                                "item":{"type":"object"},
+                                "files":{
+                                    "type":"array",
+                                    "items":{
+                                        "type":"object",
+                                        "properties":{
+                                            "path":{"type":"string"},
+                                            "attrs":{"type":"object"},
+                                            "downloadUri":{"type":"string"},
+                                            "tags":{
+                                                "type":"array",
+                                                "items":{"type":"string"}
+                                            }
+                                        },
+                                        "required":["path"]
+                                    }
+                                }
+                            },
+                            "required":["item","files"]
+                        }
+                    },
+                    "offset-mode":{"type":"boolean","default":false}
+                },
+                "required":["content"]
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

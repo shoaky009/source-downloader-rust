@@ -51,9 +51,20 @@ impl ComponentSupplier for ExpressionItemFilterSupplier {
             description:
                 "Filters source items using inclusion and exclusion expressions."
                     .to_owned(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"exclusions":{"type":"array","items":{"type":"string"}},"inclusions":{"type":"array","items":{"type":"string"}}}}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "exclusions":{
+                        "type":"array",
+                        "items":{"type":"string"}
+                    },
+                    "inclusions":{
+                        "type":"array",
+                        "items":{"type":"string"}
+                    }
+                }
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

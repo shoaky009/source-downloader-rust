@@ -66,9 +66,16 @@ impl ComponentSupplier for MikanVariableProviderSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Resolves anime variables using Mikanani and Bangumi.".into(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"mikan-base-url":{"type":"string","default":"https://mikanani.me"},"bgmtv-base-url":{"type":"string","default":"https://api.bgm.tv"},"token":{"type":"string"},"bgmtv-token":{"type":"string"}}}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "mikan-base-url":{"type":"string","default":"https://mikanani.me"},
+                    "bgmtv-base-url":{"type":"string","default":"https://api.bgm.tv"},
+                    "token":{"type":"string"},
+                    "bgmtv-token":{"type":"string"}
+                }
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

@@ -49,7 +49,17 @@ impl ComponentSupplier for KeywordIntegrationSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Provides keyword variables and filters source items using configured keywords.".to_owned(),
-            props_json_schema: Some(json!({"type":"object","properties":{"keywords":{"type":"array","items":{"type":"string"}},"keyword-file":{"type":"string"}}})),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "keywords":{
+                        "type":"array",
+                        "items":{"type":"string"}
+                    },
+                    "keyword-file":{"type":"string"}
+                }
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

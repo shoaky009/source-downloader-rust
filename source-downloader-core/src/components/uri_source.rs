@@ -39,9 +39,14 @@ impl ComponentSupplier for UriSourceSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Loads source items from a URI.".to_owned(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"uri":{"type":"string"}},"required":["uri"]}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "uri":{"type":"string"}
+                },
+                "required":["uri"]
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

@@ -43,9 +43,13 @@ impl ComponentSupplier for ResolutionVariableProviderSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Provides resolution variables from source filenames.".into(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"only-high-resolution":{"type":"boolean","default":true}}}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "only-high-resolution":{"type":"boolean","default":true}
+                }
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,

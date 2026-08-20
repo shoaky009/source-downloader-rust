@@ -98,9 +98,22 @@ impl ComponentSupplier for SimpleFileTaggerSupplier {
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Tags files using MIME type and extension mappings.".into(),
-            props_json_schema: Some(
-                json!({"type":"object","properties":{"external-mapping":{"type":"object","additionalProperties":{"type":"string"},"default":{}},"extension-mapping":{"type":"object","additionalProperties":{"type":"string"},"default":{}}}}),
-            ),
+            #[rustfmt::skip]
+            props_json_schema: Some(json!({
+                "type":"object",
+                "properties":{
+                    "external-mapping":{
+                        "type":"object",
+                        "additionalProperties":{"type":"string"},
+                        "default":{}
+                    },
+                    "extension-mapping":{
+                        "type":"object",
+                        "additionalProperties":{"type":"string"},
+                        "default":{}
+                    }
+                }
+            })),
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,
