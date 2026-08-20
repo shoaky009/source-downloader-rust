@@ -195,18 +195,26 @@ async fn query_processors(
     .collect();
     Json(processors)
 }
+fn validate_processor_name(name: &str) -> Result<(), AppError> {
+    if name.trim().is_empty() {
+        return Err(AppError::BadRequest("Processor name must not be blank".to_owned()));
+    }
+    Ok(())
+}
 
 fn validate_processor_config(
     core: &CoreApplication,
     config: &ProcessorConfig,
-) -> ProcessorCompatibilityReport {
-    core.processor_manager.validate_compatibility(config)
+) -> Result<ProcessorCompatibilityReport, AppError> {
+    validate_processor_name(&config.name)?;
+    Ok(core.processor_manager.validate_compatibility(config))
 }
 
 fn prepare_processor(
     core: &CoreApplication,
     config: &ProcessorConfig,
 ) -> Result<source_downloader_core::processor_manager::PreparedProcessor, AppError> {
+    validate_processor_name(&config.name)?;
     core.processor_manager.prepare_processor(config).map_err(AppError::from)
 }
 
@@ -215,7 +223,7 @@ async fn validate_processor(
     State(core): State<Arc<CoreApplication>>,
     Json(body): Json<ProcessorConfig>,
 ) -> Result<Json<ProcessorCompatibilityReport>, AppError> {
-    Ok(Json(validate_processor_config(&core, &body)))
+    Ok(Json(validate_processor_config(&core, &body)?))
 }
 
 #[axum::debug_handler]
@@ -550,7 +558,14 @@ fn select_processor_configs(
 
 #[cfg(test)]
 mod tests {
+    use super::validate_processor_name;
     use super::*;
+
+    #[test]
+    fn processor_name_validation_rejects_empty_and_whitespace_only_names() {
+        assert!(validate_processor_name("").is_err());
+        assert!(validate_processor_name(" \t\n").is_err());
+    }
 
     fn processor_config(name: &str) -> ProcessorConfig {
         ProcessorConfig {

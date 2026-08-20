@@ -286,10 +286,18 @@ async fn state_stream(
     Ok(Sse::new(stream))
 }
 
+fn validate_component_name(name: &str) -> Result<(), ComponentError> {
+    if name.trim().is_empty() {
+        return Err(ComponentError::new("Component name must not be blank"));
+    }
+    Ok(())
+}
+
 fn check_request(
     core: &Arc<CoreApplication>,
     request: &ComponentSaveRequest,
 ) -> Result<(), ComponentError> {
+    validate_component_name(&request.name)?;
     let c_type = ComponentType {
         root_type: request.root_type.clone(),
         name: request.type_name.clone(),
@@ -463,5 +471,16 @@ where
         let value = serde_qs::from_str(query)
             .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
         Ok(Qs(value))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_component_name;
+
+    #[test]
+    fn component_name_validation_rejects_empty_and_whitespace_only_names() {
+        assert!(validate_component_name("").is_err());
+        assert!(validate_component_name(" \t\n").is_err());
     }
 }
