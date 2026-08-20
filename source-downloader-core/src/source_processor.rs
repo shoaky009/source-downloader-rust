@@ -682,8 +682,10 @@ impl ItemProcessRuntime {
                 }
                 Some(owner) if owner == item_hash => {}
                 Some(_) => {
-                    file.status = FileConflict;
-                    file.exist_target_path = None;
+                    if file.status != TargetExists {
+                        file.status = FileConflict;
+                        file.exist_target_path = None;
+                    }
                     has_conflict = true;
                 }
             }

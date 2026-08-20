@@ -126,6 +126,7 @@ struct PointerTestComponent {
     submitted_headers: Option<SubmittedHeaders>,
     resolved_file_tags: Vec<String>,
     download_path: String,
+    target_exists: bool,
 }
 
 impl Display for PointerTestComponent {
@@ -302,7 +303,7 @@ impl AsyncDownloader for PointerTestComponent {
 
 impl FileMover for PointerTestComponent {
     fn exists(&self, paths: &[&PathBuf]) -> Vec<bool> {
-        vec![false; paths.len()]
+        vec![self.target_exists; paths.len()]
     }
 }
 
@@ -671,6 +672,7 @@ struct PointerTestSettings {
     resolved_file_tags: Vec<String>,
     download_path: String,
     save_path: PathBuf,
+    target_exists: bool,
 }
 
 impl Default for PointerTestSettings {
@@ -697,6 +699,7 @@ impl Default for PointerTestSettings {
             resolved_file_tags: Vec::new(),
             download_path: "/tmp/source-downloader-pointer-test".to_owned(),
             save_path: PathBuf::from("/tmp/source-downloader-pointer-test"),
+            target_exists: false,
         }
     }
 }
@@ -737,6 +740,7 @@ fn pointer_test_processor_with_settings(
         resolved_file_tags: settings.resolved_file_tags,
         download_path: settings.download_path,
         retryable_fetch_failures: settings.retryable_fetch_failures,
+        target_exists: settings.target_exists,
     });
     let storage = Arc::new(PointerStorage {
         fail_next_content_save: AtomicBool::new(settings.fail_next_content_save),
@@ -1470,6 +1474,56 @@ async fn parallel_items_reserve_shared_target_once() {
 
     assert_eq!(submit_count.load(AtomicOrdering::Acquire), 1);
     assert_eq!(storage.saved_pointers(), vec![json!(1), json!(2)]);
+}
+
+#[tokio::test]
+async fn physical_target_exists_takes_precedence_over_parallel_item_collision() {
+    use std::fs;
+
+    let root = std::env::temp_dir().join(format!(
+        "source-downloader-physical-target-collision-{}",
+        OffsetDateTime::now_utc().unix_timestamp_nanos()
+    ));
+    let download_path = root.join("downloads");
+    let save_path = root.join("target");
+    fs::create_dir_all(&download_path).unwrap();
+    fs::create_dir_all(&save_path).unwrap();
+    fs::write(save_path.join("shared.txt"), b"existing").unwrap();
+    let (mut processor, storage) = pointer_test_processor_with_settings(
+        false,
+        2,
+        false,
+        PointerTestSettings {
+            parallelism: 2,
+            resolved_file: Some(PathBuf::from("shared.txt")),
+            target_exists: true,
+            download_path: download_path.to_string_lossy().into_owned(),
+            save_path,
+            ..Default::default()
+        },
+    );
+    processor.options.save_processing_content = true;
+    processor.options.item_error_continue = true;
+
+    processor.run().await.unwrap();
+
+    let saved_contents = storage.saved_contents.lock();
+    assert_eq!(saved_contents.len(), 2);
+    assert!(
+        saved_contents
+            .iter()
+            .all(|content| { content.status == ProcessingStatus::TargetAlreadyExists }),
+        "statuses: {:?}",
+        saved_contents
+            .iter()
+            .map(|content| (content.status, content.failure_reason.as_deref()))
+            .collect::<Vec<_>>()
+    );
+    let stored_files = storage.stored_file_contents.lock();
+    assert!(stored_files.values().all(|bytes| {
+        decode_files_from_compressed(bytes).unwrap()[0].status == TargetExists
+    }));
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
