@@ -1,10 +1,10 @@
-use crate::http;
-use serde::{Deserialize, Serialize};
+use crate::api::chii::ChiiClient;
+use crate::http::{self, HttpClient};
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
-    SdComponentMetadata, SourceFile, VariableProvider, format_error_chain,
+    SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -28,20 +28,17 @@ impl ComponentSupplier for ChiiVariableProviderSupplier {
             .unwrap_or("https://chii.ai")
             .trim_end_matches('/')
             .to_string();
-        let client = if base_url.starts_with("http://127.0.0.1:") {
-            http::client_builder().no_proxy().build().map_err(|error| {
-                ComponentError::new(format!(
-                    "Failed to build Chii client: {}",
-                    format_error_chain(&error)
-                ))
-            })?
+        let http = if base_url.starts_with("http://127.0.0.1:") {
+            HttpClient::from_reqwest(
+                http::client_builder()
+                    .no_proxy()
+                    .build()
+                    .map_err(|error| ComponentError::new(error.to_string()))?,
+            )
         } else {
-            http::build_client()?
+            HttpClient::new()?
         };
-        Ok(Arc::new(ChiiVariableProvider {
-            client,
-            endpoint: format!("{base_url}/graphql"),
-        }))
+        Ok(Arc::new(ChiiVariableProvider { client: ChiiClient::new(http, base_url) }))
     }
     fn is_support_no_props(&self) -> bool {
         true
@@ -66,8 +63,7 @@ impl ComponentSupplier for ChiiVariableProviderSupplier {
 #[derive(Debug, source_downloader_sdk::SdComponent)]
 #[component(VariableProvider)]
 struct ChiiVariableProvider {
-    client: reqwest::Client,
-    endpoint: String,
+    client: ChiiClient,
 }
 
 impl Display for ChiiVariableProvider {
@@ -76,74 +72,20 @@ impl Display for ChiiVariableProvider {
     }
 }
 
-const QUERY: &str = "query SubjectSearch($q: String, $type: String) {\n  querySubjectSearch(q: $q, type: $type) {\n    result {\n      ... on Subject {\n        id\n        name\n        nameCN\n        nsfw\n        date\n      }\n    }\n  }\n}";
-#[derive(Serialize)]
-struct Request<'a> {
-    #[serde(rename = "operationName")]
-    operation_name: &'static str,
-    query: &'static str,
-    variables: Variables<'a>,
-}
-#[derive(Serialize)]
-struct Variables<'a> {
-    q: &'a str,
-    r#type: &'static str,
-}
-#[derive(Deserialize)]
-struct Response {
-    data: Data,
-}
-#[derive(Deserialize)]
-struct Data {
-    #[serde(rename = "querySubjectSearch")]
-    query_subject_search: Search,
-}
-#[derive(Deserialize)]
-struct Search {
-    result: Vec<Subject>,
-}
-#[derive(Deserialize)]
-struct Subject {
-    id: String,
-    name: String,
-    #[serde(rename = "nameCN")]
-    name_cn: String,
-}
 impl ChiiVariableProvider {
     async fn request(&self, text: &str) -> PatternVariables {
-        let body = Request {
-            operation_name: "SubjectSearch",
-            query: QUERY,
-            variables: Variables { q: text, r#type: "anime" },
-        };
-        let response = match http::execute(
-            &self.client,
-            self.client.post(&self.endpoint).json(&body),
-            "Search Chii subject",
-        )
-        .await
-        {
-            Ok(response) => response,
+        match self.client.search_subject(text).await {
+            Ok(Some(subject)) => HashMap::from([
+                ("bgmtvId".to_string(), subject.id),
+                ("subjectName".to_string(), subject.name),
+                ("subjectNameCn".to_string(), subject.name_cn),
+            ]),
+            Ok(None) => HashMap::new(),
             Err(error) => {
                 tracing::warn!(error = %error, "Chii search failed");
-                return HashMap::new();
+                HashMap::new()
             }
-        };
-        response
-            .json::<Response>()
-            .await
-            .ok()
-            .and_then(|response| {
-                response.data.query_subject_search.result.into_iter().next()
-            })
-            .map(|subject| {
-                HashMap::from([
-                    ("bgmtvId".to_string(), subject.id),
-                    ("subjectName".to_string(), subject.name),
-                    ("subjectNameCn".to_string(), subject.name_cn),
-                ])
-            })
-            .unwrap_or_default()
+        }
     }
 }
 #[async_trait]

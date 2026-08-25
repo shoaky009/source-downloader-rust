@@ -1,11 +1,12 @@
-use crate::http;
+use crate::api::patreon::PatreonClient;
+use crate::http::{self, HttpClient};
 use serde::{Deserialize, Serialize};
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, ItemPointer,
     PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourceFile,
-    SourcePointer, deserialize_component_config, format_error_chain,
+    SourcePointer, deserialize_component_config,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
@@ -40,25 +41,24 @@ impl ComponentSupplier for PatreonIntegrationSupplier {
         p: &Map<String, Value>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
         let config = deserialize_component_config::<PatreonIntegrationConfig>(p)?;
-        let sid = config.session_id;
-        let mut headers = config.headers;
-        headers.entry("Cookie".into()).or_insert(format!(
-            "session_id={sid}; patreon_location_country_code=CN; patreon_locale_code=zh-CN;"
-        ));
         let base = config
             .base_url
             .unwrap_or_else(|| "https://www.patreon.com".to_string())
             .trim_end_matches('/')
             .to_string();
-        let client = if base.starts_with("http://127.0.0.1:") {
-            http::client_builder()
-                .no_proxy()
-                .build()
-                .map_err(|e| ComponentError::new(e.to_string()))?
+        let http = if base.starts_with("http://127.0.0.1:") {
+            HttpClient::from_reqwest(
+                http::client_builder()
+                    .no_proxy()
+                    .build()
+                    .map_err(|error| ComponentError::new(error.to_string()))?,
+            )
         } else {
-            http::build_client()?
+            HttpClient::new()?
         };
-        Ok(Arc::new(PatreonIntegration { client, base, headers }))
+        Ok(Arc::new(PatreonIntegration {
+            client: PatreonClient::new(http, base, &config.session_id, config.headers),
+        }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
@@ -108,9 +108,7 @@ impl ComponentSupplier for PatreonIntegrationSupplier {
 #[derive(Debug, source_downloader_sdk::SdComponent)]
 #[component(Source, ItemFileResolver)]
 struct PatreonIntegration {
-    client: reqwest::Client,
-    base: String,
-    headers: HashMap<String, String>,
+    client: PatreonClient,
 }
 
 impl Display for PatreonIntegration {
@@ -150,25 +148,6 @@ impl SourcePointer for PatreonPointer {
     }
 }
 impl PatreonIntegration {
-    fn request(&self, path: &str) -> reqwest::RequestBuilder {
-        self.headers
-            .iter()
-            .fold(self.client.get(format!("{}{}", self.base, path)), |r, (k, v)| {
-                r.header(k, v)
-            })
-    }
-    async fn value(
-        &self,
-        r: reqwest::RequestBuilder,
-        op: &str,
-    ) -> Result<Value, ProcessingError> {
-        http::execute(&self.client, r, op).await?.json().await.map_err(|error| {
-            ProcessingError::non_retryable(format!(
-                "Invalid Patreon response: {}",
-                format_error_chain(&error)
-            ))
-        })
-    }
     fn campaign_ids(v: &Value) -> Vec<i64> {
         v.get("data")
             .and_then(Value::as_array)
@@ -267,16 +246,10 @@ impl Source for PatreonIntegration {
         let p = p.as_any().downcast_ref::<PatreonPointer>().ok_or_else(|| {
             ProcessingError::non_retryable("Invalid Patreon source pointer")
         })?;
-        let pledges =
-            self.value(self.request("/api/pledges"), "Fetch Patreon pledges").await?;
+        let pledges = self.client.pledges().await?;
         let mut out = Vec::new();
         for campaign in Self::campaign_ids(&pledges) {
-            let tags = self
-                .value(
-                    self.request(&format!("/api/campaigns/{campaign}/post-tags")),
-                    "Fetch Patreon post tags",
-                )
-                .await?;
+            let tags = self.client.post_tags(campaign).await?;
             let months = Self::months(&tags);
             let state = p.campaigns.get(&campaign);
             let start = state
@@ -288,16 +261,7 @@ impl Source for PatreonIntegration {
                 })
                 .unwrap_or(0);
             for month in months.into_iter().skip(start) {
-                let response = self
-                    .value(
-                        self.request("/api/posts").query(&[
-                            ("filter[campaign_id]", campaign.to_string()),
-                            ("filter[month]", month.clone()),
-                            ("sort", "published_at".into()),
-                        ]),
-                        "Fetch Patreon posts",
-                    )
-                    .await?;
+                let response = self.client.posts(campaign, &month).await?;
                 let posts = response
                     .get("data")
                     .and_then(Value::as_array)
@@ -344,7 +308,7 @@ impl Source for PatreonIntegration {
         Box::new(serde_json::from_value::<PatreonPointer>(v).unwrap_or_default())
     }
     fn headers(&self, _: &SourceItem) -> Option<HashMap<String, String>> {
-        Some(self.headers.clone())
+        Some(self.client.headers())
     }
 }
 #[async_trait]
@@ -360,9 +324,7 @@ impl ItemFileResolver for PatreonIntegration {
             .next()
             .filter(|x| x.chars().all(|c| c.is_ascii_digit()))
             .ok_or_else(|| ProcessingError::non_retryable("Patreon post ID missing"))?;
-        let response = self
-            .value(self.request(&format!("/api/posts/{id}")), "Fetch Patreon post")
-            .await?;
+        let response = self.client.post(id).await?;
         let relationships = response
             .pointer("/data/relationships/media/data")
             .and_then(Value::as_array)

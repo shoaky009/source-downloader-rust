@@ -1,8 +1,8 @@
-use crate::http;
+use crate::api::dlsite::DlsiteClient;
+use crate::http::{self, HttpClient};
 use parking_lot::Mutex;
 use regex::Regex;
 use scraper::{Html, Selector};
-use serde::Deserialize;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
@@ -55,18 +55,18 @@ impl ComponentSupplier for DlsiteVariableProviderSupplier {
             .unwrap_or("https://www.dlsite.com")
             .trim_end_matches('/')
             .to_string();
-        let client = if base.starts_with("http://127.0.0.1:") {
-            http::client_builder()
-                .no_proxy()
-                .build()
-                .map_err(|e| ComponentError::new(e.to_string()))?
+        let http = if base.starts_with("http://127.0.0.1:") {
+            HttpClient::from_reqwest(
+                http::client_builder()
+                    .no_proxy()
+                    .build()
+                    .map_err(|error| ComponentError::new(error.to_string()))?,
+            )
         } else {
-            http::build_client()?
+            HttpClient::new()?
         };
         Ok(Arc::new(DlsiteVariableProvider {
-            client,
-            base,
-            locale,
+            client: DlsiteClient::new(http, base, &locale),
             only,
             prefer,
             cache: Mutex::new(HashMap::new()),
@@ -98,9 +98,7 @@ impl ComponentSupplier for DlsiteVariableProviderSupplier {
 #[derive(Debug, source_downloader_sdk::SdComponent)]
 #[component(VariableProvider)]
 struct DlsiteVariableProvider {
-    client: reqwest::Client,
-    base: String,
-    locale: String,
+    client: DlsiteClient,
     only: bool,
     prefer: bool,
     cache: Mutex<HashMap<String, PatternVariables>>,
@@ -113,18 +111,6 @@ impl Display for DlsiteVariableProvider {
 }
 
 static ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:RJ|VJ)\d+").unwrap());
-#[derive(Deserialize)]
-struct Suggest {
-    #[serde(default)]
-    work: Vec<SuggestWork>,
-}
-#[derive(Deserialize)]
-struct SuggestWork {
-    #[serde(rename = "work_name")]
-    name: String,
-    #[serde(rename = "workno")]
-    id: String,
-}
 impl DlsiteVariableProvider {
     async fn resolve(&self, text: &str) -> PatternVariables {
         let key = text.to_string();
@@ -161,18 +147,7 @@ impl DlsiteVariableProvider {
         {
             return Some(v);
         }
-        let encoded: String =
-            url::form_urlencoded::byte_serialize(text.as_bytes()).collect();
-        let r = http::execute(
-            &self.client,
-            self.client
-                .get(format!("{}/maniax/fsr/=/language/jp/keyword/{encoded}", self.base))
-                .header("Cookie", format!("locale={}; adultchecked=1", self.locale)),
-            "Search DLsite",
-        )
-        .await
-        .ok()?;
-        let html = r.text().await.ok()?;
+        let html = self.client.search(text).await.ok()?;
         let found = {
             let doc = Html::parse_document(&html);
             let sel = Selector::parse("#search_result_img_box .work_name a").ok()?;
@@ -190,35 +165,10 @@ impl DlsiteVariableProvider {
         if !self.prefer { self.suggest(text).await } else { None }
     }
     async fn suggest(&self, text: &str) -> Option<String> {
-        let r = http::execute(
-            &self.client,
-            self.client
-                .get(format!("{}/suggest/", self.base))
-                .query(&[("term", text), ("site", "pro")])
-                .header("Cookie", format!("locale={}; adultchecked=1", self.locale)),
-            "Suggest DLsite work",
-        )
-        .await
-        .ok()?;
-        r.json::<Suggest>().await.ok()?.work.into_iter().next().map(|w| {
-            let _ = w.name;
-            w.id
-        })
+        self.client.suggest(text).await.ok().flatten()
     }
     async fn detail(&self, id: &str) -> Option<PatternVariables> {
-        let r = http::execute(
-            &self.client,
-            self.client
-                .get(format!("{}/home/work/=/product_id/{id}.html", self.base))
-                .header("Cookie", format!("locale={}; adultchecked=1", self.locale)),
-            "Fetch DLsite work",
-        )
-        .await
-        .ok()?;
-        if r.status() == reqwest::StatusCode::NOT_FOUND {
-            return None;
-        }
-        let html = r.text().await.ok()?;
+        let html = self.client.work(id).await.ok()?;
         Some(parse_detail(&html, id))
     }
 }
