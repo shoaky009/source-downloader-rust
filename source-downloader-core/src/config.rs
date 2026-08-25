@@ -135,6 +135,7 @@ pub struct ProcessorOptionConfig {
     // 后面改名字 -> file_rule
     #[serde(skip_serializing_if = "is_default")]
     pub file_grouping: Vec<FileRuleConfig>,
+    #[serde(skip_serializing_if = "is_default")]
     pub download_options: DownloadOptionsConfig,
     #[serde(skip_serializing_if = "is_default")]
     pub process_listeners: Vec<ListenerConfig>,
@@ -145,25 +146,40 @@ pub struct ProcessorOptionConfig {
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct ItemRuleConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<HashSet<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub expression_matching: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub filename_pattern: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub save_path_pattern: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub variable_providers: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_item_filters: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub item_expression_exclusions: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub item_expression_inclusions: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct FileRuleConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<HashSet<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub expression_matching: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub filename_pattern: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub save_path_pattern: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub file_content_filters: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub file_content_expression_exclusions: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub file_content_expression_inclusions: Option<Vec<String>>,
     // pub file_replacement_decider: Option<String>
 }
@@ -362,7 +378,7 @@ impl Default for ProcessorOptionConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
 #[serde(default)]
 pub struct DownloadOptionsConfig {
     #[serde(default, skip_serializing_if = "is_default")]
@@ -700,8 +716,8 @@ impl ConfigOperator for YamlConfigOperator {
 #[cfg(test)]
 mod test {
     use crate::config::{
-        ComponentConfig, Config, ConfigOperator, InstanceConfig, ProcessorOptionConfig,
-        YamlConfigOperator,
+        ComponentConfig, Config, ConfigOperator, FileRuleConfig, InstanceConfig,
+        ItemRuleConfig, ProcessorOptionConfig, YamlConfigOperator,
     };
     use crate::process::file::{PathOverflowStrategy, VariableErrorStrategy};
     use source_downloader_sdk::component::ComponentRootType;
@@ -847,6 +863,24 @@ mod test {
                 .unwrap()
                 .source,
             replacement.source
+        );
+    }
+    #[test]
+    fn save_processor_omits_unset_options_from_yaml() {
+        let temp_operator = TempFileOperator::new_from_config(CONFIG_PATH);
+        let operator = temp_operator.operator;
+        let mut processor =
+            operator.get_all_processor_config().into_iter().next().unwrap();
+        processor.options.item_grouping = vec![ItemRuleConfig::default()];
+        processor.options.file_grouping = vec![FileRuleConfig::default()];
+
+        operator.save_processor(processor).unwrap();
+
+        let yaml = fs::read_to_string(&temp_operator._temp_file).unwrap();
+        assert!(
+            !yaml.contains("expression-matching: null")
+                && !yaml.contains("download-options: {}"),
+            "unset processor options must be omitted:\n{yaml}"
         );
     }
     #[test]
