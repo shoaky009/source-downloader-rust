@@ -1,6 +1,8 @@
 use reqwest::{Client, ClientBuilder, IntoUrl, RequestBuilder, Response, StatusCode};
 use serde::de::DeserializeOwned;
-use source_downloader_sdk::component::{ComponentError, ProcessingError};
+use source_downloader_sdk::component::{
+    ComponentError, ProcessingError, format_error_chain,
+};
 use std::time::Duration;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -13,7 +15,10 @@ pub(crate) struct HttpClient {
 impl HttpClient {
     pub(crate) fn new() -> Result<Self, ComponentError> {
         client_builder().build().map(Self::from_reqwest).map_err(|error| {
-            ComponentError::new(format!("Failed to build common HTTP client: {error}"))
+            ComponentError::new(format!(
+                "Failed to build common HTTP client: {}",
+                format_error_chain(&error)
+            ))
         })
     }
 
@@ -98,7 +103,7 @@ pub(crate) async fn execute(
 }
 
 pub(crate) fn map_error(error: reqwest::Error, operation: &str) -> ProcessingError {
-    let message = format!("{operation}: {error}");
+    let message = format!("{operation}: {}", format_error_chain(&error));
     if error.is_timeout()
         || error.is_connect()
         || error.status().is_some_and(is_retryable_status)

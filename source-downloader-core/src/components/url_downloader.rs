@@ -5,7 +5,7 @@ use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, DownloadTask, Downloader,
     ProcessingError, SdComponent, SdComponentMetadata, SourceFile,
-    deserialize_component_config,
+    deserialize_component_config, format_error_chain,
 };
 use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::fmt::{Display, Formatter};
@@ -75,12 +75,12 @@ impl Downloader for UrlDownloader {
 
         let body = reqwest::get(task.source_item.download_uri.to_string())
             .await
-            .map_err(|error| ProcessingError::retryable(error.to_string()))?
+            .map_err(|error| ProcessingError::retryable(format_error_chain(&error)))?
             .error_for_status()
-            .map_err(|error| ProcessingError::retryable(error.to_string()))?
+            .map_err(|error| ProcessingError::retryable(format_error_chain(&error)))?
             .bytes()
             .await
-            .map_err(|error| ProcessingError::retryable(error.to_string()))?;
+            .map_err(|error| ProcessingError::retryable(format_error_chain(&error)))?;
 
         for (index, file) in task.download_files.iter().enumerate() {
             let mut target = tokio::fs::OpenOptions::new()

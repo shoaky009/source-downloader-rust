@@ -1,6 +1,7 @@
 use moka::future::Cache;
 use reqwest::{Client, Url};
 use scraper::{Html, Selector};
+use source_downloader_sdk::component::format_error_chain;
 use source_downloader_sdk::http::header;
 use std::sync::{Arc, LazyLock};
 
@@ -68,7 +69,7 @@ impl MikanClient {
                 future,
             )
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|error| format_error_chain(error.as_ref()))
     }
 
     // --- 静态抓取逻辑 (Private Static Methods) ---

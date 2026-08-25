@@ -6,7 +6,7 @@ use serde::Deserialize;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, DownloadTask, Downloader,
     ProcessingError, SdComponent, SdComponentMetadata, SourceFile, SourceFileRef,
-    Stateful, deserialize_component_config,
+    Stateful, deserialize_component_config, format_error_chain,
 };
 use source_downloader_sdk::serde_json::{Map, Value, json};
 use source_downloader_sdk::{SdComponent, SourceItem};
@@ -49,7 +49,10 @@ impl ComponentSupplier for HttpDownloaderSupplier {
             ));
         }
         let client = reqwest::Client::builder().build().map_err(|error| {
-            ComponentError::new(format!("Failed to build HTTP client: {error}"))
+            ComponentError::new(format!(
+                "Failed to build HTTP client: {}",
+                format_error_chain(&error)
+            ))
         })?;
         Ok(Arc::new(HttpDownloader {
             path: config.download_path,
@@ -192,7 +195,10 @@ impl HttpDownloader {
             }
         }
         let mut response = request.send().await.map_err(|error| {
-            ProcessingError::retryable(format!("Failed to download {uri}: {error}"))
+            ProcessingError::retryable(format!(
+                "Failed to download {uri}: {}",
+                format_error_chain(&error)
+            ))
         })?;
         let status = response.status();
         if status == reqwest::StatusCode::NOT_FOUND {
@@ -213,7 +219,10 @@ impl HttpDownloader {
 
         let mut target = tokio::fs::File::create(path).await?;
         while let Some(chunk) = response.chunk().await.map_err(|error| {
-            ProcessingError::retryable(format!("Failed while downloading {uri}: {error}"))
+            ProcessingError::retryable(format!(
+                "Failed while downloading {uri}: {}",
+                format_error_chain(&error)
+            ))
         })? {
             downloaded_bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
             target.write_all(&chunk).await?;

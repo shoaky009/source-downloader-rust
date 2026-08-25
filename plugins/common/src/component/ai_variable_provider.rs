@@ -6,6 +6,7 @@ use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
     SdComponentMetadata, SourceFile, VariableProvider, deserialize_component_config,
+    format_error_chain,
 };
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use std::collections::{HashMap, VecDeque};
@@ -59,7 +60,10 @@ impl ComponentSupplier for AiVariableProviderSupplier {
         let system_role = config.system_role.unwrap_or_else(|| format!("你现在是一个文件解析器，从文件名中解析信息\n需要的信息有:{:?}\n如果不存在字段无需返回，以json的格式返回", config.resolve_variables));
         let client = if config.api_host.starts_with("http://127.0.0.1:") {
             http::client_builder().no_proxy().build().map_err(|error| {
-                ComponentError::new(format!("Failed to build AI HTTP client: {error}"))
+                ComponentError::new(format!(
+                    "Failed to build AI HTTP client: {}",
+                    format_error_chain(&error)
+                ))
             })?
         } else {
             http::build_client()?

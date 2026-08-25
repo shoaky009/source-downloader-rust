@@ -5,6 +5,7 @@ use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemPointer, PointedItem,
     ProcessingError, SdComponent, SdComponentMetadata, Source, SourcePointer,
+    format_error_chain,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
@@ -202,8 +203,11 @@ impl BilibiliSource {
             req = req.header("Cookie", c)
         }
         let r = http::execute(&self.client, req, "Fetch Bilibili favorites").await?;
-        let body = r.json::<Response>().await.map_err(|e| {
-            ProcessingError::non_retryable(format!("Invalid Bilibili response: {e}"))
+        let body = r.json::<Response>().await.map_err(|error| {
+            ProcessingError::non_retryable(format!(
+                "Invalid Bilibili response: {}",
+                format_error_chain(&error)
+            ))
         })?;
         if body.code != 0 {
             return Err(ProcessingError::non_retryable(format!(

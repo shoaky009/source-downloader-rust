@@ -4,7 +4,7 @@ use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, ProcessingError,
-    SdComponent, SdComponentMetadata, SourceFile,
+    SdComponent, SdComponentMetadata, SourceFile, format_error_chain,
 };
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use std::fmt::{Display, Formatter};
@@ -61,7 +61,10 @@ impl ComponentSupplier for HtmlFileResolverSupplier {
         let no_proxy = p.get("no-proxy").and_then(Value::as_bool).unwrap_or(false);
         let client = if no_proxy {
             http::client_builder().no_proxy().build().map_err(|error| {
-                ComponentError::new(format!("Failed to build HTML client: {error}"))
+                ComponentError::new(format!(
+                    "Failed to build HTML client: {}",
+                    format_error_chain(&error)
+                ))
             })?
         } else {
             http::build_client()?

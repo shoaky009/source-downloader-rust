@@ -5,7 +5,7 @@ use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, ItemPointer,
     PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourceFile,
-    SourcePointer, deserialize_component_config,
+    SourcePointer, deserialize_component_config, format_error_chain,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
@@ -162,8 +162,11 @@ impl PatreonIntegration {
         r: reqwest::RequestBuilder,
         op: &str,
     ) -> Result<Value, ProcessingError> {
-        http::execute(&self.client, r, op).await?.json().await.map_err(|e| {
-            ProcessingError::non_retryable(format!("Invalid Patreon response: {e}"))
+        http::execute(&self.client, r, op).await?.json().await.map_err(|error| {
+            ProcessingError::non_retryable(format!(
+                "Invalid Patreon response: {}",
+                format_error_chain(&error)
+            ))
         })
     }
     fn campaign_ids(v: &Value) -> Vec<i64> {

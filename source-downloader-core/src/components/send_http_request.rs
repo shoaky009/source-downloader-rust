@@ -3,7 +3,7 @@ use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, FileContentStatus, ItemContent,
     ProcessContext, ProcessListener, ProcessingError, ProcessorInfo, SdComponent,
-    SdComponentMetadata, deserialize_component_config,
+    SdComponentMetadata, deserialize_component_config, format_error_chain,
 };
 use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -125,10 +125,9 @@ impl SendHttpRequest {
             if let Some(body) = body {
                 request = request.body(body);
             }
-            let response = request
-                .send()
-                .await
-                .map_err(|error| ProcessingError::non_retryable(error.to_string()))?;
+            let response = request.send().await.map_err(|error| {
+                ProcessingError::non_retryable(format_error_chain(&error))
+            })?;
             Ok(response.status())
         })
     }

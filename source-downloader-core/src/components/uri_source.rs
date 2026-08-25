@@ -4,7 +4,7 @@ use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, EmptyPointer, PointedItem,
     ProcessingError, SdComponent, SdComponentMetadata, Source, SourcePointer,
-    deserialize_component_config,
+    deserialize_component_config, format_error_chain,
 };
 use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::fmt::{Display, Formatter};
@@ -84,12 +84,18 @@ impl Source for UriSource {
         } else {
             reqwest::get(self.uri.to_string())
                 .await
-                .map_err(|error| ProcessingError::non_retryable(error.to_string()))?
+                .map_err(|error| {
+                    ProcessingError::non_retryable(format_error_chain(&error))
+                })?
                 .error_for_status()
-                .map_err(|error| ProcessingError::non_retryable(error.to_string()))?
+                .map_err(|error| {
+                    ProcessingError::non_retryable(format_error_chain(&error))
+                })?
                 .bytes()
                 .await
-                .map_err(|error| ProcessingError::non_retryable(error.to_string()))?
+                .map_err(|error| {
+                    ProcessingError::non_retryable(format_error_chain(&error))
+                })?
                 .to_vec()
         };
         let source_items: Vec<SourceItem> = serde_json::from_slice(&bytes)
