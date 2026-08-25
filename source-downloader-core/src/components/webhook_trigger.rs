@@ -249,6 +249,14 @@ impl WebhookTrigger {
 
     pub fn set_adapter(&self, adapter: Arc<dyn WebhookAdapter>) -> Result<(), String> {
         let mut lifecycle = self.lifecycle.lock();
+        if lifecycle
+            .adapter
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &adapter))
+        {
+            return Ok(());
+        }
+
         if lifecycle.state == WebhookState::Running {
             return Err(format!(
                 "Cannot replace adapter while webhook endpoint {} is running",
@@ -502,6 +510,17 @@ mod tests {
         trigger.start_checked().unwrap();
 
         assert_eq!(adapter.registered.lock().len(), 1);
+    }
+
+    #[test]
+    fn setting_same_adapter_while_running_is_idempotent() {
+        let adapter = Arc::new(RecordingAdapter::default());
+        let trigger = trigger(adapter.clone());
+        trigger.start_checked().unwrap();
+
+        trigger.set_adapter(adapter).unwrap();
+
+        assert!(trigger.is_running());
     }
 
     #[test]

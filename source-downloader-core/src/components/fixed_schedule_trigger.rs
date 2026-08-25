@@ -60,6 +60,7 @@ impl ComponentSupplier for FixedScheduleTriggerSupplier {
             state_json_schema: Some(json!({
                 "type":"object",
                 "properties":{
+                    "running":{"type":"boolean"},
                     "tasks":{
                         "type":"object",
                         "additionalProperties":{
@@ -137,13 +138,21 @@ impl FixedScheduleTrigger {
 
 impl Stateful for FixedScheduleTrigger {
     fn get_state_detail(&self) -> Option<Map<String, Value>> {
-        Some(state_detail_for_tasks(&self.task_registry.tasks.read()))
+        let mut state = state_detail_for_tasks(&self.task_registry.tasks.read());
+        state.insert(
+            "running".to_owned(),
+            Value::Bool(self.worker_handle.lock().is_some()),
+        );
+        Some(state)
     }
 }
 
 impl Trigger for FixedScheduleTrigger {
     fn start(&self) {
         let mut handle_lock = self.worker_handle.lock();
+        if handle_lock.is_some() {
+            return;
+        }
 
         let tasks = self.task_registry.tasks.clone();
         let duration = self.interval;
@@ -463,6 +472,23 @@ mod tests {
         trigger.stop();
         assert_eq!(counter1.load(Ordering::SeqCst), 2);
         assert_eq!(counter2.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn repeated_start_does_not_duplicate_schedule() {
+        let trigger = FixedScheduleTrigger::new(Duration::from_millis(20), false);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let (task, mut run_receiver) = create_recording_task(counter.clone());
+        trigger.add_task(task);
+
+        trigger.start();
+        trigger.start();
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_millis(20)).await;
+        expect_next_run(&mut run_receiver).await;
+
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+        trigger.stop();
     }
     #[test]
     fn parse_duration_accepts_iso_8601_values() {

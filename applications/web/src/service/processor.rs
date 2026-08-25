@@ -243,7 +243,7 @@ async fn update_processor(
     }
     let prepared = prepare_processor(&core, &body)?;
     core.config_operator.save_processor(body.clone())?;
-    core.processor_manager.activate_processor(prepared);
+    core.activate_processor(prepared).map_err(AppError::BadRequest)?;
     Ok(Json(body))
 }
 
@@ -267,7 +267,7 @@ async fn create_processor(
     }
     let prepared = prepare_processor(&core, &body)?;
     core.config_operator.save_processor(body.clone())?;
-    core.processor_manager.activate_processor(prepared);
+    core.activate_processor(prepared).map_err(AppError::BadRequest)?;
     Ok(StatusCode::CREATED)
 }
 
@@ -281,7 +281,7 @@ async fn reload_processor(
         .get_processor_config(&name)
         .ok_or_else(|| AppError::NotFound("Processor config not found".to_string()))?;
     let prepared = prepare_processor(&core, &config)?;
-    core.processor_manager.activate_processor(prepared);
+    core.activate_processor(prepared).map_err(AppError::BadRequest)?;
     Ok(StatusCode::NO_CONTENT)
 }
 #[axum::debug_handler]

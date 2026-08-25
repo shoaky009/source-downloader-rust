@@ -119,6 +119,10 @@ impl Trigger for CronTrigger {
         let Ok(mut shutdown_sender) = self.shutdown_sender.lock() else {
             return;
         };
+        if shutdown_sender.is_some() {
+            return;
+        }
+
         let task_groups = Arc::new(group_tasks(self.holding.tasks()));
         let expression = self.expression.clone();
         let (sender, receiver) = oneshot::channel();

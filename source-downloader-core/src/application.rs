@@ -6,9 +6,8 @@ use crate::components::webhook_trigger::{
 use crate::config::ConfigOperator;
 use crate::instance_manager::InstanceManager;
 use crate::plugin::PluginManager;
-use crate::processor_manager::ProcessorManager;
+use crate::processor_manager::{PreparedProcessor, ProcessorManager};
 use crate::processor_run_manager::ProcessorRunManager;
-use source_downloader_sdk::component::{ComponentId, ComponentRootType, ComponentType};
 use source_downloader_sdk::plugin::PluginContext;
 use std::any::Any;
 use std::collections::HashSet;
@@ -51,7 +50,6 @@ impl CoreApplication {
         self.register_component_supplier();
         info!("{}", self.component_manager);
         self.create_processors();
-        self.initialize_triggers()?;
         self.configure_webhook_triggers()?;
         self.start_triggers()
     }
@@ -114,26 +112,6 @@ impl CoreApplication {
             self.processor_manager.create_processor(&cfg)
         }
     }
-    fn initialize_triggers(&self) -> Result<(), String> {
-        let configs = self.config_operator.get_all_component_config();
-        let Some(triggers) = configs.get(ComponentRootType::Trigger.name()) else {
-            return Ok(());
-        };
-        for config in triggers {
-            let id = ComponentId::new(
-                ComponentType::trigger(config.component_type.clone()),
-                &config.name,
-            );
-            self.component_manager
-                .get_component(&id)
-                .and_then(|wrapper| wrapper.require_component())
-                .and_then(|component| component.as_trigger())
-                .map_err(|error| {
-                    format!("Failed to initialize trigger {}: {}", id.display(), error)
-                })?;
-        }
-        Ok(())
-    }
 
     fn configure_webhook_triggers(&self) -> Result<(), String> {
         let endpoints = self
@@ -162,6 +140,11 @@ impl CoreApplication {
             }
         }
         Ok(())
+    }
+    pub fn activate_processor(&self, prepared: PreparedProcessor) -> Result<(), String> {
+        self.processor_manager.activate_processor(prepared);
+        self.configure_webhook_triggers()?;
+        self.start_triggers()
     }
 
     fn start_triggers(&self) -> Result<(), String> {
@@ -214,7 +197,6 @@ impl CoreApplication {
         self.destroy_all_component();
         self.destroy_all_instance();
         self.create_processors();
-        self.initialize_triggers()?;
         self.configure_webhook_triggers()?;
         self.start_triggers()
     }
@@ -252,31 +234,11 @@ impl PluginContext for CorePluginContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::YamlConfigOperator;
-    use async_trait::async_trait;
-    use source_downloader_sdk::component::{ComponentRootType, ProcessTask};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use crate::config::{ProcessorConfig, YamlConfigOperator};
+    use source_downloader_sdk::component::ComponentRootType;
+    use source_downloader_sdk::serde_json::Value;
     use storage_memory::MemoryProcessingStorage;
     use tempfile::NamedTempFile;
-
-    #[derive(Debug)]
-    struct CountingTask(Arc<AtomicUsize>);
-
-    #[async_trait]
-    impl ProcessTask for CountingTask {
-        async fn run(&self) -> Result<(), String> {
-            self.0.fetch_add(1, Ordering::SeqCst);
-            Ok(())
-        }
-
-        fn name(&self) -> &str {
-            "counting"
-        }
-
-        fn group(&self) -> Option<String> {
-            None
-        }
-    }
 
     #[test]
     fn duplicate_webhook_endpoints_are_rejected_before_start() {
@@ -294,11 +256,11 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn start_initializes_unreferenced_configured_triggers() {
+    async fn activating_processor_starts_newly_referenced_trigger() {
         let config_file = NamedTempFile::new().unwrap();
         std::fs::write(
             config_file.path(),
-            "instances: []\ncomponents:\n  trigger:\n  - name: idle\n    type: fixed\n    props:\n      interval: PT0.02S\nprocessors: []\n",
+            "instances: []\ncomponents:\n  trigger:\n  - name: dynamic\n    type: fixed\n    props:\n      interval: PT0.02S\n  source:\n  - name: input\n    type: system-file\n    props:\n      path: .\n  downloader:\n  - name: download\n    type: http\n    props:\n      download-path: /tmp\n  file-mover:\n  - name: move\n    type: system-file\n    props: {}\nprocessors:\n- name: dynamic-trigger\n  enabled: true\n  save-path: /tmp\n  triggers: []\n  source: system-file:input\n  item-file-resolver: system-file:input\n  downloader: http:download\n  file-mover: system-file:move\n  options: {}\n  tags: []\n",
         )
         .unwrap();
         let config_operator = Arc::new(YamlConfigOperator::new_path(config_file.path()));
@@ -314,7 +276,7 @@ mod tests {
             run_manager.clone(),
         ));
         let application = CoreApplication {
-            config_operator,
+            config_operator: config_operator.clone(),
             component_manager: component_manager.clone(),
             instance_manager,
             processor_manager,
@@ -328,20 +290,29 @@ mod tests {
         };
 
         application.start().unwrap();
-        let trigger = component_manager
-            .get_component(&ComponentRootType::Trigger.parse_component_id("fixed:idle"))
+        let trigger_id = ComponentRootType::Trigger.parse_component_id("fixed:dynamic");
+        assert!(
+            component_manager
+                .get_all_component()
+                .iter()
+                .all(|wrapper| wrapper.id != trigger_id)
+        );
+        let mut config: ProcessorConfig =
+            config_operator.get_processor_config("dynamic-trigger").unwrap();
+        config.triggers.push("fixed:dynamic".to_owned());
+        let prepared = application.processor_manager.prepare_processor(&config).unwrap();
+        application.activate_processor(prepared).unwrap();
+        let state = component_manager
+            .get_component(&trigger_id)
             .unwrap()
             .require_component()
             .unwrap()
-            .as_trigger()
+            .as_stateful()
+            .unwrap()
+            .get_state_detail()
             .unwrap();
-        let count = Arc::new(AtomicUsize::new(0));
-        trigger.add_task(Arc::new(CountingTask(count.clone())));
-        tokio::task::yield_now().await;
-        tokio::time::advance(std::time::Duration::from_millis(20)).await;
-        tokio::task::yield_now().await;
 
-        assert_eq!(count.load(Ordering::SeqCst), 1);
+        assert_eq!(state.get("running"), Some(&Value::Bool(true)));
         application.shutdown();
     }
 }
