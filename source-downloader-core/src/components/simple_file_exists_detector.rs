@@ -54,8 +54,9 @@ impl Display for SimpleFileExistsDetector {
     }
 }
 
+#[source_downloader_sdk::async_trait::async_trait]
 impl FileExistsDetector for SimpleFileExistsDetector {
-    fn exists<'a>(
+    async fn exists<'a>(
         &self,
         file_mover: &'a dyn FileMover,
         _: &'a SourceItem,
@@ -63,7 +64,7 @@ impl FileExistsDetector for SimpleFileExistsDetector {
     ) -> HashMap<&'a PathBuf, Option<PathBuf>> {
         let paths: Vec<&'a PathBuf> =
             file_contents.iter().map(|fc| fc.target_path()).collect();
-        let exists = file_mover.exists(&paths);
+        let exists = file_mover.exists(&paths).await;
 
         paths
             .into_iter()

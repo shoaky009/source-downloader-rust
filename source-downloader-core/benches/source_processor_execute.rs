@@ -55,15 +55,16 @@ impl Downloader for NoopIo {
     }
 }
 
+#[async_trait]
 impl FileMover for NoopIo {
-    fn move_file(
+    async fn move_file(
         &self,
         _: &SourceItem,
         _: &source_downloader_sdk::component::FileContent,
     ) -> Result<(), ProcessingError> {
         Ok(())
     }
-    fn exists(&self, paths: &[&PathBuf]) -> Vec<bool> {
+    async fn exists(&self, paths: &[&PathBuf]) -> Vec<bool> {
         vec![false; paths.len()]
     }
 }

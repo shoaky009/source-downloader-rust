@@ -279,18 +279,6 @@ impl QbittorrentDownloader {
         Ok(())
     }
 
-    fn run_sync<T>(
-        &self,
-        future: impl Future<Output = Result<T, ProcessingError>>,
-    ) -> Result<T, ProcessingError> {
-        let handle = tokio::runtime::Handle::try_current().map_err(|_| {
-            ProcessingError::non_retryable(
-                "qBittorrent file operations require a Tokio runtime",
-            )
-        })?;
-        tokio::task::block_in_place(|| handle.block_on(future))
-    }
-
     async fn rename_file(
         &self,
         hash: &str,
@@ -505,18 +493,23 @@ impl AsyncDownloader for QbittorrentDownloader {
     }
 }
 
+#[async_trait]
 impl FileMover for QbittorrentDownloader {
-    fn move_file(&self, _: &SourceItem, _: &FileContent) -> Result<(), ProcessingError> {
+    async fn move_file(
+        &self,
+        _: &SourceItem,
+        _: &FileContent,
+    ) -> Result<(), ProcessingError> {
         Err(ProcessingError::non_retryable("qBittorrent only supports batch file moves"))
     }
 
-    fn replace(
+    async fn replace(
         &self,
         source_item: &SourceItem,
         files: &[&FileContent],
     ) -> Result<(), ProcessingError> {
-        let hash = self.run_sync(self.torrent_hash(source_item))?;
-        let torrent_files = self.run_sync(self.torrent_files(&hash))?;
+        let hash = self.torrent_hash(source_item).await?;
+        let torrent_files = self.torrent_files(&hash).await?;
         let mut files_to_move = Vec::with_capacity(files.len());
         let mut backups = Vec::with_capacity(files.len());
 
@@ -548,7 +541,7 @@ impl FileMover for QbittorrentDownloader {
             files_to_move.push(file);
         }
 
-        let result = self.batch_move_with_hash(&hash, &files_to_move);
+        let result = self.batch_move_with_hash(&hash, &files_to_move).await;
         if let Err(error) = result {
             for (existing_path, backup_path) in backups.iter().rev() {
                 if !existing_path.exists() && backup_path.exists() {
@@ -565,26 +558,26 @@ impl FileMover for QbittorrentDownloader {
         Ok(())
     }
 
-    fn create_directories(&self, _: &Path) -> Result<(), ProcessingError> {
+    async fn create_directories(&self, _: &Path) -> Result<(), ProcessingError> {
         Ok(())
     }
 
-    fn is_supported_batch_move(&self) -> bool {
+    async fn is_supported_batch_move(&self) -> bool {
         true
     }
 
-    fn batch_move(
+    async fn batch_move(
         &self,
         source_item: &SourceItem,
         files: &[&FileContent],
     ) -> Result<(), ProcessingError> {
-        let hash = self.run_sync(self.torrent_hash(source_item))?;
-        self.batch_move_with_hash(&hash, files)
+        let hash = self.torrent_hash(source_item).await?;
+        self.batch_move_with_hash(&hash, files).await
     }
 }
 
 impl QbittorrentDownloader {
-    fn batch_move_with_hash(
+    async fn batch_move_with_hash(
         &self,
         hash: &str,
         files: &[&FileContent],
@@ -601,46 +594,44 @@ impl QbittorrentDownloader {
             file_count = files.len(),
             "Preparing qBittorrent batch move"
         );
-        self.run_sync(async {
-            let torrent_file_names = self.torrent_file_names(hash).await?;
-            for file in files {
-                let downloaded_path = file
-                    .file_download_path
-                    .strip_prefix(&file.download_path)
-                    .map_err(|_| {
-                        ProcessingError::non_retryable(format!(
-                            "Downloaded file '{}' is outside download path '{}'",
-                            file.file_download_path.display(),
-                            file.download_path.display(),
-                        ))
-                    })?;
-                let old_path = if files.len() == 1 && torrent_file_names.len() == 1 {
-                    torrent_file_names[0].as_path()
-                } else {
-                    downloaded_path
-                };
-                let new_path =
-                    file.target_path().strip_prefix(&item_location).map_err(|_| {
-                        ProcessingError::non_retryable(format!(
-                            "Target file '{}' is outside item location '{}'",
-                            file.target_path().display(),
-                            item_location.display(),
-                        ))
-                    })?;
-                tracing::info!(
-                    torrent_hash = hash,
-                    download_path = %file.download_path.display(),
-                    file_download_path = %file.file_download_path.display(),
-                    target_path = %file.target_path().display(),
-                    item_location = %item_location.display(),
-                    old_path = %old_path.display(),
-                    new_path = %new_path.display(),
-                    "Resolved qBittorrent file move"
-                );
-                self.rename_file(hash, old_path, new_path).await?;
-            }
-            self.set_location(hash, &item_location).await
-        })
+        let torrent_file_names = self.torrent_file_names(hash).await?;
+        for file in files {
+            let downloaded_path = file
+                .file_download_path
+                .strip_prefix(&file.download_path)
+                .map_err(|_| {
+                    ProcessingError::non_retryable(format!(
+                        "Downloaded file '{}' is outside download path '{}'",
+                        file.file_download_path.display(),
+                        file.download_path.display(),
+                    ))
+                })?;
+            let old_path = if files.len() == 1 && torrent_file_names.len() == 1 {
+                torrent_file_names[0].as_path()
+            } else {
+                downloaded_path
+            };
+            let new_path =
+                file.target_path().strip_prefix(&item_location).map_err(|_| {
+                    ProcessingError::non_retryable(format!(
+                        "Target file '{}' is outside item location '{}'",
+                        file.target_path().display(),
+                        item_location.display(),
+                    ))
+                })?;
+            tracing::info!(
+                torrent_hash = hash,
+                download_path = %file.download_path.display(),
+                file_download_path = %file.file_download_path.display(),
+                target_path = %file.target_path().display(),
+                item_location = %item_location.display(),
+                old_path = %old_path.display(),
+                new_path = %new_path.display(),
+                "Resolved qBittorrent file move"
+            );
+            self.rename_file(hash, old_path, new_path).await?;
+        }
+        self.set_location(hash, &item_location).await
     }
 }
 
@@ -805,6 +796,15 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn exposes_file_mover_and_moves_torrent_in_batch() {
         let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v2/torrents/files"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+                "index": 0,
+                "name": "show/01.mkv"
+            }])))
+            .expect(1)
+            .mount(&server)
+            .await;
         Mock::given(method("POST"))
             .and(path("/api/v2/torrents/renameFile"))
             .respond_with(ResponseTemplate::new(200))
@@ -826,10 +826,10 @@ mod tests {
             .unwrap();
         let mover = component.as_file_mover().unwrap();
         let file = file_content();
-        mover.batch_move(&source_item(), &[&file]).unwrap();
+        mover.batch_move(&source_item(), &[&file]).await.unwrap();
 
         let requests = server.received_requests().await.unwrap();
-        assert_eq!(2, requests.len());
+        assert_eq!(3, requests.len());
         assert_eq!(
             HashMap::from_iter([
                 (
@@ -839,7 +839,7 @@ mod tests {
                 ("oldPath".to_string(), "show/01.mkv".to_string()),
                 ("newPath".to_string(), "episode-01.mkv".to_string()),
             ]),
-            form(&requests[0]),
+            form(&requests[1]),
         );
         assert_eq!(
             HashMap::from_iter([
@@ -849,7 +849,7 @@ mod tests {
                 ),
                 ("location".to_string(), "/library/anime".to_string()),
             ]),
-            form(&requests[1]),
+            form(&requests[2]),
         );
     }
     #[tokio::test(flavor = "multi_thread")]

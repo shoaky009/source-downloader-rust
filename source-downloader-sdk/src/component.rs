@@ -452,8 +452,9 @@ pub trait ItemFileResolver: SdComponent {
     ) -> Result<Vec<SourceFile>, ProcessingError>;
 }
 
+#[async_trait]
 pub trait FileMover: SdComponent {
-    fn move_file(
+    async fn move_file(
         &self,
         _source_item: &SourceItem,
         file: &FileContent,
@@ -461,15 +462,15 @@ pub trait FileMover: SdComponent {
         fs::rename(&file.file_download_path, file.target_path()).map_err(Into::into)
     }
 
-    fn exists(&self, paths: &[&PathBuf]) -> Vec<bool> {
+    async fn exists(&self, paths: &[&PathBuf]) -> Vec<bool> {
         paths.iter().map(|path| path.exists()).collect()
     }
 
-    fn create_directories(&self, path: &Path) -> Result<(), ProcessingError> {
+    async fn create_directories(&self, path: &Path) -> Result<(), ProcessingError> {
         fs::create_dir_all(path).map_err(Into::into)
     }
 
-    fn replace(
+    async fn replace(
         &self,
         _source_item: &SourceItem,
         files: &[&FileContent],
@@ -499,7 +500,7 @@ pub trait FileMover: SdComponent {
         Ok(())
     }
 
-    fn list_files(&self, path: &Path) -> Result<Vec<PathBuf>, ProcessingError> {
+    async fn list_files(&self, path: &Path) -> Result<Vec<PathBuf>, ProcessingError> {
         if !path.exists() {
             return Ok(Vec::new());
         }
@@ -508,7 +509,7 @@ pub trait FileMover: SdComponent {
             .collect()
     }
 
-    fn path_metadata(&self, path: &Path) -> Result<SourceFile, ProcessingError> {
+    async fn path_metadata(&self, path: &Path) -> Result<SourceFile, ProcessingError> {
         let metadata = fs::symlink_metadata(path)?;
         let mut file = SourceFile::new(path.to_path_buf());
         file.attrs.insert("size".to_owned(), metadata.len().into());
@@ -537,11 +538,11 @@ pub trait FileMover: SdComponent {
         Ok(file)
     }
 
-    fn is_supported_batch_move(&self) -> bool {
+    async fn is_supported_batch_move(&self) -> bool {
         false
     }
 
-    fn batch_move(
+    async fn batch_move(
         &self,
         _: &SourceItem,
         _: &[&FileContent],
@@ -609,8 +610,9 @@ pub trait FileReplacementDecider: SdComponent {
     ) -> bool;
 }
 
+#[async_trait]
 pub trait FileExistsDetector: SdComponent {
-    fn exists<'a>(
+    async fn exists<'a>(
         &self,
         file_mover: &'a dyn FileMover,
         source_item: &'a SourceItem,

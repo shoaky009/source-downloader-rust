@@ -49,8 +49,9 @@ impl Display for FileDirectoryExistsDetector {
     }
 }
 
+#[source_downloader_sdk::async_trait::async_trait]
 impl FileExistsDetector for FileDirectoryExistsDetector {
-    fn exists<'a>(
+    async fn exists<'a>(
         &self,
         file_mover: &'a dyn FileMover,
         _: &'a SourceItem,
@@ -65,7 +66,7 @@ impl FileExistsDetector for FileDirectoryExistsDetector {
             }
         }
         let directory_refs: Vec<&PathBuf> = directories.iter().collect();
-        let exists = file_mover.exists(&directory_refs);
+        let exists = file_mover.exists(&directory_refs).await;
         let exists_by_directory: HashMap<PathBuf, bool> =
             directories.into_iter().zip(exists).collect();
 
@@ -99,8 +100,8 @@ mod tests {
     use super::*;
     use source_downloader_sdk::component::ComponentSupplier;
 
-    #[test]
-    fn exists_returns_the_file_target_path_when_save_directory_exists() {
+    #[tokio::test]
+    async fn exists_returns_the_file_target_path_when_save_directory_exists() {
         let root = tempfile::tempdir().unwrap();
         let source_root = root.path().join("source");
         let target_root = source_root.join("season");
@@ -123,8 +124,9 @@ mod tests {
             .as_file_mover()
             .unwrap();
         let source_item = SourceItem::default();
-        let result =
-            FileDirectoryExistsDetector.exists(mover.as_ref(), &source_item, &files);
+        let result = FileDirectoryExistsDetector
+            .exists(mover.as_ref(), &source_item, &files)
+            .await;
         let existing_target = result.values().next().cloned().flatten();
 
         assert_eq!(existing_target.as_ref(), Some(files[0].target_path()));

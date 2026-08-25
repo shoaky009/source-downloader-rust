@@ -301,8 +301,9 @@ impl AsyncDownloader for PointerTestComponent {
     }
 }
 
+#[async_trait]
 impl FileMover for PointerTestComponent {
-    fn exists(&self, paths: &[&PathBuf]) -> Vec<bool> {
+    async fn exists(&self, paths: &[&PathBuf]) -> Vec<bool> {
         vec![self.target_exists; paths.len()]
     }
 }
@@ -2925,8 +2926,13 @@ impl Display for FailingFileMover {
 
 impl source_downloader_sdk::component::SdComponent for FailingFileMover {}
 
+#[async_trait]
 impl FileMover for FailingFileMover {
-    fn move_file(&self, _: &SourceItem, _: &FileContent) -> Result<(), ProcessingError> {
+    async fn move_file(
+        &self,
+        _: &SourceItem,
+        _: &FileContent,
+    ) -> Result<(), ProcessingError> {
         Err(ProcessingError::non_retryable("rename test failure"))
     }
 }

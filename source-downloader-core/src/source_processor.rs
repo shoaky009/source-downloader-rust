@@ -1395,7 +1395,12 @@ impl SourceProcessor {
         let target_paths = files.iter().map(FileContent::target_path).collect_vec();
         let mut rename_result = None;
         if files.iter().all(|file| file.status != ReadyReplace)
-            && self.file_mover.exists(&target_paths).into_iter().all(|exists| exists)
+            && self
+                .file_mover
+                .exists(&target_paths)
+                .await
+                .into_iter()
+                .all(|exists| exists)
         {
             content.rename_times += 1;
             content.status = ProcessingStatus::TargetAlreadyExists;
@@ -2083,7 +2088,7 @@ trait Process {
                     .expect("replacement candidate has an existing target path")
             })
             .collect_vec();
-        let physical_exists = p.file_mover.exists(&existing_paths);
+        let physical_exists = p.file_mover.exists(&existing_paths).await;
         let path_strings = existing_paths
             .iter()
             .map(|path| path.to_string_lossy().into_owned())
@@ -2167,7 +2172,7 @@ trait Process {
                 .as_ref()
                 .expect("replacement candidate has an existing target path");
             let existing_file = if physical_exists {
-                p.file_mover.path_metadata(existing_path)?
+                p.file_mover.path_metadata(existing_path).await?
             } else {
                 SourceFile::new(existing_path.to_path_buf())
             };
@@ -2458,6 +2463,7 @@ trait Process {
                 &file_contents,
                 has_reserved_target_conflict,
             )
+            .await
         };
         progress.set_stage(ProcessorItemStage::SubmittingDownload);
         let mut rename_times = 0;
@@ -2519,15 +2525,15 @@ trait Process {
         let mut directories = HashSet::new();
         for file in &movable_files {
             if directories.insert(file.target_save_path.as_path()) {
-                p.file_mover.create_directories(&file.target_save_path)?;
+                p.file_mover.create_directories(&file.target_save_path).await?;
             }
         }
 
-        if p.file_mover.is_supported_batch_move() {
-            return p.file_mover.batch_move(source_item, &movable_files);
+        if p.file_mover.is_supported_batch_move().await {
+            return p.file_mover.batch_move(source_item, &movable_files).await;
         }
         for file in movable_files {
-            p.file_mover.move_file(source_item, file)?;
+            p.file_mover.move_file(source_item, file).await?;
         }
         Ok(())
     }
@@ -2540,7 +2546,7 @@ trait Process {
     ) -> Result<(), ProcessingError> {
         let replacement_files =
             file_contents.iter().filter(|file| file.status == ReadyReplace).collect_vec();
-        p.file_mover.replace(source_item, &replacement_files)
+        p.file_mover.replace(source_item, &replacement_files).await
     }
 
     async fn do_download(
@@ -2700,7 +2706,7 @@ trait Process {
             return Vec::new();
         }
 
-        let exists_results = p.file_mover.exists(&target_paths);
+        let exists_results = p.file_mover.exists(&target_paths).await;
 
         // 性能优化：使用两个并行数组暂存结果，而不是昂贵的 HashMap
         let mut exists_out: Vec<Option<PathBuf>> = target_paths
@@ -2713,11 +2719,11 @@ trait Process {
         if (*p.options.file_exists_detector).type_id()
             != TypeId::of::<SimpleFileExistsDetector>()
         {
-            let detector_results = p.options.file_exists_detector.exists(
-                p.file_mover.as_ref(),
-                source_item,
-                file_contents,
-            );
+            let detector_results = p
+                .options
+                .file_exists_detector
+                .exists(p.file_mover.as_ref(), source_item, file_contents)
+                .await;
 
             // 仅在此时建立一个局部反查表
             let path_to_local_idx: HashMap<&PathBuf, usize> =
@@ -2737,7 +2743,7 @@ trait Process {
         indices.into_iter().zip(exists_out).collect()
     }
 
-    fn probe_content_status(
+    async fn probe_content_status(
         &self,
         p: &SourceProcessor,
         rt: &ItemProcessRuntime,
@@ -2770,7 +2776,8 @@ trait Process {
 
         let file_download_paths =
             files.iter().map(|f| &f.file_download_path).collect_vec();
-        let all_exists = p.file_mover.exists(&file_download_paths).into_iter().all(|x| x);
+        let all_exists =
+            p.file_mover.exists(&file_download_paths).await.into_iter().all(|x| x);
         if all_exists {
             let is_async = p.async_downloader.is_some();
             return (is_async, ProcessingStatus::WaitingToRename);

@@ -50,8 +50,9 @@ impl Display for MediaTypeExistsDetector {
     }
 }
 
+#[source_downloader_sdk::async_trait::async_trait]
 impl FileExistsDetector for MediaTypeExistsDetector {
-    fn exists<'a>(
+    async fn exists<'a>(
         &self,
         file_mover: &'a dyn FileMover,
         _: &'a SourceItem,
@@ -64,7 +65,7 @@ impl FileExistsDetector for MediaTypeExistsDetector {
 
         let mut result = HashMap::with_capacity(file_contents.len());
         for (directory, targets) in directories {
-            let existing = file_mover.list_files(directory).unwrap_or_default();
+            let existing = file_mover.list_files(directory).await.unwrap_or_default();
             let existing: Vec<_> = existing
                 .iter()
                 .map(|path| (top_level_media_type(path), path.file_stem(), path))
@@ -130,8 +131,10 @@ mod tests {
             write!(f, "test")
         }
     }
+
+    #[source_downloader_sdk::async_trait::async_trait]
     impl FileMover for TestMover {
-        fn list_files(&self, path: &Path) -> Result<Vec<PathBuf>, ProcessingError> {
+        async fn list_files(&self, path: &Path) -> Result<Vec<PathBuf>, ProcessingError> {
             Ok(self.files.get(path).cloned().unwrap_or_default())
         }
     }
@@ -187,8 +190,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn matches_same_basename_and_top_level_media_type() {
+    #[tokio::test]
+    async fn matches_same_basename_and_top_level_media_type() {
         let dir = tempfile::tempdir().unwrap();
         let existing_video = dir.path().join("episode.mp4");
         let existing_image = dir.path().join("episode.png");
@@ -208,13 +211,13 @@ mod tests {
             )]),
         };
         let source_item = item();
-        let result = MediaTypeExistsDetector.exists(&mover, &source_item, &targets);
+        let result = MediaTypeExistsDetector.exists(&mover, &source_item, &targets).await;
         assert_eq!(Some(existing_video), result[targets[0].target_path()]);
         assert_eq!(None, result[targets[1].target_path()]);
     }
 
-    #[test]
-    fn keeps_directory_groups_independent() {
+    #[tokio::test]
+    async fn keeps_directory_groups_independent() {
         let first = tempfile::tempdir().unwrap();
         let second = tempfile::tempdir().unwrap();
         let existing = first.path().join("episode.mp4");
@@ -231,7 +234,7 @@ mod tests {
             files: HashMap::from([(first.path().to_path_buf(), vec![existing.clone()])]),
         };
         let source_item = item();
-        let result = MediaTypeExistsDetector.exists(&mover, &source_item, &targets);
+        let result = MediaTypeExistsDetector.exists(&mover, &source_item, &targets).await;
         assert_eq!(Some(existing), result[targets[0].target_path()]);
         assert_eq!(None, result[targets[1].target_path()]);
     }

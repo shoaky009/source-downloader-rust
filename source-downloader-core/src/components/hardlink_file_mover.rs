@@ -50,8 +50,9 @@ impl Display for HardlinkFileMover {
     }
 }
 
+#[source_downloader_sdk::async_trait::async_trait]
 impl FileMover for HardlinkFileMover {
-    fn move_file(
+    async fn move_file(
         &self,
         _: &SourceItem,
         file: &FileContent,
@@ -59,7 +60,7 @@ impl FileMover for HardlinkFileMover {
         fs::hard_link(&file.file_download_path, file.target_path()).map_err(Into::into)
     }
 
-    fn replace(
+    async fn replace(
         &self,
         _: &SourceItem,
         files: &[&FileContent],

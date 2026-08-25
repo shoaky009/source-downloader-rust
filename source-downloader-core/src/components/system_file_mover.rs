@@ -63,8 +63,8 @@ mod tests {
     use std::fs;
     use std::sync::OnceLock;
 
-    #[test]
-    fn moves_file_to_target_path() {
+    #[tokio::test]
+    async fn moves_file_to_target_path() {
         let root = std::env::temp_dir()
             .join(format!("source-downloader-mover-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
@@ -105,8 +105,8 @@ mod tests {
         };
         let mover = SystemFileMover {};
 
-        mover.create_directories(&target_dir).unwrap();
-        mover.move_file(&item, &content).unwrap();
+        mover.create_directories(&target_dir).await.unwrap();
+        mover.move_file(&item, &content).await.unwrap();
 
         assert!(!download_file.exists());
         assert_eq!(fs::read(target_dir.join("renamed.txt")).unwrap(), b"content");

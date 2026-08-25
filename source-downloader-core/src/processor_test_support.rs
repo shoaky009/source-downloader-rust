@@ -451,9 +451,7 @@ pub mod test_support {
             _: &dyn source_downloader_sdk::component::ComponentCreateContext,
             _: &Map<String, Value>,
         ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-            let mut mock = MockComponent::new();
-            Self::apply_file_mover(&mut mock)?;
-            Ok(Arc::new(mock))
+            Ok(Arc::new(MockComponent::new()))
         }
 
         fn is_support_no_props(&self) -> bool {
@@ -469,14 +467,6 @@ pub mod test_support {
                 state_ui_schema: None,
                 source_pointer_json_schema: None,
             }))
-        }
-    }
-
-    impl MockComponentSupplier {
-        fn apply_file_mover(mock: &mut MockComponent) -> Result<(), ComponentError> {
-            mock.expect_exists()
-                .returning(|files| files.iter().map(|_| false).collect_vec());
-            Ok(())
         }
     }
 
@@ -524,9 +514,12 @@ pub mod test_support {
             async fn extract_from(&self, item: &SourceItem, value: &str) -> Option<std::collections::HashMap<String, Value>>;
             fn primary_variable_name(&self) -> Option<String>;
         }
-        #[async_trait]
-        impl FileMover for Component {
-            fn exists<'a>(&self, path: &'a [&'a PathBuf]) -> Vec<bool>;
+    }
+
+    #[async_trait]
+    impl FileMover for MockComponent {
+        async fn exists(&self, paths: &[&PathBuf]) -> Vec<bool> {
+            vec![false; paths.len()]
         }
     }
 
