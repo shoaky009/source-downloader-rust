@@ -1489,6 +1489,7 @@ async fn physical_target_exists_takes_precedence_over_parallel_item_collision() 
     fs::create_dir_all(&download_path).unwrap();
     fs::create_dir_all(&save_path).unwrap();
     fs::write(save_path.join("shared.txt"), b"existing").unwrap();
+    let submit_count = Arc::new(AtomicUsize::new(0));
     let (mut processor, storage) = pointer_test_processor_with_settings(
         false,
         2,
@@ -1499,6 +1500,7 @@ async fn physical_target_exists_takes_precedence_over_parallel_item_collision() 
             target_exists: true,
             download_path: download_path.to_string_lossy().into_owned(),
             save_path,
+            submit_count: Some(submit_count.clone()),
             ..Default::default()
         },
     );
@@ -1506,6 +1508,7 @@ async fn physical_target_exists_takes_precedence_over_parallel_item_collision() 
     processor.options.item_error_continue = true;
 
     processor.run().await.unwrap();
+    assert_eq!(submit_count.load(AtomicOrdering::Acquire), 0);
 
     let saved_contents = storage.saved_contents.lock();
     assert_eq!(saved_contents.len(), 2);
