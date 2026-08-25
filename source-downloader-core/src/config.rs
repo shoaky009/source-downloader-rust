@@ -19,8 +19,6 @@ use tracing::{error, info};
 #[serde(rename_all = "camelCase")]
 pub struct InstanceConfig {
     pub name: String,
-    #[serde(default, rename = "type")]
-    pub factory_type: String,
     #[serde(default)]
     pub props: Map<String, Value>,
 }
@@ -866,7 +864,7 @@ mod test {
         );
     }
     #[test]
-    fn save_processor_omits_unset_options_from_yaml() {
+    fn save_config_omits_unset_values_from_yaml() {
         let temp_operator = TempFileOperator::new_from_config(CONFIG_PATH);
         let operator = temp_operator.operator;
         let mut processor =
@@ -879,8 +877,9 @@ mod test {
         let yaml = fs::read_to_string(&temp_operator._temp_file).unwrap();
         assert!(
             !yaml.contains("expression-matching: null")
-                && !yaml.contains("download-options: {}"),
-            "unset processor options must be omitted:\n{yaml}"
+                && !yaml.contains("download-options: {}")
+                && !yaml.contains("type: ''"),
+            "unset config values must be omitted:\n{yaml}"
         );
     }
     #[test]
@@ -1037,7 +1036,7 @@ mod test {
         );
     }
     #[test]
-    fn instance_config_crud_persists_factory_type_and_props() {
+    fn instance_config_crud_persists_name_and_props() {
         let file = NamedTempFile::new().unwrap();
         fs::write(file.path(), "instances: []\ncomponents: {}\nprocessors: []\n")
             .unwrap();
@@ -1048,18 +1047,12 @@ mod test {
         operator
             .save_instance(InstanceConfig {
                 name: "client".to_owned(),
-                factory_type: "telegram::client::TelegramClientInstanceFactory"
-                    .to_owned(),
                 props: props.clone(),
             })
             .unwrap();
 
         let saved = operator.get_all_instance_config();
         assert_eq!(saved.len(), 1);
-        assert_eq!(
-            saved[0].factory_type,
-            "telegram::client::TelegramClientInstanceFactory"
-        );
         assert_eq!(saved[0].props, props);
         assert!(operator.delete_instance("client").unwrap());
         assert!(operator.get_all_instance_config().is_empty());

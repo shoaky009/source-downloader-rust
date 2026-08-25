@@ -116,11 +116,8 @@ fn save_instance(
     request: InstanceSaveRequest,
 ) -> Result<(), AppError> {
     core.instance_manager.validate_instance(&request.factory_type, &request.props)?;
-    core.config_operator.save_instance(InstanceConfig {
-        name: request.name,
-        factory_type: request.factory_type,
-        props: request.props,
-    })?;
+    core.config_operator
+        .save_instance(InstanceConfig { name: request.name, props: request.props })?;
     Ok(())
 }
 
@@ -159,20 +156,13 @@ struct InstanceUpdateRequest {
 #[serde(rename_all = "camelCase")]
 struct InstanceInfo {
     name: String,
-    #[serde(rename = "type")]
-    factory_type: String,
     props: Map<String, Value>,
     loaded: bool,
 }
 
 impl InstanceInfo {
     fn from_config(config: InstanceConfig, loaded: bool) -> Self {
-        Self {
-            name: config.name,
-            factory_type: config.factory_type,
-            props: config.props,
-            loaded,
-        }
+        Self { name: config.name, props: config.props, loaded }
     }
 }
 
