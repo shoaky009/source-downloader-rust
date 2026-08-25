@@ -297,6 +297,12 @@ impl QbittorrentDownloader {
         old_path: &Path,
         new_path: &Path,
     ) -> Result<(), ProcessingError> {
+        tracing::info!(
+            torrent_hash = hash,
+            old_path = %old_path.display(),
+            new_path = %new_path.display(),
+            "qBittorrent renameFile request"
+        );
         self.request(
             self.client
                 .post(format!("{}/api/v2/torrents/renameFile", self.endpoint))
@@ -316,6 +322,11 @@ impl QbittorrentDownloader {
         hash: &str,
         location: &Path,
     ) -> Result<(), ProcessingError> {
+        tracing::info!(
+            torrent_hash = hash,
+            location = %location.display(),
+            "qBittorrent setLocation request"
+        );
         self.request(
             self.client
                 .post(format!("{}/api/v2/torrents/setLocation", self.endpoint))
@@ -327,6 +338,25 @@ impl QbittorrentDownloader {
         )
         .await?;
         Ok(())
+    }
+
+    async fn torrent_file_names(
+        &self,
+        hash: &str,
+    ) -> Result<Vec<PathBuf>, ProcessingError> {
+        let response = self
+            .request(
+                self.client
+                    .get(format!("{}/api/v2/torrents/files", self.endpoint))
+                    .query(&[("hash", hash)]),
+                "Get qBittorrent files",
+            )
+            .await?;
+        response
+            .json::<Vec<TorrentFile>>()
+            .await
+            .map_err(|error| http::map_error(error, "Decode qBittorrent files"))
+            .map(|files| files.into_iter().map(|file| PathBuf::from(file.name)).collect())
     }
 
     async fn torrent_files(&self, hash: &str) -> Result<Vec<PathBuf>, ProcessingError> {
@@ -565,9 +595,16 @@ impl QbittorrentDownloader {
         let item_location = first_file
             .file_save_root_dir()
             .unwrap_or_else(|| first_file.target_save_path.clone());
+        tracing::info!(
+            torrent_hash = hash,
+            item_location = %item_location.display(),
+            file_count = files.len(),
+            "Preparing qBittorrent batch move"
+        );
         self.run_sync(async {
+            let torrent_file_names = self.torrent_file_names(hash).await?;
             for file in files {
-                let old_path = file
+                let downloaded_path = file
                     .file_download_path
                     .strip_prefix(&file.download_path)
                     .map_err(|_| {
@@ -577,6 +614,11 @@ impl QbittorrentDownloader {
                             file.download_path.display(),
                         ))
                     })?;
+                let old_path = if files.len() == 1 && torrent_file_names.len() == 1 {
+                    torrent_file_names[0].as_path()
+                } else {
+                    downloaded_path
+                };
                 let new_path =
                     file.target_path().strip_prefix(&item_location).map_err(|_| {
                         ProcessingError::non_retryable(format!(
@@ -585,6 +627,16 @@ impl QbittorrentDownloader {
                             item_location.display(),
                         ))
                     })?;
+                tracing::info!(
+                    torrent_hash = hash,
+                    download_path = %file.download_path.display(),
+                    file_download_path = %file.file_download_path.display(),
+                    target_path = %file.target_path().display(),
+                    item_location = %item_location.display(),
+                    old_path = %old_path.display(),
+                    new_path = %new_path.display(),
+                    "Resolved qBittorrent file move"
+                );
                 self.rename_file(hash, old_path, new_path).await?;
             }
             self.set_location(hash, &item_location).await
