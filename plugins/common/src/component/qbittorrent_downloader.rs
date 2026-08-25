@@ -406,7 +406,10 @@ impl Downloader for QbittorrentDownloader {
             let wanted = task
                 .download_files
                 .iter()
-                .map(|file| file.path.to_string_lossy().replace('\\', "/"))
+                .map(|file| {
+                    file.path.strip_prefix(task.download_path).unwrap_or(file.path)
+                })
+                .map(torrent_path)
                 .collect::<Vec<_>>();
             self.set_unwanted(&hash, &wanted).await?;
         }
@@ -482,43 +485,51 @@ impl FileMover for QbittorrentDownloader {
         source_item: &SourceItem,
         files: &[&FileContent],
     ) -> Result<(), ProcessingError> {
-        let torrent_files = magnet_hash(&source_item.download_uri.to_string())
-            .map(|hash| self.run_sync(self.torrent_files(&hash)))
-            .transpose()?
-            .unwrap_or_default();
-        for file in files {
+        let hash = self.run_sync(self.torrent_hash(source_item))?;
+        let torrent_files = self.run_sync(self.torrent_files(&hash))?;
+        let mut files_to_move = Vec::with_capacity(files.len());
+        let mut backups = Vec::with_capacity(files.len());
+
+        for &file in files {
             let existing_path =
                 file.exist_target_path.as_ref().unwrap_or_else(|| file.target_path());
-            if !existing_path.exists() {
-                self.batch_move(source_item, files)?;
-                continue;
-            }
             if torrent_files.iter().any(|path| path == file.target_path()) {
                 tracing::info!(path = %existing_path.display(), "Torrent target is already managed; skipping replacement");
                 continue;
             }
-            let backup_path = existing_path.with_file_name(format!(
-                "{}.bak",
-                existing_path
-                    .file_name()
-                    .ok_or_else(|| ProcessingError::non_retryable(
-                        "Replacement path has no file name"
-                    ))?
-                    .to_string_lossy(),
-            ));
-            std::fs::rename(existing_path, &backup_path)?;
-            match self.batch_move(source_item, files) {
-                Ok(()) => {
-                    if backup_path.exists() {
-                        std::fs::remove_file(&backup_path)?;
+            if existing_path.exists() {
+                let backup_path = existing_path.with_file_name(format!(
+                    "{}.bak",
+                    existing_path
+                        .file_name()
+                        .ok_or_else(|| ProcessingError::non_retryable(
+                            "Replacement path has no file name"
+                        ))?
+                        .to_string_lossy(),
+                ));
+                if let Err(error) = std::fs::rename(existing_path, &backup_path) {
+                    for (existing_path, backup_path) in backups.iter().rev() {
+                        let _ = std::fs::rename(backup_path, existing_path);
                     }
+                    return Err(error.into());
                 }
-                Err(error) => {
-                    if !existing_path.exists() && backup_path.exists() {
-                        std::fs::rename(&backup_path, existing_path)?;
-                    }
-                    return Err(error);
+                backups.push((existing_path, backup_path));
+            }
+            files_to_move.push(file);
+        }
+
+        let result = self.batch_move_with_hash(&hash, &files_to_move);
+        if let Err(error) = result {
+            for (existing_path, backup_path) in backups.iter().rev() {
+                if !existing_path.exists() && backup_path.exists() {
+                    std::fs::rename(backup_path, existing_path)?;
                 }
+            }
+            return Err(error);
+        }
+        for (_, backup_path) in backups {
+            if backup_path.exists() {
+                std::fs::remove_file(backup_path)?;
             }
         }
         Ok(())
@@ -537,6 +548,17 @@ impl FileMover for QbittorrentDownloader {
         source_item: &SourceItem,
         files: &[&FileContent],
     ) -> Result<(), ProcessingError> {
+        let hash = self.run_sync(self.torrent_hash(source_item))?;
+        self.batch_move_with_hash(&hash, files)
+    }
+}
+
+impl QbittorrentDownloader {
+    fn batch_move_with_hash(
+        &self,
+        hash: &str,
+        files: &[&FileContent],
+    ) -> Result<(), ProcessingError> {
         let Some(first_file) = files.first() else {
             return Ok(());
         };
@@ -544,7 +566,6 @@ impl FileMover for QbittorrentDownloader {
             .file_save_root_dir()
             .unwrap_or_else(|| first_file.target_save_path.clone());
         self.run_sync(async {
-            let hash = self.torrent_hash(source_item).await?;
             for file in files {
                 let old_path = file
                     .file_download_path
@@ -564,9 +585,9 @@ impl FileMover for QbittorrentDownloader {
                             item_location.display(),
                         ))
                     })?;
-                self.rename_file(&hash, old_path, new_path).await?;
+                self.rename_file(hash, old_path, new_path).await?;
             }
-            self.set_location(&hash, &item_location).await
+            self.set_location(hash, &item_location).await
         })
     }
 }
@@ -777,6 +798,84 @@ mod tests {
                 ("location".to_string(), "/library/anime".to_string()),
             ]),
             form(&requests[1]),
+        );
+    }
+    #[tokio::test(flavor = "multi_thread")]
+    async fn submit_matches_qbittorrent_files_with_download_relative_paths() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/torrents/add"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("Ok."))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v2/torrents/files"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {"index": 0, "name": "show/01.mkv"},
+                {"index": 1, "name": "show/extra.txt"}
+            ])))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/torrents/filePrio"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let component = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &Map::from_iter([("endpoint".into(), Value::String(server.uri()))]),
+            )
+            .unwrap();
+        let downloader = component.as_downloader().unwrap();
+        let source_item = source_item();
+        let file = file_content();
+        let download_files =
+            vec![source_downloader_sdk::component::SourceFileRef::from(&file)];
+        let category = Some("Bangumi".to_owned());
+        let tags = vec!["mikan-bangumi".to_owned()];
+        let task = DownloadTask {
+            source_item: &source_item,
+            download_files: &download_files,
+            download_path: Path::new("/downloads"),
+            category: &category,
+            tags: Some(&tags),
+            headers: None,
+        };
+
+        downloader.submit(&task).await.unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        let add = requests
+            .iter()
+            .find(|request| request.url.path() == "/api/v2/torrents/add")
+            .unwrap();
+        assert_eq!(
+            form(add),
+            HashMap::from_iter([
+                ("urls".to_owned(), source_item.download_uri.to_string()),
+                ("savepath".to_owned(), "/downloads".to_owned()),
+                ("category".to_owned(), "Bangumi".to_owned()),
+                ("tags".to_owned(), "mikan-bangumi".to_owned()),
+            ])
+        );
+        let file_priority = requests
+            .iter()
+            .find(|request| request.url.path() == "/api/v2/torrents/filePrio")
+            .unwrap();
+        assert_eq!(
+            form(file_priority),
+            HashMap::from_iter([
+                (
+                    "hash".to_owned(),
+                    "0123456789abcdef0123456789abcdef01234567".to_owned(),
+                ),
+                ("id".to_owned(), "1".to_owned()),
+                ("priority".to_owned(), "0".to_owned()),
+            ])
         );
     }
 
