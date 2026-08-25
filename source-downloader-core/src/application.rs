@@ -8,6 +8,7 @@ use crate::instance_manager::InstanceManager;
 use crate::plugin::PluginManager;
 use crate::processor_manager::ProcessorManager;
 use crate::processor_run_manager::ProcessorRunManager;
+use source_downloader_sdk::component::{ComponentId, ComponentRootType, ComponentType};
 use source_downloader_sdk::plugin::PluginContext;
 use std::any::Any;
 use std::collections::HashSet;
@@ -50,6 +51,7 @@ impl CoreApplication {
         self.register_component_supplier();
         info!("{}", self.component_manager);
         self.create_processors();
+        self.initialize_triggers()?;
         self.configure_webhook_triggers()?;
         self.start_triggers()
     }
@@ -112,6 +114,27 @@ impl CoreApplication {
             self.processor_manager.create_processor(&cfg)
         }
     }
+    fn initialize_triggers(&self) -> Result<(), String> {
+        let configs = self.config_operator.get_all_component_config();
+        let Some(triggers) = configs.get(ComponentRootType::Trigger.name()) else {
+            return Ok(());
+        };
+        for config in triggers {
+            let id = ComponentId::new(
+                ComponentType::trigger(config.component_type.clone()),
+                &config.name,
+            );
+            self.component_manager
+                .get_component(&id)
+                .and_then(|wrapper| wrapper.require_component())
+                .and_then(|component| component.as_trigger())
+                .map_err(|error| {
+                    format!("Failed to initialize trigger {}: {}", id.display(), error)
+                })?;
+        }
+        Ok(())
+    }
+
     fn configure_webhook_triggers(&self) -> Result<(), String> {
         let endpoints = self
             .component_manager
@@ -191,6 +214,7 @@ impl CoreApplication {
         self.destroy_all_component();
         self.destroy_all_instance();
         self.create_processors();
+        self.initialize_triggers()?;
         self.configure_webhook_triggers()?;
         self.start_triggers()
     }
@@ -228,6 +252,31 @@ impl PluginContext for CorePluginContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::YamlConfigOperator;
+    use async_trait::async_trait;
+    use source_downloader_sdk::component::{ComponentRootType, ProcessTask};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use storage_memory::MemoryProcessingStorage;
+    use tempfile::NamedTempFile;
+
+    #[derive(Debug)]
+    struct CountingTask(Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl ProcessTask for CountingTask {
+        async fn run(&self) -> Result<(), String> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn name(&self) -> &str {
+            "counting"
+        }
+
+        fn group(&self) -> Option<String> {
+            None
+        }
+    }
 
     #[test]
     fn duplicate_webhook_endpoints_are_rejected_before_start() {
@@ -242,5 +291,57 @@ mod tests {
 
         assert!(error.contains("POST"));
         assert!(error.contains("/webhook/updates"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn start_initializes_unreferenced_configured_triggers() {
+        let config_file = NamedTempFile::new().unwrap();
+        std::fs::write(
+            config_file.path(),
+            "instances: []\ncomponents:\n  trigger:\n  - name: idle\n    type: fixed\n    props:\n      interval: PT0.02S\nprocessors: []\n",
+        )
+        .unwrap();
+        let config_operator = Arc::new(YamlConfigOperator::new_path(config_file.path()));
+        let instance_manager = Arc::new(InstanceManager::new(config_operator.clone()));
+        let component_manager = Arc::new(ComponentManager::with_create_context(
+            config_operator.clone(),
+            instance_manager.clone(),
+        ));
+        let run_manager = Arc::new(ProcessorRunManager::default());
+        let processor_manager = Arc::new(ProcessorManager::new(
+            component_manager.clone(),
+            Arc::new(MemoryProcessingStorage::new()),
+            run_manager.clone(),
+        ));
+        let application = CoreApplication {
+            config_operator,
+            component_manager: component_manager.clone(),
+            instance_manager,
+            processor_manager,
+            run_manager,
+            plugin_manager: PluginManager::new(Arc::new(CorePluginContext {
+                data_location: Path::new(".").into(),
+            })),
+            data_location: Path::new(".").into(),
+            plugin_location: None,
+            webhook_adapter: None,
+        };
+
+        application.start().unwrap();
+        let trigger = component_manager
+            .get_component(&ComponentRootType::Trigger.parse_component_id("fixed:idle"))
+            .unwrap()
+            .require_component()
+            .unwrap()
+            .as_trigger()
+            .unwrap();
+        let count = Arc::new(AtomicUsize::new(0));
+        trigger.add_task(Arc::new(CountingTask(count.clone())));
+        tokio::task::yield_now().await;
+        tokio::time::advance(std::time::Duration::from_millis(20)).await;
+        tokio::task::yield_now().await;
+
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+        application.shutdown();
     }
 }
