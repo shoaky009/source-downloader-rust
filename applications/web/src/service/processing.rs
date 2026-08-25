@@ -77,7 +77,7 @@ async fn query_contents(
             processor_name: query.processor_name,
             item_hash: query.item_hash.map(|hash| vec![hash]),
             status: statuses,
-            item: query.item.map(Into::into),
+            item: merge_item_condition(query.item, query.item_title).map(Into::into),
             created_at_start: query.create_time_begin.map(Into::into),
             created_at_end: query.create_time_end.map(Into::into),
             max_id,
@@ -315,6 +315,26 @@ impl From<ItemCondition> for ItemContentCondition {
     }
 }
 
+fn merge_item_condition(
+    item: Option<ItemCondition>,
+    title: Option<String>,
+) -> Option<ItemCondition> {
+    match (item, title) {
+        (Some(mut item), Some(title)) => {
+            item.title = Some(title);
+            Some(item)
+        }
+        (None, Some(title)) => Some(ItemCondition {
+            title: Some(title),
+            attrs: None,
+            variables: None,
+            content_type: None,
+            tags: None,
+        }),
+        (item, None) => item,
+    }
+}
+
 #[derive(Deserialize)]
 struct QueryContents {
     #[serde(default = "default_limit")]
@@ -332,6 +352,8 @@ struct QueryContents {
     #[serde(rename = "createTime.end")]
     create_time_end: Option<UtcDateTime>,
     item: Option<ItemCondition>,
+    #[serde(rename = "item.title")]
+    item_title: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -371,6 +393,17 @@ mod tests {
             created_at: OffsetDateTime::UNIX_EPOCH,
             updated_at: Some(OffsetDateTime::UNIX_EPOCH),
         }
+    }
+
+    #[test]
+    fn dotted_item_title_query_is_parsed() {
+        let query = serde_qs::from_str::<QueryContents>("item.title=Selected").unwrap();
+        let item = merge_item_condition(query.item, query.item_title);
+
+        assert_eq!(
+            item.and_then(|condition| condition.title),
+            Some("Selected".to_owned())
+        );
     }
 
     #[test]
