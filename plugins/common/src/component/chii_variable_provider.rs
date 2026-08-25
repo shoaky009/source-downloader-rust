@@ -1,5 +1,5 @@
 use crate::api::chii::ChiiClient;
-use crate::http::{self, HttpClient};
+use crate::http::HttpClient;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
@@ -28,16 +28,7 @@ impl ComponentSupplier for ChiiVariableProviderSupplier {
             .unwrap_or("https://chii.ai")
             .trim_end_matches('/')
             .to_string();
-        let http = if base_url.starts_with("http://127.0.0.1:") {
-            HttpClient::from_reqwest(
-                http::client_builder()
-                    .no_proxy()
-                    .build()
-                    .map_err(|error| ComponentError::new(error.to_string()))?,
-            )
-        } else {
-            HttpClient::new()?
-        };
+        let http = HttpClient::new()?;
         Ok(Arc::new(ChiiVariableProvider { client: ChiiClient::new(http, base_url) }))
     }
     fn is_support_no_props(&self) -> bool {

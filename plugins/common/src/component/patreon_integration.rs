@@ -1,5 +1,5 @@
 use crate::api::patreon::PatreonClient;
-use crate::http::{self, HttpClient};
+use crate::http::HttpClient;
 use serde::{Deserialize, Serialize};
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
@@ -46,16 +46,7 @@ impl ComponentSupplier for PatreonIntegrationSupplier {
             .unwrap_or_else(|| "https://www.patreon.com".to_string())
             .trim_end_matches('/')
             .to_string();
-        let http = if base.starts_with("http://127.0.0.1:") {
-            HttpClient::from_reqwest(
-                http::client_builder()
-                    .no_proxy()
-                    .build()
-                    .map_err(|error| ComponentError::new(error.to_string()))?,
-            )
-        } else {
-            HttpClient::new()?
-        };
+        let http = HttpClient::new()?;
         Ok(Arc::new(PatreonIntegration {
             client: PatreonClient::new(http, base, &config.session_id, config.headers),
         }))

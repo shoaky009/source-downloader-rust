@@ -1,5 +1,5 @@
 use crate::api::pixiv::{Illustration, PixivClient};
-use crate::http::{self, HttpClient};
+use crate::http::HttpClient;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use source_downloader_sdk::SourceItem;
@@ -67,16 +67,7 @@ impl ComponentSupplier for PixivIntegrationSupplier {
             .unwrap_or_else(|| "https://www.pixiv.net".to_string())
             .trim_end_matches('/')
             .to_string();
-        let http = if base.starts_with("http://127.0.0.1:") {
-            HttpClient::from_reqwest(
-                http::client_builder()
-                    .no_proxy()
-                    .build()
-                    .map_err(|error| ComponentError::new(error.to_string()))?,
-            )
-        } else {
-            HttpClient::new()?
-        };
+        let http = HttpClient::new()?;
         Ok(Arc::new(PixivIntegration {
             user,
             bookmark,

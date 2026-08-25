@@ -1,5 +1,5 @@
 use crate::api::dlsite::DlsiteClient;
-use crate::http::{self, HttpClient};
+use crate::http::HttpClient;
 use parking_lot::Mutex;
 use regex::Regex;
 use scraper::{Html, Selector};
@@ -55,16 +55,7 @@ impl ComponentSupplier for DlsiteVariableProviderSupplier {
             .unwrap_or("https://www.dlsite.com")
             .trim_end_matches('/')
             .to_string();
-        let http = if base.starts_with("http://127.0.0.1:") {
-            HttpClient::from_reqwest(
-                http::client_builder()
-                    .no_proxy()
-                    .build()
-                    .map_err(|error| ComponentError::new(error.to_string()))?,
-            )
-        } else {
-            HttpClient::new()?
-        };
+        let http = HttpClient::new()?;
         Ok(Arc::new(DlsiteVariableProvider {
             client: DlsiteClient::new(http, base, &locale),
             only,

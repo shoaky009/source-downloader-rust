@@ -32,14 +32,7 @@ impl ComponentSupplier for GetchuVariableProviderSupplier {
             .unwrap_or("https://www.getchu.com")
             .trim_end_matches('/')
             .to_string();
-        let client = if base.starts_with("http://127.0.0.1:") {
-            http::client_builder()
-                .no_proxy()
-                .build()
-                .map_err(|e| ComponentError::new(e.to_string()))?
-        } else {
-            http::build_client()?
-        };
+        let client = http::build_client()?;
         Ok(Arc::new(GetchuVariableProvider {
             client,
             base,

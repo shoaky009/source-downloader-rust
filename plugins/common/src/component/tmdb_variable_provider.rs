@@ -37,14 +37,7 @@ impl ComponentSupplier for TmdbVariableProviderSupplier {
             .to_string();
         let key = config.api_key;
         let language = config.language.unwrap_or_else(|| "zh-CN".to_string());
-        let client = if base.starts_with("http://127.0.0.1:") {
-            http::client_builder()
-                .no_proxy()
-                .build()
-                .map_err(|e| ComponentError::new(e.to_string()))?
-        } else {
-            http::build_client()?
-        };
+        let client = http::build_client()?;
         Ok(Arc::new(TmdbVariableProvider {
             client,
             base,

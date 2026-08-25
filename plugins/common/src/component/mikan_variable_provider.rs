@@ -1,5 +1,5 @@
 use crate::api::bangumi::BangumiClient;
-use crate::http::{self, HttpClient};
+use crate::http::HttpClient;
 use parking_lot::Mutex;
 use regex::Regex;
 use scraper::{Html, Selector};
@@ -39,18 +39,7 @@ impl ComponentSupplier for MikanVariableProviderSupplier {
         let bangumi_base = prop(props, "bgmtv-base-url", "https://api.bgm.tv")?;
         let token = optional_string(props, "token")?;
         let bangumi_token = optional_string(props, "bgmtv-token")?;
-        let http = if mikan_base.starts_with("http://127.0.0.1:")
-            || bangumi_base.starts_with("http://127.0.0.1:")
-        {
-            HttpClient::from_reqwest(
-                http::client_builder()
-                    .no_proxy()
-                    .build()
-                    .map_err(|error| ComponentError::new(error.to_string()))?,
-            )
-        } else {
-            HttpClient::new()?
-        };
+        let http = HttpClient::new()?;
         Ok(Arc::new(MikanVariableProvider {
             bangumi: BangumiClient::new(http.clone(), bangumi_base, bangumi_token),
             http,

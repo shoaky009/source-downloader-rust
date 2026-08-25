@@ -51,14 +51,7 @@ impl ComponentSupplier for RssSourceSupplier {
         let parsed_url = reqwest::Url::parse(&config.url).map_err(|error| {
             ComponentError::new(format!("Invalid configuration at 'url': {error}"))
         })?;
-        let client = if config.url.starts_with("http://127.0.0.1:") {
-            http::client_builder()
-                .no_proxy()
-                .build()
-                .map_err(|error| ComponentError::new(error.to_string()))?
-        } else {
-            http::build_client()?
-        };
+        let client = http::build_client()?;
         let group = parsed_url.host_str().map(str::to_string);
         Ok(Arc::new(RssSource {
             url: config.url,

@@ -27,14 +27,7 @@ impl ComponentSupplier for TransmissionDownloaderSupplier {
         let endpoint = required_string(props, "url")?;
         let username = optional(props, "username")?;
         let password = optional(props, "password")?;
-        let client = if endpoint.starts_with("http://127.0.0.1:") {
-            http::client_builder()
-                .no_proxy()
-                .build()
-                .map_err(|error| ComponentError::new(error.to_string()))?
-        } else {
-            http::build_client()?
-        };
+        let client = http::build_client()?;
         Ok(Arc::new(TransmissionDownloader {
             client,
             endpoint,

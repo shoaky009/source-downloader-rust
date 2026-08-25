@@ -1,11 +1,11 @@
 use crate::api::bangumi::BangumiClient;
-use crate::http::{self, HttpClient};
+use crate::http::HttpClient;
 use parking_lot::Mutex;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
-    SdComponentMetadata, SourceFile, VariableProvider, format_error_chain,
+    SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use std::collections::{HashMap, VecDeque};
@@ -39,18 +39,7 @@ impl ComponentSupplier for BgmTvVariableProviderSupplier {
                 })
             })
             .transpose()?;
-        let http = if base_url.starts_with("http://127.0.0.1:") {
-            HttpClient::from_reqwest(http::client_builder().no_proxy().build().map_err(
-                |error| {
-                    ComponentError::new(format!(
-                        "Failed to build Bangumi client: {}",
-                        format_error_chain(&error)
-                    ))
-                },
-            )?)
-        } else {
-            HttpClient::new()?
-        };
+        let http = HttpClient::new()?;
         Ok(Arc::new(BgmTvVariableProvider {
             client: BangumiClient::new(http, base_url, token),
             cache: Mutex::new(Cache::default()),

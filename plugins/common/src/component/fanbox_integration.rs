@@ -65,14 +65,7 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
             .unwrap_or("https://api.fanbox.cc")
             .trim_end_matches('/')
             .to_string();
-        let client = if base.starts_with("http://127.0.0.1:") {
-            http::client_builder()
-                .no_proxy()
-                .build()
-                .map_err(|error| ComponentError::new(error.to_string()))?
-        } else {
-            http::build_client()?
-        };
+        let client = http::build_client()?;
         Ok(Arc::new(FanboxIntegration {
             client,
             base,

@@ -1,6 +1,6 @@
 use crate::api::anilist::{AniListClient, AniListTitle};
 use crate::api::bangumi::{BangumiClient, BangumiSubject};
-use crate::http::{self, HttpClient};
+use crate::http::HttpClient;
 use parking_lot::Mutex;
 use regex::Regex;
 use source_downloader_sdk::SourceItem;
@@ -68,18 +68,7 @@ impl ComponentSupplier for AnimeVariableProviderSupplier {
             })
             .transpose()?
             .unwrap_or(false);
-        let http = if anilist_url.starts_with("http://127.0.0.1:")
-            || bangumi_url.starts_with("http://127.0.0.1:")
-        {
-            HttpClient::from_reqwest(
-                http::client_builder()
-                    .no_proxy()
-                    .build()
-                    .map_err(|error| ComponentError::new(error.to_string()))?,
-            )
-        } else {
-            HttpClient::new()?
-        };
+        let http = HttpClient::new()?;
         Ok(Arc::new(AnimeVariableProvider {
             anilist: AniListClient::new(http.clone(), anilist_url),
             bangumi: BangumiClient::new(http, bangumi_url, token),
@@ -337,6 +326,7 @@ fn reformat_anilist(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::http;
 
     #[test]
     fn extracts_search_title() {
