@@ -25,6 +25,10 @@ impl ComponentSupplier for NeverReplaceDeciderSupplier {
         Ok(Arc::new(NeverReplaceDecider))
     }
 
+    fn is_support_no_props(&self) -> bool {
+        true
+    }
+
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
             description: "Never replaces existing files.".to_owned(),
@@ -34,10 +38,6 @@ impl ComponentSupplier for NeverReplaceDeciderSupplier {
             state_ui_schema: None,
             source_pointer_json_schema: None,
         }))
-    }
-
-    fn is_support_no_props(&self) -> bool {
-        true
     }
 }
 

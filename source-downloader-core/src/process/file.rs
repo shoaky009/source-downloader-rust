@@ -1439,32 +1439,6 @@ mod tests {
         assert_eq!("test 111 E21", result2.path);
     }
 
-    // TODO #[test]
-    // fn test_replacement_given_pattern_variables_and_extra_variables() {
-    //     let renamer = Renamer {
-    //         variable_replacers: vec![
-    //             Arc::new(RegexVariableReplacer::new(r"(?i)BDRIP", "BD")),
-    //             Arc::new(RegexVariableReplacer::new(r"333", "111")),
-    //         ],
-    //         ..renamer().clone()
-    //     };
-    //
-    //     // 模拟 itemRenameVariables 生成的变量
-    //     let mut extra = RenameVariables::default();
-    //     extra.variables.insert("item.attrs.title".to_string(), json!("333"));
-    //
-    //     let raw = RawFileContent {
-    //         filename_pattern: "{item.attrs.title}-{source}".to_string(),
-    //         variables: hashmap! { "source".to_owned() => "BDrip".to_owned() },
-    //         ..Default::default()
-    //     };
-    //
-    //     let content = renamer.create_file_content(&SourceItem::default(), raw, &extra);
-    //
-    //     // 333 -> 111, BDrip -> BD
-    //     assert_eq!("111-BD", PathBuf::from(content.target_filename).file_stem().unwrap().to_str().unwrap());
-    // }
-
     #[tokio::test]
     async fn given_attr_variables() {
         let item = SourceItem {

@@ -632,7 +632,7 @@ struct CompletedItem {
     source_item: SourceItem,
     item_hash: String,
     action: ItemAction,
-    progress: crate::processor_run_state::ProcessorRunItemGuard,
+    progress: ProcessorRunItemGuard,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1911,13 +1911,13 @@ trait Process {
             let item_runtime = &p_rt.item;
             let processor = p;
             let make_item_future =
-                move |item: source_downloader_sdk::component::PointedItem| async move {
+                move |item: PointedItem| async move {
                     let item_pointer = item.item_pointer;
                     let source_item = item.source_item;
                     let item_hash = source_item.hashing();
-                    let progress = crate::processor_run_state::ProcessorRunItemGuard::new(
+                    let progress = ProcessorRunItemGuard::new(
                         &source_item.title,
-                        crate::processor_run_state::ProcessorItemStage::FilteringItem,
+                        ProcessorItemStage::FilteringItem,
                     );
                     let action = process
                         .process_item(
@@ -1929,7 +1929,7 @@ trait Process {
                         )
                         .await
                         .unwrap_or_else(ItemAction::Error);
-                    progress.set_stage(crate::processor_run_state::ProcessorItemStage::AwaitingSettlement);
+                    progress.set_stage(ProcessorItemStage::AwaitingSettlement);
                     CompletedItem {
                         item_pointer,
                         source_item,
@@ -2017,10 +2017,10 @@ trait Process {
             info!("[run-done] {} {}", p.name, p_rt.summary());
             Ok(())
         };
-        let result = match Abortable::new(result, abort_registration).await {
-            Ok(result) => result,
-            Err(_) => Err(ProcessingError::non_retryable("Processing cancelled")),
-        };
+        let result =
+            Abortable::new(result, abort_registration).await.unwrap_or_else(|_| {
+                Err(ProcessingError::non_retryable("Processing cancelled"))
+            });
         processing_guard.record_result(&result);
         result
     }
@@ -3245,6 +3245,15 @@ impl Process for DryRunProcess {
         Ok(())
     }
 
+    async fn on_item_process_complete(
+        &self,
+        _: &SourceProcessor,
+        _: &ProcessingContent,
+        _: &[FileContent],
+    ) -> Result<Option<i64>, ProcessingError> {
+        Ok(None)
+    }
+
     async fn on_item_error_settled(
         &self,
         source_item: &SourceItem,
@@ -3260,15 +3269,6 @@ impl Process for DryRunProcess {
             action: decision.into(),
         })
         .await;
-    }
-
-    async fn on_item_process_complete(
-        &self,
-        _: &SourceProcessor,
-        _: &ProcessingContent,
-        _: &[FileContent],
-    ) -> Result<Option<i64>, ProcessingError> {
-        Ok(None)
     }
 
     async fn on_item_success(

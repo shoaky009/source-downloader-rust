@@ -5255,7 +5255,6 @@ dependencies = [
  "mockall",
  "moka",
  "parking_lot",
- "postcard",
  "regex",
  "reqwest",
  "serde",

@@ -496,6 +496,10 @@ impl FileMover for QbittorrentDownloader {
         Err(ProcessingError::non_retryable("qBittorrent only supports batch file moves"))
     }
 
+    async fn create_directories(&self, _: &Path) -> Result<(), ProcessingError> {
+        Ok(())
+    }
+
     async fn replace(
         &self,
         source_item: &SourceItem,
@@ -548,10 +552,6 @@ impl FileMover for QbittorrentDownloader {
                 std::fs::remove_file(backup_path)?;
             }
         }
-        Ok(())
-    }
-
-    async fn create_directories(&self, _: &Path) -> Result<(), ProcessingError> {
         Ok(())
     }
 

@@ -25,7 +25,6 @@ indexmap = { workspace = true, features = ["serde"] }
 walkdir = { workspace = true }
 url = { workspace = true, features = ["std"] }
 #rkyv = { workspace = true }
-postcard = { workspace = true, features = ["use-std"] }
 zstd = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true, features = ["rustls", "system-proxy", "stream"] }

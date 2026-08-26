@@ -153,7 +153,7 @@ impl Source for PointerTestComponent {
     ) -> Result<Vec<PointedItem>, ProcessingError> {
         if let Some(failures) = &self.retryable_fetch_failures
             && failures
-                .fetch_update(
+                .try_update(
                     AtomicOrdering::AcqRel,
                     AtomicOrdering::Acquire,
                     |remaining| remaining.checked_sub(1),
@@ -247,7 +247,7 @@ impl Downloader for PointerTestComponent {
         }
         if let Some(failures) = &self.retryable_submit_failures
             && failures
-                .fetch_update(
+                .try_update(
                     AtomicOrdering::AcqRel,
                     AtomicOrdering::Acquire,
                     |remaining| remaining.checked_sub(1),
@@ -635,15 +635,15 @@ impl ProcessingStorage for PointerStorage {
         Ok(state.clone())
     }
 
+    async fn save_paths(&self, _: Vec<ProcessingTargetPath>) -> Result<(), StorageError> {
+        Ok(())
+    }
+
     async fn find_paths(
         &self,
         _: &[String],
     ) -> Result<Vec<ProcessingTargetPath>, StorageError> {
         Ok(self.found_paths.lock().clone())
-    }
-
-    async fn save_paths(&self, _: Vec<ProcessingTargetPath>) -> Result<(), StorageError> {
-        Ok(())
     }
 
     async fn delete_paths_by_processor(&self, _: &str) -> Result<u64, StorageError> {
