@@ -2227,15 +2227,35 @@ async fn source_state_uses_source_default_when_not_persisted() {
 }
 
 #[tokio::test]
-async fn update_source_pointer_requires_state_and_merges_object_values() {
+async fn update_source_pointer_rejects_unconfigured_source() {
     let (processor, storage) = pointer_test_processor(false, 1, false);
-    assert!(
-        processor
-            .update_source_pointer("pointer-test-source", json!({"page": 2}))
-            .await
-            .unwrap()
-            .is_none()
+
+    let error = processor
+        .update_source_pointer("other-source", json!({"page": 2}))
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        error.message(),
+        "Source other-source is not configured for processor pointer-test"
     );
+    assert!(storage.saved_pointers().is_empty());
+}
+
+#[tokio::test]
+async fn update_source_pointer_inserts_missing_state_and_merges_existing_object() {
+    let (processor, storage) = pointer_test_processor(false, 1, false);
+
+    let inserted = processor
+        .update_source_pointer("pointer-test-source", json!({"page": 2}))
+        .await
+        .unwrap();
+
+    assert_eq!(inserted.id, None);
+    assert_eq!(inserted.processor_name, "pointer-test");
+    assert_eq!(inserted.source_id, "pointer-test-source");
+    assert_eq!(inserted.last_pointer, json!({"page": 2}));
+    assert_eq!(storage.saved_pointers(), vec![json!({"page": 2})]);
     *storage.initial_state.lock() = Some(ProcessorSourceState {
         id: Some(7),
         processor_name: processor.name.clone(),
@@ -2251,14 +2271,13 @@ async fn update_source_pointer_requires_state_and_merges_object_values() {
             json!({"page": 2, "added": "value"}),
         )
         .await
-        .unwrap()
         .unwrap();
 
     assert_eq!(
         updated.last_pointer,
         json!({"page": 2, "retained": true, "added": "value"})
     );
-    assert_eq!(storage.saved_pointers(), vec![updated.last_pointer]);
+    assert_eq!(storage.saved_pointers(), vec![json!({"page": 2}), updated.last_pointer],);
 }
 
 /// 始终返回监听器错误的测试替身，只验证监听器错误处理。

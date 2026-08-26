@@ -394,6 +394,19 @@ async fn get_state(
     Ok(Json(state.into()))
 }
 
+fn validate_pointer_source(
+    processor_name: &str,
+    configured_source_id: &str,
+    requested_source_id: &str,
+) -> Result<(), AppError> {
+    if requested_source_id != configured_source_id {
+        return Err(AppError::BadRequest(format!(
+            "Source {requested_source_id} is not configured for processor {processor_name}"
+        )));
+    }
+    Ok(())
+}
+
 #[axum::debug_handler]
 async fn update_pointer(
     State(core): State<Arc<CoreApplication>>,
@@ -401,15 +414,8 @@ async fn update_pointer(
     Json(body): Json<PointerPayload>,
 ) -> Result<(), AppError> {
     let processor = require_processor(&core, &name)?;
-    let updated = processor
-        .update_source_pointer(&body.source_id, Value::Object(body.pointer))
-        .await?;
-    if updated.is_none() {
-        return Err(AppError::NotFound(format!(
-            "Processor {name} with source {} not found",
-            body.source_id
-        )));
-    }
+    validate_pointer_source(&name, processor.source_id(), &body.source_id)?;
+    processor.update_source_pointer(&body.source_id, Value::Object(body.pointer)).await?;
     Ok(())
 }
 
@@ -560,6 +566,15 @@ fn select_processor_configs(
 mod tests {
     use super::validate_processor_name;
     use super::*;
+
+    #[test]
+    fn pointer_source_validation_rejects_unconfigured_source() {
+        let error =
+            validate_pointer_source("processor", "configured", "other").unwrap_err();
+
+        assert!(matches!(error, AppError::BadRequest(message) if
+            message == "Source other is not configured for processor processor"));
+    }
 
     #[test]
     fn processor_name_validation_rejects_empty_and_whitespace_only_names() {

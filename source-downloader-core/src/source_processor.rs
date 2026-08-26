@@ -1135,19 +1135,35 @@ impl SourceProcessor {
             }))
     }
 
+    pub fn source_id(&self) -> &str {
+        &self.source_id
+    }
+
     pub async fn update_source_pointer(
         &self,
         source_id: &str,
         pointer: Value,
-    ) -> Result<Option<ProcessorSourceState>, ProcessingError> {
-        let Some(mut state) = self
+    ) -> Result<ProcessorSourceState, ProcessingError> {
+        if source_id != self.source_id {
+            return Err(ProcessingError::non_retryable(format!(
+                "Source {source_id} is not configured for processor {}",
+                self.name
+            )));
+        }
+
+        let mut state = self
             .processing_storage
             .find_processor_source_state(&self.name, source_id)
             .await
             .map_err(|error| ProcessingError::non_retryable(error.message))?
-        else {
-            return Ok(None);
-        };
+            .unwrap_or_else(|| ProcessorSourceState {
+                id: None,
+                processor_name: self.name.clone(),
+                source_id: source_id.to_owned(),
+                last_pointer: Value::Null,
+                last_active_time: None,
+                retry_times: 0,
+            });
         match (state.last_pointer.as_object_mut(), pointer) {
             (Some(current), Value::Object(updated)) => current.extend(updated),
             (_, updated) => state.last_pointer = updated,
@@ -1155,7 +1171,6 @@ impl SourceProcessor {
         self.processing_storage
             .save_processor_source_state(&state)
             .await
-            .map(Some)
             .map_err(|error| ProcessingError::non_retryable(error.message))
     }
 
