@@ -215,7 +215,8 @@ impl Source for TelegramSource {
         &self,
         pointer: &'pointer dyn SourcePointer,
         limit: u32,
-    ) -> Result<Vec<PointedItem>, ProcessingError> {
+    ) -> Result<source_downloader_sdk::component::SourceItems<'pointer>, ProcessingError>
+    {
         let pointer =
             pointer.as_any().downcast_ref::<TelegramPointer>().ok_or_else(|| {
                 ProcessingError::non_retryable("Invalid Telegram source pointer")
@@ -275,7 +276,7 @@ impl Source for TelegramSource {
                 }
             }
         }
-        Ok(items)
+        Ok(source_downloader_sdk::component::source_items(items))
     }
 
     fn default_pointer(&self) -> Box<dyn SourcePointer> {

@@ -429,12 +429,54 @@ pub trait AsyncDownloader: Downloader {
 }
 
 #[async_trait]
+pub trait SourceItemIterator: Send {
+    async fn next(&mut self) -> Result<Option<PointedItem>, ProcessingError>;
+
+    fn total(&self) -> Option<u32> {
+        None
+    }
+
+    async fn collect(mut self: Box<Self>) -> Result<Vec<PointedItem>, ProcessingError> {
+        let mut items = self
+            .total()
+            .map_or_else(Vec::new, |total| Vec::with_capacity(total as usize));
+        while let Some(item) = self.next().await? {
+            items.push(item);
+        }
+        Ok(items)
+    }
+}
+
+pub type SourceItems<'a> = Box<dyn SourceItemIterator + 'a>;
+
+pub struct VecSourceItemIterator {
+    items: std::vec::IntoIter<PointedItem>,
+    total: u32,
+}
+
+#[async_trait]
+impl SourceItemIterator for VecSourceItemIterator {
+    async fn next(&mut self) -> Result<Option<PointedItem>, ProcessingError> {
+        Ok(self.items.next())
+    }
+
+    fn total(&self) -> Option<u32> {
+        Some(self.total)
+    }
+}
+
+pub fn source_items(items: Vec<PointedItem>) -> SourceItems<'static> {
+    let total = items.len() as u32;
+    Box::new(VecSourceItemIterator { items: items.into_iter(), total })
+}
+
+#[async_trait]
 pub trait Source: SdComponent {
     async fn fetch<'pointer>(
         &self,
         source_pointer: &'pointer dyn SourcePointer,
         limit: u32,
-    ) -> Result<Vec<PointedItem>, ProcessingError>;
+    ) -> Result<SourceItems<'pointer>, ProcessingError>;
     fn default_pointer(&self) -> Box<dyn SourcePointer>;
     fn parse_raw_pointer(&self, value: Value) -> Box<dyn SourcePointer>;
     fn headers(&self, _: &SourceItem) -> Option<HashMap<String, String>> {
@@ -1048,9 +1090,12 @@ impl TaskRegistry {
 
 #[cfg(test)]
 mod test {
+    use crate::SourceItem;
+    use crate::async_trait::async_trait;
     use crate::component::{
-        ComponentId, ComponentRootType, FileContent, FileContentStatus,
-        deserialize_component_config,
+        ComponentId, ComponentRootType, EmptyPointer, FileContent, FileContentStatus,
+        PointedItem, ProcessingError, SourceItemIterator, deserialize_component_config,
+        source_items,
     };
     use crate::serde_json::json;
     use serde::Deserialize;
@@ -1076,6 +1121,48 @@ mod test {
     #[derive(Debug, Deserialize)]
     struct MatcherConfig {
         tags: Vec<String>,
+    }
+
+    struct UnknownTotalIterator {
+        items: std::vec::IntoIter<PointedItem>,
+    }
+
+    #[async_trait]
+    impl SourceItemIterator for UnknownTotalIterator {
+        async fn next(&mut self) -> Result<Option<PointedItem>, ProcessingError> {
+            Ok(self.items.next())
+        }
+    }
+
+    fn pointed_item(title: &str) -> PointedItem {
+        PointedItem {
+            source_item: SourceItem {
+                title: title.to_owned(),
+                link: crate::http::Uri::from_static("https://example.test/item"),
+                datetime: crate::time::OffsetDateTime::UNIX_EPOCH,
+                content_type: "test".to_owned(),
+                download_uri: crate::http::Uri::from_static(
+                    "https://example.test/download",
+                ),
+                attrs: Default::default(),
+                tags: Vec::new(),
+                identity: None,
+            },
+            item_pointer: std::sync::Arc::new(EmptyPointer),
+        }
+    }
+
+    #[tokio::test]
+    async fn source_item_iterator_collects_until_exhausted_without_limit() {
+        let items = vec![pointed_item("first"), pointed_item("second")];
+        let known = source_items(items.clone());
+        assert_eq!(known.total(), Some(2));
+        assert_eq!(known.collect().await.unwrap().len(), 2);
+
+        let unknown: Box<dyn SourceItemIterator> =
+            Box::new(UnknownTotalIterator { items: items.into_iter() });
+        assert_eq!(unknown.total(), None);
+        assert_eq!(unknown.collect().await.unwrap().len(), 2);
     }
 
     #[test]

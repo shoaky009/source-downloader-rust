@@ -215,12 +215,15 @@ impl Source for PixivIntegration {
         &self,
         p: &'p dyn SourcePointer,
         limit: u32,
-    ) -> Result<Vec<PointedItem>, ProcessingError> {
+    ) -> Result<source_downloader_sdk::component::SourceItems<'p>, ProcessingError> {
         let p = p.as_any().downcast_ref::<PixivPointer>().ok_or_else(|| {
             ProcessingError::non_retryable("Invalid Pixiv source pointer")
         })?;
         if !self.bookmark {
-            return self.fetch_following(p, limit).await;
+            return self
+                .fetch_following(p, limit)
+                .await
+                .map(source_downloader_sdk::component::source_items);
         }
         let mut out = Vec::new();
         let mut offset = 0;
@@ -246,7 +249,7 @@ impl Source for PixivIntegration {
                         }),
                     });
                     if out.len() >= limit as usize {
-                        return Ok(out);
+                        return Ok(source_downloader_sdk::component::source_items(out));
                     }
                 }
             }
@@ -255,7 +258,7 @@ impl Source for PixivIntegration {
             }
             offset += 50;
         }
-        Ok(out)
+        Ok(source_downloader_sdk::component::source_items(out))
     }
     fn default_pointer(&self) -> Box<dyn SourcePointer> {
         Box::new(PixivPointer::default())

@@ -144,7 +144,7 @@ impl Source for RssSource {
         &self,
         p: &'p dyn SourcePointer,
         limit: u32,
-    ) -> Result<Vec<PointedItem>, ProcessingError> {
+    ) -> Result<source_downloader_sdk::component::SourceItems<'p>, ProcessingError> {
         let latest = p
             .as_any()
             .downcast_ref::<LatestPointer>()
@@ -156,7 +156,7 @@ impl Source for RssSource {
             r.bytes().await.map_err(|e| http::map_error(e, "Read RSS response"))?;
         let items =
             parse_feed(&body, &self.tags, &self.attributes, self.date_format.as_deref())?;
-        Ok(items
+        let items = items
             .into_iter()
             .filter(|i| latest.is_none_or(|v| i.datetime > v))
             .take(limit as usize)
@@ -164,7 +164,8 @@ impl Source for RssSource {
                 source_item,
                 item_pointer: Arc::new(EmptyPointer),
             })
-            .collect())
+            .collect();
+        Ok(source_downloader_sdk::component::source_items(items))
     }
     fn default_pointer(&self) -> Box<dyn SourcePointer> {
         Box::new(LatestPointer::default())

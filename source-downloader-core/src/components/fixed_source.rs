@@ -171,7 +171,10 @@ impl Source for FixedSource {
         &self,
         source_pointer: &'pointer dyn SourcePointer,
         limit: u32,
-    ) -> Result<Vec<PointedItem>, source_downloader_sdk::component::ProcessingError> {
+    ) -> Result<
+        source_downloader_sdk::component::SourceItems<'pointer>,
+        source_downloader_sdk::component::ProcessingError,
+    > {
         let offset = source_pointer
             .as_any()
             .downcast_ref::<OffsetPointer>()
@@ -184,9 +187,9 @@ impl Source for FixedSource {
         let items = if self.offset_mode {
             items.skip(offset).take(limit as usize).collect()
         } else {
-            items.collect()
+            items.take(limit as usize).collect()
         };
-        Ok(items)
+        Ok(source_downloader_sdk::component::source_items(items))
     }
 
     fn default_pointer(&self) -> Box<dyn SourcePointer> {

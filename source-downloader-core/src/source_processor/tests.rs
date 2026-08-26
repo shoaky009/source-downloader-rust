@@ -150,7 +150,8 @@ impl Source for PointerTestComponent {
         &self,
         _: &'pointer dyn SourcePointer,
         _: u32,
-    ) -> Result<Vec<PointedItem>, ProcessingError> {
+    ) -> Result<source_downloader_sdk::component::SourceItems<'pointer>, ProcessingError>
+    {
         if let Some(failures) = &self.retryable_fetch_failures
             && failures
                 .try_update(
@@ -162,24 +163,26 @@ impl Source for PointerTestComponent {
         {
             return Err(ProcessingError::retryable("retryable fetch error"));
         }
-        Ok((1..=self.item_count)
-            .map(|sequence| PointedItem {
-                source_item: SourceItem {
-                    title: format!(
-                        "item-{}",
-                        if self.duplicate_source_item { 1 } else { sequence }
-                    ),
-                    link: Uri::from_static("http://localhost/item"),
-                    datetime: OffsetDateTime::UNIX_EPOCH,
-                    content_type: "test".to_string(),
-                    download_uri: Uri::from_static("http://localhost/download"),
-                    attrs: Default::default(),
-                    tags: Vec::new(),
-                    identity: None,
-                },
-                item_pointer: Arc::new(PointerItem(sequence)),
-            })
-            .collect())
+        Ok(source_downloader_sdk::component::source_items(
+            (1..=self.item_count)
+                .map(|sequence| PointedItem {
+                    source_item: SourceItem {
+                        title: format!(
+                            "item-{}",
+                            if self.duplicate_source_item { 1 } else { sequence }
+                        ),
+                        link: Uri::from_static("http://localhost/item"),
+                        datetime: OffsetDateTime::UNIX_EPOCH,
+                        content_type: "test".to_string(),
+                        download_uri: Uri::from_static("http://localhost/download"),
+                        attrs: Default::default(),
+                        tags: Vec::new(),
+                        identity: None,
+                    },
+                    item_pointer: Arc::new(PointerItem(sequence)),
+                })
+                .collect(),
+        ))
     }
 
     fn default_pointer(&self) -> Box<dyn SourcePointer> {

@@ -254,7 +254,7 @@ impl Source for BilibiliSource {
         &self,
         p: &'p dyn SourcePointer,
         limit: u32,
-    ) -> Result<Vec<PointedItem>, ProcessingError> {
+    ) -> Result<source_downloader_sdk::component::SourceItems<'p>, ProcessingError> {
         let p = p.as_any().downcast_ref::<BilibiliPointer>().ok_or_else(|| {
             ProcessingError::non_retryable("Invalid Bilibili source pointer")
         })?;
@@ -264,7 +264,7 @@ impl Source for BilibiliSource {
             let mut pn = 1;
             loop {
                 if out.len() >= limit as usize {
-                    return Ok(out);
+                    return Ok(source_downloader_sdk::component::source_items(out));
                 }
                 let data = self.page(*id, pn).await?;
                 let has_more = data.has_more;
@@ -284,7 +284,9 @@ impl Source for BilibiliSource {
                         let touch_bottom = !has_more && last_time == Some(m.fav_time);
                         out.push(Self::convert(*id, m, touch_bottom)?);
                         if out.len() >= limit as usize {
-                            return Ok(out);
+                            return Ok(source_downloader_sdk::component::source_items(
+                                out,
+                            ));
                         }
                     }
                 }
@@ -294,7 +296,7 @@ impl Source for BilibiliSource {
                 pn += 1;
             }
         }
-        Ok(out)
+        Ok(source_downloader_sdk::component::source_items(out))
     }
     fn default_pointer(&self) -> Box<dyn SourcePointer> {
         Box::new(BilibiliPointer::default())
@@ -325,10 +327,12 @@ mod tests {
             .as_source()
             .unwrap();
         let mut pointer = source.default_pointer();
-        let first = source.fetch(pointer.as_ref(), 10).await.unwrap();
+        let first =
+            source.fetch(pointer.as_ref(), 10).await.unwrap().collect().await.unwrap();
         assert_eq!(1, first.len());
         pointer.update(&first[0].source_item, first[0].item_pointer.as_ref());
-        let second = source.fetch(pointer.as_ref(), 10).await.unwrap();
+        let second =
+            source.fetch(pointer.as_ref(), 10).await.unwrap().collect().await.unwrap();
         assert!(second.is_empty());
     }
     #[test]

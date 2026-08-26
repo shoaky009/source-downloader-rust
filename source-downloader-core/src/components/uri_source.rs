@@ -72,8 +72,9 @@ impl Source for UriSource {
     async fn fetch<'pointer>(
         &self,
         _: &'pointer dyn SourcePointer,
-        _: u32,
-    ) -> Result<Vec<PointedItem>, ProcessingError> {
+        limit: u32,
+    ) -> Result<source_downloader_sdk::component::SourceItems<'pointer>, ProcessingError>
+    {
         let bytes = if self.uri.scheme_str() == Some("file") {
             let url = url::Url::parse(&self.uri.to_string())
                 .map_err(|error| ProcessingError::non_retryable(error.to_string()))?;
@@ -100,13 +101,16 @@ impl Source for UriSource {
         };
         let source_items: Vec<SourceItem> = serde_json::from_slice(&bytes)
             .map_err(|error| ProcessingError::non_retryable(error.to_string()))?;
-        Ok(source_items
-            .into_iter()
-            .map(|source_item| PointedItem {
-                source_item,
-                item_pointer: Arc::new(EmptyPointer),
-            })
-            .collect())
+        Ok(source_downloader_sdk::component::source_items(
+            source_items
+                .into_iter()
+                .take(limit as usize)
+                .map(|source_item| PointedItem {
+                    source_item,
+                    item_pointer: Arc::new(EmptyPointer),
+                })
+                .collect(),
+        ))
     }
 
     fn default_pointer(&self) -> Box<dyn SourcePointer> {

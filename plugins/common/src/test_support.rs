@@ -11,7 +11,7 @@ pub(crate) async fn fetch_and_commit(
     pointer: &mut dyn SourcePointer,
     limit: u32,
 ) -> FetchRound {
-    let items = source.fetch(pointer, limit).await.unwrap();
+    let items = source.fetch(pointer, limit).await.unwrap().collect().await.unwrap();
     for item in &items {
         pointer.update(&item.source_item, item.item_pointer.as_ref());
     }
@@ -45,8 +45,11 @@ mod tests {
             &self,
             _: &'pointer dyn SourcePointer,
             _: u32,
-        ) -> Result<Vec<PointedItem>, ProcessingError> {
-            Ok(vec![PointedItem {
+        ) -> Result<
+            source_downloader_sdk::component::SourceItems<'pointer>,
+            ProcessingError,
+        > {
+            Ok(source_downloader_sdk::component::source_items(vec![PointedItem {
                 source_item: SourceItem {
                     title: "item".to_owned(),
                     link: "https://example.test/item".parse().unwrap(),
@@ -58,7 +61,7 @@ mod tests {
                     identity: None,
                 },
                 item_pointer: EMPTY_POINTER.clone(),
-            }])
+            }]))
         }
 
         fn default_pointer(&self) -> Box<dyn SourcePointer> {

@@ -1540,6 +1540,11 @@ impl Drop for SourceProcessor {
     }
 }
 
+struct FetchedItems {
+    items: Vec<PointedItem>,
+    total: Option<u32>,
+}
+
 #[allow(dead_code)]
 trait Process {
     fn select_item_filter<'a>(
@@ -1555,13 +1560,14 @@ trait Process {
         &self,
         processor: &SourceProcessor,
         source_pointer: &dyn SourcePointer,
-    ) -> Result<Vec<PointedItem>, ProcessingError> {
+    ) -> Result<FetchedItems, ProcessingError> {
         SourceProcessor::apply_retry(
             || async {
-                processor
-                    .source
-                    .fetch(source_pointer, processor.options.fetch_limit)
-                    .await
+                let limit = processor.options.fetch_limit;
+                let source_items = processor.source.fetch(source_pointer, limit).await?;
+                let total = source_items.total();
+                let items = source_items.collect().await?;
+                Ok(FetchedItems { items, total })
             },
             "fetch-source-items",
             processor.options.retry_attempts,
@@ -1896,9 +1902,12 @@ trait Process {
             crate::processor_run_state::set_run_stage(
                 crate::processor_run_state::ProcessorRunStage::FetchingItems,
             );
-            let items =
+            let fetched =
                 self.fetch_items(p, p_rt.coordinator.source_pointer.as_ref()).await?;
-            crate::processor_run_state::set_total_items(items.len());
+            if let Some(total) = fetched.total {
+                crate::processor_run_state::set_total_items(total as usize);
+            }
+            let items = fetched.items;
             crate::processor_run_state::set_run_stage(
                 crate::processor_run_state::ProcessorRunStage::ProcessingItems,
             );
@@ -1910,34 +1919,27 @@ trait Process {
             let process = self;
             let item_runtime = &p_rt.item;
             let processor = p;
-            let make_item_future =
-                move |item: PointedItem| async move {
-                    let item_pointer = item.item_pointer;
-                    let source_item = item.source_item;
-                    let item_hash = source_item.hashing();
-                    let progress = ProcessorRunItemGuard::new(
-                        &source_item.title,
-                        ProcessorItemStage::FilteringItem,
-                    );
-                    let action = process
-                        .process_item(
-                            &source_item,
-                            &item_hash,
-                            item_runtime,
-                            processor,
-                            &progress,
-                        )
-                        .await
-                        .unwrap_or_else(ItemAction::Error);
-                    progress.set_stage(ProcessorItemStage::AwaitingSettlement);
-                    CompletedItem {
-                        item_pointer,
-                        source_item,
-                        item_hash,
-                        action,
-                        progress,
-                    }
-                };
+            let make_item_future = move |item: PointedItem| async move {
+                let item_pointer = item.item_pointer;
+                let source_item = item.source_item;
+                let item_hash = source_item.hashing();
+                let progress = ProcessorRunItemGuard::new(
+                    &source_item.title,
+                    ProcessorItemStage::FilteringItem,
+                );
+                let action = process
+                    .process_item(
+                        &source_item,
+                        &item_hash,
+                        item_runtime,
+                        processor,
+                        &progress,
+                    )
+                    .await
+                    .unwrap_or_else(ItemAction::Error);
+                progress.set_stage(ProcessorItemStage::AwaitingSettlement);
+                CompletedItem { item_pointer, source_item, item_hash, action, progress }
+            };
             let make_sequenced_future = |sequence, item| {
                 make_item_future(item).map(move |completed| (sequence, completed))
             };
@@ -3342,11 +3344,14 @@ impl Process for Reprocess {
         &self,
         _: &SourceProcessor,
         _: &dyn SourcePointer,
-    ) -> Result<Vec<PointedItem>, ProcessingError> {
-        Ok(vec![PointedItem {
-            source_item: self.content.item_content.source_item.clone(),
-            item_pointer: Arc::new(EmptyPointer),
-        }])
+    ) -> Result<FetchedItems, ProcessingError> {
+        Ok(FetchedItems {
+            items: vec![PointedItem {
+                source_item: self.content.item_content.source_item.clone(),
+                item_pointer: Arc::new(EmptyPointer),
+            }],
+            total: Some(1),
+        })
     }
 
     async fn on_process_complete(
@@ -3401,8 +3406,8 @@ impl Process for FixedItemProcess {
         &self,
         _: &SourceProcessor,
         _: &dyn SourcePointer,
-    ) -> Result<Vec<PointedItem>, ProcessingError> {
-        Ok(self
+    ) -> Result<FetchedItems, ProcessingError> {
+        let items = self
             .items
             .iter()
             .cloned()
@@ -3410,7 +3415,8 @@ impl Process for FixedItemProcess {
                 source_item,
                 item_pointer: Arc::new(EmptyPointer),
             })
-            .collect())
+            .collect::<Vec<_>>();
+        Ok(FetchedItems { total: Some(items.len() as u32), items })
     }
 
     async fn on_process_complete(

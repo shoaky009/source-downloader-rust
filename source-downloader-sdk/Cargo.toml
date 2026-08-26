@@ -19,3 +19,6 @@ parking_lot = { workspace = true, features = ["serde"] }
 async-trait = { workspace = true }
 fastmurmur3 = { workspace = true }
 #derivative = { workspace = true}
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

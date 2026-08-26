@@ -118,7 +118,8 @@ impl Source for MikanSource {
         &self,
         source_pointer: &'pointer dyn SourcePointer,
         limit: u32,
-    ) -> Result<Vec<PointedItem>, ProcessingError> {
+    ) -> Result<source_downloader_sdk::component::SourceItems<'pointer>, ProcessingError>
+    {
         let response = http::execute(
             &self.http_client,
             self.http_client.get(self.url.as_str()),
@@ -140,12 +141,13 @@ impl Source for MikanSource {
         if !self.all_episode {
             let result = items
                 .into_iter()
+                .take(limit as usize)
                 .map(|source_item| PointedItem {
                     source_item,
                     item_pointer: EMPTY_POINTER.clone(),
                 })
                 .collect();
-            return Ok(result);
+            return Ok(source_downloader_sdk::component::source_items(result));
         }
 
         let pointer =
@@ -161,7 +163,7 @@ impl Source for MikanSource {
             .collect_all()
             .await?;
 
-        Ok(expanded_items)
+        Ok(source_downloader_sdk::component::source_items(expanded_items))
     }
 
     fn default_pointer(&self) -> Box<dyn SourcePointer> {

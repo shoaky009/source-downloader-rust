@@ -321,16 +321,19 @@ pub mod test_support {
             &self,
             _: &'pointer dyn SourcePointer,
             _: u32,
-        ) -> Result<Vec<PointedItem>, ProcessingError> {
+        ) -> Result<
+            source_downloader_sdk::component::SourceItems<'pointer>,
+            ProcessingError,
+        > {
             let mut fetches = self.fetches.lock();
             let Some(fetch) = fetches.front() else {
-                return Ok(Vec::new());
+                return Ok(source_downloader_sdk::component::source_items(Vec::new()));
             };
             let result = fetch.result.clone();
             if fetch.consume {
                 fetches.pop_front();
             }
-            result
+            result.map(source_downloader_sdk::component::source_items)
         }
 
         fn default_pointer(&self) -> Box<dyn SourcePointer> {

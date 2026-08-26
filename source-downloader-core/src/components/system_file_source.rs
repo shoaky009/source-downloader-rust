@@ -95,13 +95,16 @@ impl Source for SystemFileSource {
     async fn fetch<'pointer>(
         &self,
         _: &'pointer dyn SourcePointer,
-        _: u32,
-    ) -> Result<Vec<PointedItem>, ProcessingError> {
-        match self.mode {
+        limit: u32,
+    ) -> Result<source_downloader_sdk::component::SourceItems<'pointer>, ProcessingError>
+    {
+        let items = match self.mode {
             0 => self.create_root_file_source_items(),
             1 => self.create_each_file_source_items(),
             mode => Err(ProcessingError::non_retryable(format!("Unknown mode: {mode}"))),
-        }
+        }?;
+        let items = items.into_iter().take(limit as usize).collect();
+        Ok(source_downloader_sdk::component::source_items(items))
     }
 
     fn default_pointer(&self) -> Box<dyn SourcePointer> {

@@ -327,7 +327,8 @@ impl Source for FanboxIntegration {
         &self,
         pointer: &'pointer dyn SourcePointer,
         limit: u32,
-    ) -> Result<Vec<PointedItem>, ProcessingError> {
+    ) -> Result<source_downloader_sdk::component::SourceItems<'pointer>, ProcessingError>
+    {
         if self.latest_only {
             let posts: Posts = self
                 .json(
@@ -335,7 +336,7 @@ impl Source for FanboxIntegration {
                     "Fetch Fanbox supporting posts",
                 )
                 .await?;
-            return posts
+            let items = posts
                 .items
                 .into_iter()
                 .filter(|post| !post.is_restricted)
@@ -346,7 +347,8 @@ impl Source for FanboxIntegration {
                         item_pointer: Arc::new(CreatorPointer::new(post.creator_id)),
                     })
                 })
-                .collect();
+                .collect::<Result<Vec<_>, ProcessingError>>()?;
+            return Ok(source_downloader_sdk::component::source_items(items));
         }
         let pointer =
             pointer.as_any().downcast_ref::<FanboxPointer>().ok_or_else(|| {
@@ -373,11 +375,11 @@ impl Source for FanboxIntegration {
                     item_pointer: Arc::new(next),
                 });
                 if output.len() >= limit as usize {
-                    return Ok(output);
+                    return Ok(source_downloader_sdk::component::source_items(output));
                 }
             }
         }
-        Ok(output)
+        Ok(source_downloader_sdk::component::source_items(output))
     }
 
     fn default_pointer(&self) -> Box<dyn SourcePointer> {
@@ -620,10 +622,12 @@ mod tests {
             .as_source()
             .unwrap();
         let mut pointer = source.default_pointer();
-        let first = source.fetch(pointer.as_ref(), 10).await.unwrap();
+        let first =
+            source.fetch(pointer.as_ref(), 10).await.unwrap().collect().await.unwrap();
         assert_eq!(1, first.len());
         pointer.update(&first[0].source_item, first[0].item_pointer.as_ref());
-        let second = source.fetch(pointer.as_ref(), 10).await.unwrap();
+        let second =
+            source.fetch(pointer.as_ref(), 10).await.unwrap().collect().await.unwrap();
         assert!(second.is_empty());
     }
 
