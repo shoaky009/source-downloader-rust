@@ -4,8 +4,8 @@ use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemPointer, PointedItem,
-    ProcessingError, SdComponent, SdComponentMetadata, Source, SourcePointer,
-    format_error_chain,
+    ProcessingError, SdComponent, SdComponentMetadata, Source, SourceItems,
+    SourcePointer, format_error_chain, source_items,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
@@ -254,7 +254,7 @@ impl Source for BilibiliSource {
         &self,
         p: &'p dyn SourcePointer,
         limit: u32,
-    ) -> Result<source_downloader_sdk::component::SourceItems<'p>, ProcessingError> {
+    ) -> Result<SourceItems<'p>, ProcessingError> {
         let p = p.as_any().downcast_ref::<BilibiliPointer>().ok_or_else(|| {
             ProcessingError::non_retryable("Invalid Bilibili source pointer")
         })?;
@@ -264,7 +264,7 @@ impl Source for BilibiliSource {
             let mut pn = 1;
             loop {
                 if out.len() >= limit as usize {
-                    return Ok(source_downloader_sdk::component::source_items(out));
+                    return Ok(source_items(out));
                 }
                 let data = self.page(*id, pn).await?;
                 let has_more = data.has_more;
@@ -284,9 +284,7 @@ impl Source for BilibiliSource {
                         let touch_bottom = !has_more && last_time == Some(m.fav_time);
                         out.push(Self::convert(*id, m, touch_bottom)?);
                         if out.len() >= limit as usize {
-                            return Ok(source_downloader_sdk::component::source_items(
-                                out,
-                            ));
+                            return Ok(source_items(out));
                         }
                     }
                 }
@@ -296,7 +294,7 @@ impl Source for BilibiliSource {
                 pn += 1;
             }
         }
-        Ok(source_downloader_sdk::component::source_items(out))
+        Ok(source_items(out))
     }
     fn default_pointer(&self) -> Box<dyn SourcePointer> {
         Box::new(BilibiliPointer::default())

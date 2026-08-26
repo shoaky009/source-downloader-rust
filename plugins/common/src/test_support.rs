@@ -24,7 +24,8 @@ mod tests {
     use source_downloader_sdk::SourceItem;
     use source_downloader_sdk::async_trait::async_trait;
     use source_downloader_sdk::component::{
-        EMPTY_POINTER, EmptyPointer, ProcessingError, SdComponent,
+        EMPTY_POINTER, EmptyPointer, ProcessingError, SdComponent, SourceItems,
+        source_items,
     };
     use std::fmt::{Display, Formatter};
 
@@ -45,11 +46,8 @@ mod tests {
             &self,
             _: &'pointer dyn SourcePointer,
             _: u32,
-        ) -> Result<
-            source_downloader_sdk::component::SourceItems<'pointer>,
-            ProcessingError,
-        > {
-            Ok(source_downloader_sdk::component::source_items(vec![PointedItem {
+        ) -> Result<SourceItems<'pointer>, ProcessingError> {
+            Ok(source_items(vec![PointedItem {
                 source_item: SourceItem {
                     title: "item".to_owned(),
                     link: "https://example.test/item".parse().unwrap(),

@@ -6,7 +6,7 @@ use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, ItemPointer,
     PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourceFile,
-    SourcePointer, deserialize_component_config,
+    SourceItems, SourcePointer, deserialize_component_config, source_items,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
@@ -233,7 +233,7 @@ impl Source for PatreonIntegration {
         &self,
         p: &'p dyn SourcePointer,
         limit: u32,
-    ) -> Result<source_downloader_sdk::component::SourceItems<'p>, ProcessingError> {
+    ) -> Result<SourceItems<'p>, ProcessingError> {
         let p = p.as_any().downcast_ref::<PatreonPointer>().ok_or_else(|| {
             ProcessingError::non_retryable("Invalid Patreon source pointer")
         })?;
@@ -285,12 +285,12 @@ impl Source for PatreonIntegration {
                         index + 1 == selected.len(),
                     )?);
                     if out.len() >= limit as usize {
-                        return Ok(source_downloader_sdk::component::source_items(out));
+                        return Ok(source_items(out));
                     }
                 }
             }
         }
-        Ok(source_downloader_sdk::component::source_items(out))
+        Ok(source_items(out))
     }
     fn default_pointer(&self) -> Box<dyn SourcePointer> {
         Box::new(PatreonPointer::default())

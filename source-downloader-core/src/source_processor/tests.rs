@@ -4,7 +4,7 @@ use crate::process::variable::SmartStrategy;
 use crate::processor_test_support::test_support::*;
 use jsonpath_rust::JsonPath;
 use parking_lot::Mutex as ParkingMutex;
-use source_downloader_sdk::component::PointedItem;
+use source_downloader_sdk::component::{PointedItem, SourceItems, source_items};
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{Value, json};
 use source_downloader_sdk::storage::{
@@ -150,8 +150,7 @@ impl Source for PointerTestComponent {
         &self,
         _: &'pointer dyn SourcePointer,
         _: u32,
-    ) -> Result<source_downloader_sdk::component::SourceItems<'pointer>, ProcessingError>
-    {
+    ) -> Result<SourceItems<'pointer>, ProcessingError> {
         if let Some(failures) = &self.retryable_fetch_failures
             && failures
                 .try_update(
@@ -163,7 +162,7 @@ impl Source for PointerTestComponent {
         {
             return Err(ProcessingError::retryable("retryable fetch error"));
         }
-        Ok(source_downloader_sdk::component::source_items(
+        Ok(source_items(
             (1..=self.item_count)
                 .map(|sequence| PointedItem {
                     source_item: SourceItem {

@@ -7,7 +7,7 @@ use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentCreateContext, ComponentError, ComponentSupplier, ComponentType,
     ItemPointer, PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source,
-    SourcePointer, deserialize_component_config,
+    SourceItems, SourcePointer, deserialize_component_config, source_items,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value};
@@ -215,8 +215,7 @@ impl Source for TelegramSource {
         &self,
         pointer: &'pointer dyn SourcePointer,
         limit: u32,
-    ) -> Result<source_downloader_sdk::component::SourceItems<'pointer>, ProcessingError>
-    {
+    ) -> Result<SourceItems<'pointer>, ProcessingError> {
         let pointer =
             pointer.as_any().downcast_ref::<TelegramPointer>().ok_or_else(|| {
                 ProcessingError::non_retryable("Invalid Telegram source pointer")
@@ -276,7 +275,7 @@ impl Source for TelegramSource {
                 }
             }
         }
-        Ok(source_downloader_sdk::component::source_items(items))
+        Ok(source_items(items))
     }
 
     fn default_pointer(&self) -> Box<dyn SourcePointer> {

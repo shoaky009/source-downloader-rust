@@ -5,7 +5,8 @@ use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, ItemPointer,
     PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourceFile,
-    SourcePointer, deserialize_component_config, format_error_chain,
+    SourceItems, SourcePointer, deserialize_component_config, format_error_chain,
+    source_items,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
@@ -327,8 +328,7 @@ impl Source for FanboxIntegration {
         &self,
         pointer: &'pointer dyn SourcePointer,
         limit: u32,
-    ) -> Result<source_downloader_sdk::component::SourceItems<'pointer>, ProcessingError>
-    {
+    ) -> Result<SourceItems<'pointer>, ProcessingError> {
         if self.latest_only {
             let posts: Posts = self
                 .json(
@@ -348,7 +348,7 @@ impl Source for FanboxIntegration {
                     })
                 })
                 .collect::<Result<Vec<_>, ProcessingError>>()?;
-            return Ok(source_downloader_sdk::component::source_items(items));
+            return Ok(source_items(items));
         }
         let pointer =
             pointer.as_any().downcast_ref::<FanboxPointer>().ok_or_else(|| {
@@ -375,11 +375,11 @@ impl Source for FanboxIntegration {
                     item_pointer: Arc::new(next),
                 });
                 if output.len() >= limit as usize {
-                    return Ok(source_downloader_sdk::component::source_items(output));
+                    return Ok(source_items(output));
                 }
             }
         }
-        Ok(source_downloader_sdk::component::source_items(output))
+        Ok(source_items(output))
     }
 
     fn default_pointer(&self) -> Box<dyn SourcePointer> {
