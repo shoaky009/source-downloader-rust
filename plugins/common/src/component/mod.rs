@@ -29,3 +29,4 @@ pub mod simple_file_tagger;
 pub mod tmdb_variable_provider;
 pub mod torrent_file_resolver;
 pub mod transmission_downloader;
+pub mod zip_file_mover;

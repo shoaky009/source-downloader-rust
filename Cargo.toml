@@ -59,6 +59,7 @@ url = "2"
 rkyv = { version = "0.8" }
 postcard = { version = "1.1", features = ["use-std"] }
 zstd = "0.13"
+zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 regex = "1.12.2"
 anitomy = { git = "https://github.com/Rapptz/anitomy-rs", rev = "c5271be1d9fe71a49e93e98ac3f982b38e6e27b6" }
 grammers-client = { version = "0.10.0", features = ["proxy", "markdown"] }

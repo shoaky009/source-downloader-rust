@@ -6,18 +6,7 @@ mod instance;
 mod test_support;
 pub mod util;
 
-use crate::component::{
-    ai_variable_provider, anime_file_filter, anime_replacement_decider, anime_tagger,
-    anime_title_variable_provider, anime_variable_provider, anitom_variable_provider,
-    bgmitv_variable_provider, bilibili_source, chii_variable_provider,
-    dlsite_variable_provider, doujin_title_trimmer, emby_image_tagger,
-    episode_variable_provider, fanbox_integration, getchu_variable_provider,
-    html_file_resolver, language_variable_provider, media_type_exists_detector,
-    mikan_source, mikan_variable_provider, patreon_integration, pixiv_integration,
-    qbittorrent_downloader, resolution_variable_provider, rss_source,
-    season_variable_provider, simple_file_tagger, tmdb_variable_provider,
-    torrent_file_resolver, transmission_downloader,
-};
+use crate::component::{ai_variable_provider, anime_file_filter, anime_replacement_decider, anime_tagger, anime_title_variable_provider, anime_variable_provider, anitom_variable_provider, bgmitv_variable_provider, bilibili_source, chii_variable_provider, dlsite_variable_provider, doujin_title_trimmer, emby_image_tagger, episode_variable_provider, fanbox_integration, getchu_variable_provider, html_file_resolver, language_variable_provider, media_type_exists_detector, mikan_source, mikan_variable_provider, patreon_integration, pixiv_integration, qbittorrent_downloader, resolution_variable_provider, rss_source, season_variable_provider, simple_file_tagger, tmdb_variable_provider, torrent_file_resolver, transmission_downloader, zip_file_mover};
 use source_downloader_sdk::component::ComponentSupplier;
 use source_downloader_sdk::instance::InstanceFactory;
 use source_downloader_sdk::plugin::{Plugin, PluginContext, PluginDescription};
@@ -68,6 +57,7 @@ impl Plugin for CommonPlugin {
             Arc::new(fanbox_integration::SUPPLIER),
             Arc::new(patreon_integration::SUPPLIER),
             Arc::new(pixiv_integration::SUPPLIER),
+            Arc::new(zip_file_mover::SUPPLIER),
         ]
     }
 

@@ -27,6 +27,7 @@ sha1 = { workspace = true }
 tokio = { workspace = true }
 hex = { workspace = true }
 futures-util = { workspace = true, features = ["std", "async-await"] }
+zip = { workspace = true }
 
 [dev-dependencies]
 wiremock = "0.6"
