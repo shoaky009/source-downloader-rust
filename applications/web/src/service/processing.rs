@@ -8,13 +8,16 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use source_downloader_core::source_processor::decode_files_from_compressed;
 use source_downloader_sdk::SourceItem;
-use source_downloader_sdk::component::FileContent;
+use source_downloader_sdk::component::{FileContent, FileContentStatus};
+use source_downloader_sdk::http::Uri;
+use source_downloader_sdk::serde_json::Value;
 use source_downloader_sdk::storage::{
     ItemContentCondition, ItemContentLite, ProcessingContent, ProcessingContentQuery,
     ProcessingStatus,
 };
 use source_downloader_sdk::time::{OffsetDateTime, UtcDateTime};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub fn register_routers(ctx: Arc<ApplicationContext>) -> Router {
@@ -226,7 +229,10 @@ impl From<ProcessingContent> for ProcessingContentSummary {
             processor_name: content.processor_name,
             item_hash: content.item_hash,
             item_identity: content.item_identity,
-            item_content: ItemContentSummary { source_item, item_variables },
+            item_content: ItemContentSummary {
+                source_item: source_item.into(),
+                item_variables: item_variables.into_iter().collect(),
+            },
             rename_times: content.rename_times,
             status: content.status,
             failure_reason: content.failure_reason,
@@ -239,8 +245,37 @@ impl From<ProcessingContent> for ProcessingContentSummary {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ItemContentSummary {
-    source_item: SourceItem,
-    item_variables: HashMap<String, String>,
+    source_item: SourceItemResponse,
+    item_variables: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SourceItemResponse {
+    title: String,
+    link: String,
+    #[serde(with = "source_downloader_sdk::time::serde::rfc3339")]
+    datetime: OffsetDateTime,
+    content_type: String,
+    download_uri: String,
+    attrs: BTreeMap<String, Value>,
+    tags: Vec<String>,
+    identity: Option<String>,
+}
+
+impl From<SourceItem> for SourceItemResponse {
+    fn from(item: SourceItem) -> Self {
+        Self {
+            title: item.title,
+            link: item.link.to_string(),
+            datetime: item.datetime,
+            content_type: item.content_type,
+            download_uri: item.download_uri.to_string(),
+            attrs: item.attrs.into_iter().collect(),
+            tags: item.tags,
+            identity: item.identity,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -269,9 +304,9 @@ impl ProcessingContentDetail {
             item_hash: content.item_hash,
             item_identity: content.item_identity,
             item_content: ItemContentDetail {
-                source_item,
-                file_contents,
-                item_variables,
+                source_item: source_item.into(),
+                file_contents: file_contents.into_iter().map(Into::into).collect(),
+                item_variables: item_variables.into_iter().collect(),
             },
             rename_times: content.rename_times,
             status: content.status,
@@ -285,9 +320,53 @@ impl ProcessingContentDetail {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ItemContentDetail {
-    source_item: SourceItem,
-    file_contents: Vec<FileContent>,
-    item_variables: HashMap<String, String>,
+    source_item: SourceItemResponse,
+    file_contents: Vec<FileContentResponse>,
+    item_variables: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileContentResponse {
+    download_path: PathBuf,
+    file_download_path: PathBuf,
+    source_save_path: PathBuf,
+    pattern_variables: BTreeMap<String, String>,
+    file_save_path_pattern: String,
+    filename_pattern: String,
+    tags: Vec<String>,
+    attrs: BTreeMap<String, Value>,
+    file_uri: Option<String>,
+    target_save_path: PathBuf,
+    target_filename: String,
+    exist_target_path: Option<PathBuf>,
+    errors: Vec<String>,
+    status: FileContentStatus,
+    processed_variables: Option<BTreeMap<String, String>>,
+}
+
+impl From<FileContent> for FileContentResponse {
+    fn from(file: FileContent) -> Self {
+        Self {
+            download_path: file.download_path,
+            file_download_path: file.file_download_path,
+            source_save_path: file.source_save_path,
+            pattern_variables: file.pattern_variables.into_iter().collect(),
+            file_save_path_pattern: file.file_save_path_pattern,
+            filename_pattern: file.filename_pattern,
+            tags: file.tags,
+            attrs: file.attrs.into_iter().collect(),
+            file_uri: file.file_uri.map(|uri: Uri| uri.to_string()),
+            target_save_path: file.target_save_path,
+            target_filename: file.target_filename,
+            exist_target_path: file.exist_target_path,
+            errors: file.errors,
+            status: file.status,
+            processed_variables: file
+                .processed_variables
+                .map(|variables| variables.into_iter().collect()),
+        }
+    }
 }
 
 fn default_limit() -> u64 {
@@ -393,6 +472,65 @@ mod tests {
             created_at: OffsetDateTime::UNIX_EPOCH,
             updated_at: Some(OffsetDateTime::UNIX_EPOCH),
         }
+    }
+
+    #[test]
+    fn processing_responses_sort_variables_and_attrs_by_key() {
+        let mut content = processing_content();
+        content.item_content.source_item.attrs.insert("zeta".to_owned(), Value::from(1));
+        content.item_content.source_item.attrs.insert("alpha".to_owned(), Value::from(2));
+        content.item_content.item_variables.insert("zeta".to_owned(), "1".to_owned());
+        content.item_content.item_variables.insert("alpha".to_owned(), "2".to_owned());
+
+        let summary = source_downloader_sdk::serde_json::to_string(
+            &ProcessingContentSummary::from(content.clone()),
+        )
+        .unwrap();
+        assert_key_precedes(&summary, "alpha", "zeta");
+
+        let mut pattern_variables = HashMap::new();
+        pattern_variables.insert("zeta".to_owned(), "1".to_owned());
+        pattern_variables.insert("alpha".to_owned(), "2".to_owned());
+        let mut attrs = source_downloader_sdk::serde_json::Map::new();
+        attrs.insert("zeta".to_owned(), Value::from(1));
+        attrs.insert("alpha".to_owned(), Value::from(2));
+        let file = FileContent {
+            download_path: PathBuf::new(),
+            file_download_path: PathBuf::new(),
+            source_save_path: PathBuf::new(),
+            pattern_variables: pattern_variables.clone(),
+            file_save_path_pattern: String::new(),
+            filename_pattern: String::new(),
+            tags: Vec::new(),
+            attrs,
+            file_uri: None,
+            target_save_path: PathBuf::new(),
+            target_filename: String::new(),
+            exist_target_path: None,
+            errors: Vec::new(),
+            status: FileContentStatus::Undetected,
+            target_path: std::sync::OnceLock::new(),
+            data: None,
+            processed_variables: Some(pattern_variables),
+        };
+        let detail = source_downloader_sdk::serde_json::to_string(
+            &ProcessingContentDetail::new(content, vec![file]),
+        )
+        .unwrap();
+        assert_eq!(detail.matches("\"alpha\"").count(), 5);
+        assert_eq!(detail.matches("\"zeta\"").count(), 5);
+        for object in ["itemVariables", "attrs", "patternVariables", "processedVariables"]
+        {
+            let start = detail.find(&format!("\"{object}\"")).unwrap();
+            assert_key_precedes(&detail[start..], "alpha", "zeta");
+        }
+    }
+
+    fn assert_key_precedes(json: &str, first: &str, second: &str) {
+        assert!(
+            json.find(&format!("\"{first}\"")).unwrap()
+                < json.find(&format!("\"{second}\"")).unwrap()
+        );
     }
 
     #[test]
