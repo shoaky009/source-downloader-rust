@@ -3,7 +3,8 @@ use serde::Deserialize;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, DownloadTask, Downloader,
     EmptyPointer, PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source,
-    SourceFile, SourceItems, SourcePointer, deserialize_component_config, source_items,
+    SourceFile, SourceItemStream, SourcePointer, deserialize_component_config,
+    source_item_stream,
 };
 use source_downloader_sdk::serde_json::{Map, Value, json};
 use source_downloader_sdk::time::OffsetDateTime;
@@ -96,14 +97,14 @@ impl Source for SystemFileSource {
         &self,
         _: &dyn SourcePointer,
         limit: u32,
-    ) -> Result<SourceItems, ProcessingError> {
+    ) -> Result<SourceItemStream, ProcessingError> {
         let items = match self.mode {
             0 => self.create_root_file_source_items(),
             1 => self.create_each_file_source_items(),
             mode => Err(ProcessingError::non_retryable(format!("Unknown mode: {mode}"))),
         }?;
         let items = items.into_iter().take(limit as usize).collect();
-        Ok(source_items(items))
+        Ok(source_item_stream(items))
     }
 
     fn default_pointer(&self) -> Box<dyn SourcePointer> {

@@ -5,8 +5,8 @@ use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, ItemPointer,
     PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourceFile,
-    SourceItems, SourcePointer, deserialize_component_config, format_error_chain,
-    source_items,
+    SourceItemStream, SourcePointer, deserialize_component_config, format_error_chain,
+    source_item_stream,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
@@ -328,7 +328,7 @@ impl Source for FanboxIntegration {
         &self,
         pointer: &dyn SourcePointer,
         limit: u32,
-    ) -> Result<SourceItems, ProcessingError> {
+    ) -> Result<SourceItemStream, ProcessingError> {
         if self.latest_only {
             let posts: Posts = self
                 .json(
@@ -348,7 +348,7 @@ impl Source for FanboxIntegration {
                     })
                 })
                 .collect::<Result<Vec<_>, ProcessingError>>()?;
-            return Ok(source_items(items));
+            return Ok(source_item_stream(items));
         }
         let pointer =
             pointer.as_any().downcast_ref::<FanboxPointer>().ok_or_else(|| {
@@ -375,11 +375,11 @@ impl Source for FanboxIntegration {
                     item_pointer: Arc::new(next),
                 });
                 if output.len() >= limit as usize {
-                    return Ok(source_items(output));
+                    return Ok(source_item_stream(output));
                 }
             }
         }
-        Ok(source_items(output))
+        Ok(source_item_stream(output))
     }
 
     fn default_pointer(&self) -> Box<dyn SourcePointer> {
@@ -580,6 +580,7 @@ fn remote_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures_util::TryStreamExt;
     use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -622,12 +623,22 @@ mod tests {
             .as_source()
             .unwrap();
         let mut pointer = source.default_pointer();
-        let first =
-            source.fetch(pointer.as_ref(), 10).await.unwrap().collect().await.unwrap();
+        let first = source
+            .fetch(pointer.as_ref(), 10)
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
         assert_eq!(1, first.len());
         pointer.update(&first[0].source_item, first[0].item_pointer.as_ref());
-        let second =
-            source.fetch(pointer.as_ref(), 10).await.unwrap().collect().await.unwrap();
+        let second = source
+            .fetch(pointer.as_ref(), 10)
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
         assert!(second.is_empty());
     }
 

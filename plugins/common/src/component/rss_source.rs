@@ -6,8 +6,8 @@ use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, EmptyPointer, ItemPointer,
-    PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourceItems,
-    SourcePointer, deserialize_component_config, source_items,
+    PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source,
+    SourceItemStream, SourcePointer, deserialize_component_config, source_item_stream,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
@@ -144,7 +144,7 @@ impl Source for RssSource {
         &self,
         p: &dyn SourcePointer,
         limit: u32,
-    ) -> Result<SourceItems, ProcessingError> {
+    ) -> Result<SourceItemStream, ProcessingError> {
         let latest = p
             .as_any()
             .downcast_ref::<LatestPointer>()
@@ -165,7 +165,7 @@ impl Source for RssSource {
                 item_pointer: Arc::new(EmptyPointer),
             })
             .collect();
-        Ok(source_items(items))
+        Ok(source_item_stream(items))
     }
     fn default_pointer(&self) -> Box<dyn SourcePointer> {
         Box::new(LatestPointer::default())

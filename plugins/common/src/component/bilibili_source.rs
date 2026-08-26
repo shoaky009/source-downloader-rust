@@ -4,8 +4,8 @@ use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ItemPointer, PointedItem,
-    ProcessingError, SdComponent, SdComponentMetadata, Source, SourceItems,
-    SourcePointer, format_error_chain, source_items,
+    ProcessingError, SdComponent, SdComponentMetadata, Source, SourceItemStream,
+    SourcePointer, format_error_chain, source_item_stream,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
@@ -254,7 +254,7 @@ impl Source for BilibiliSource {
         &self,
         p: &dyn SourcePointer,
         limit: u32,
-    ) -> Result<SourceItems, ProcessingError> {
+    ) -> Result<SourceItemStream, ProcessingError> {
         let p = p.as_any().downcast_ref::<BilibiliPointer>().ok_or_else(|| {
             ProcessingError::non_retryable("Invalid Bilibili source pointer")
         })?;
@@ -264,7 +264,7 @@ impl Source for BilibiliSource {
             let mut pn = 1;
             loop {
                 if out.len() >= limit as usize {
-                    return Ok(source_items(out));
+                    return Ok(source_item_stream(out));
                 }
                 let data = self.page(*id, pn).await?;
                 let has_more = data.has_more;
@@ -284,7 +284,7 @@ impl Source for BilibiliSource {
                         let touch_bottom = !has_more && last_time == Some(m.fav_time);
                         out.push(Self::convert(*id, m, touch_bottom)?);
                         if out.len() >= limit as usize {
-                            return Ok(source_items(out));
+                            return Ok(source_item_stream(out));
                         }
                     }
                 }
@@ -294,7 +294,7 @@ impl Source for BilibiliSource {
                 pn += 1;
             }
         }
-        Ok(source_items(out))
+        Ok(source_item_stream(out))
     }
     fn default_pointer(&self) -> Box<dyn SourcePointer> {
         Box::new(BilibiliPointer::default())
@@ -306,6 +306,7 @@ impl Source for BilibiliSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures_util::TryStreamExt;
     use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
     #[tokio::test]
@@ -325,12 +326,22 @@ mod tests {
             .as_source()
             .unwrap();
         let mut pointer = source.default_pointer();
-        let first =
-            source.fetch(pointer.as_ref(), 10).await.unwrap().collect().await.unwrap();
+        let first = source
+            .fetch(pointer.as_ref(), 10)
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
         assert_eq!(1, first.len());
         pointer.update(&first[0].source_item, first[0].item_pointer.as_ref());
-        let second =
-            source.fetch(pointer.as_ref(), 10).await.unwrap().collect().await.unwrap();
+        let second = source
+            .fetch(pointer.as_ref(), 10)
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
         assert!(second.is_empty());
     }
     #[test]

@@ -18,6 +18,7 @@ component-macro = { path = "../component-macro" }
 parking_lot = { workspace = true, features = ["serde"] }
 async-trait = { workspace = true }
 fastmurmur3 = { workspace = true }
+futures-util = { workspace = true, features = ["std"] }
 #derivative = { workspace = true}
 
 [dev-dependencies]

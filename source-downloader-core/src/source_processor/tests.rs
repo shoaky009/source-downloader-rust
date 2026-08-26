@@ -2,10 +2,11 @@ use super::*;
 use crate::config::ConfigOperator;
 use crate::process::variable::SmartStrategy;
 use crate::processor_test_support::test_support::*;
+use futures_util::stream;
 use jsonpath_rust::JsonPath;
 use parking_lot::Mutex as ParkingMutex;
 use source_downloader_sdk::component::{
-    PointedItem, SourceItemIterator, SourceItems, source_items,
+    PointedItem, SourceItemStream, source_item_stream,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{Value, json};
@@ -122,6 +123,7 @@ struct PointerTestComponent {
     unique_files: bool,
     skippable_download_item: Option<usize>,
     retryable_fetch_failures: Option<Arc<AtomicUsize>>,
+    retryable_stream_failures: usize,
     retryable_submit_failures: Option<Arc<AtomicUsize>>,
     submit_probe: Option<Arc<ParallelismProbe>>,
     replacement_probe: Option<Arc<ReplacementProbe>>,
@@ -130,22 +132,6 @@ struct PointerTestComponent {
     resolved_file_tags: Vec<String>,
     download_path: String,
     target_exists: bool,
-}
-
-struct LazyPointerTestIterator {
-    items: std::vec::IntoIter<PointedItem>,
-    produced: Arc<AtomicUsize>,
-}
-
-#[async_trait]
-impl SourceItemIterator for LazyPointerTestIterator {
-    async fn next(&mut self) -> Result<Option<PointedItem>, ProcessingError> {
-        let item = self.items.next();
-        if item.is_some() {
-            self.produced.fetch_add(1, AtomicOrdering::AcqRel);
-        }
-        Ok(item)
-    }
 }
 
 #[derive(Debug)]
@@ -168,26 +154,25 @@ impl Source for LazyPointerSource {
         &self,
         _: &dyn SourcePointer,
         _: u32,
-    ) -> Result<SourceItems, ProcessingError> {
-        let items = (1..=3)
-            .map(|sequence| PointedItem {
-                source_item: SourceItem {
-                    title: format!("item-{sequence}"),
-                    link: Uri::from_static("http://localhost/item"),
-                    datetime: OffsetDateTime::UNIX_EPOCH,
-                    content_type: "test".to_owned(),
-                    download_uri: Uri::from_static("http://localhost/download"),
-                    attrs: Default::default(),
-                    tags: Vec::new(),
-                    identity: None,
-                },
-                item_pointer: Arc::new(PointerItem(sequence)),
-            })
-            .collect::<Vec<_>>();
-        Ok(Box::new(LazyPointerTestIterator {
-            items: items.into_iter(),
-            produced: self.produced.clone(),
-        }))
+    ) -> Result<SourceItemStream, ProcessingError> {
+        let produced = self.produced.clone();
+        let items = (1..=3).map(|sequence| PointedItem {
+            source_item: SourceItem {
+                title: format!("item-{sequence}"),
+                link: Uri::from_static("http://localhost/item"),
+                datetime: OffsetDateTime::UNIX_EPOCH,
+                content_type: "test".to_owned(),
+                download_uri: Uri::from_static("http://localhost/download"),
+                attrs: Default::default(),
+                tags: Vec::new(),
+                identity: None,
+            },
+            item_pointer: Arc::new(PointerItem(sequence)),
+        });
+        Ok(Box::pin(stream::iter(items).map(move |item| {
+            produced.fetch_add(1, AtomicOrdering::AcqRel);
+            Ok(item)
+        })))
     }
 
     fn default_pointer(&self) -> Box<dyn SourcePointer> {
@@ -234,7 +219,7 @@ impl Source for PointerTestComponent {
         &self,
         _: &dyn SourcePointer,
         _: u32,
-    ) -> Result<SourceItems, ProcessingError> {
+    ) -> Result<SourceItemStream, ProcessingError> {
         if let Some(failures) = &self.retryable_fetch_failures
             && failures
                 .try_update(
@@ -246,26 +231,32 @@ impl Source for PointerTestComponent {
         {
             return Err(ProcessingError::retryable("retryable fetch error"));
         }
-        Ok(source_items(
-            (1..=self.item_count)
-                .map(|sequence| PointedItem {
-                    source_item: SourceItem {
-                        title: format!(
-                            "item-{}",
-                            if self.duplicate_source_item { 1 } else { sequence }
-                        ),
-                        link: Uri::from_static("http://localhost/item"),
-                        datetime: OffsetDateTime::UNIX_EPOCH,
-                        content_type: "test".to_string(),
-                        download_uri: Uri::from_static("http://localhost/download"),
-                        attrs: Default::default(),
-                        tags: Vec::new(),
-                        identity: None,
-                    },
-                    item_pointer: Arc::new(PointerItem(sequence)),
-                })
-                .collect(),
-        ))
+        let mut results = Vec::with_capacity(
+            self.retryable_stream_failures.saturating_add(self.item_count),
+        );
+        results.extend(
+            (0..self.retryable_stream_failures)
+                .map(|_| Err(ProcessingError::retryable("retryable stream error"))),
+        );
+        results.extend((1..=self.item_count).map(|sequence| {
+            Ok(PointedItem {
+                source_item: SourceItem {
+                    title: format!(
+                        "item-{}",
+                        if self.duplicate_source_item { 1 } else { sequence }
+                    ),
+                    link: Uri::from_static("http://localhost/item"),
+                    datetime: OffsetDateTime::UNIX_EPOCH,
+                    content_type: "test".to_string(),
+                    download_uri: Uri::from_static("http://localhost/download"),
+                    attrs: Default::default(),
+                    tags: Vec::new(),
+                    identity: None,
+                },
+                item_pointer: Arc::new(PointerItem(sequence)),
+            })
+        }));
+        Ok(Box::pin(stream::iter(results)))
     }
 
     fn default_pointer(&self) -> Box<dyn SourcePointer> {
@@ -749,6 +740,7 @@ struct PointerTestSettings {
     skippable_download_item: Option<usize>,
     retryable_submit_failures: Option<Arc<AtomicUsize>>,
     retryable_fetch_failures: Option<Arc<AtomicUsize>>,
+    retryable_stream_failures: usize,
     fail_next_state_save: bool,
     fail_next_file_save: bool,
     submit_probe: Option<Arc<ParallelismProbe>>,
@@ -778,6 +770,7 @@ impl Default for PointerTestSettings {
             fail_next_state_save: false,
             fail_next_file_save: false,
             retryable_fetch_failures: None,
+            retryable_stream_failures: 0,
             submit_probe: None,
             replacement_probe: None,
             source_headers: None,
@@ -827,6 +820,7 @@ fn pointer_test_processor_with_settings(
         resolved_file_tags: settings.resolved_file_tags,
         download_path: settings.download_path,
         retryable_fetch_failures: settings.retryable_fetch_failures,
+        retryable_stream_failures: settings.retryable_stream_failures,
         target_exists: settings.target_exists,
     });
     let storage = Arc::new(PointerStorage {
@@ -1777,6 +1771,20 @@ async fn fetch_retries_retryable_source_errors() {
     processor.run().await.unwrap();
 
     assert_eq!(fetch_failures.load(AtomicOrdering::Acquire), 0);
+    assert_eq!(storage.saved_pointers(), vec![json!(1)]);
+}
+
+#[tokio::test]
+async fn next_retries_retryable_stream_errors() {
+    let (processor, storage) = pointer_test_processor_with_settings(
+        false,
+        1,
+        false,
+        PointerTestSettings { retryable_stream_failures: 2, ..Default::default() },
+    );
+
+    processor.run().await.unwrap();
+
     assert_eq!(storage.saved_pointers(), vec![json!(1)]);
 }
 

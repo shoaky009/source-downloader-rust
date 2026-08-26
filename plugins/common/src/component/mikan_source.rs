@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, EMPTY_POINTER, ItemPointer,
-    PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourceItems,
-    SourcePointer, deserialize_component_config, source_items,
+    PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source,
+    SourceItemStream, SourcePointer, deserialize_component_config, source_item_stream,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{Map, Value, json};
@@ -118,7 +118,7 @@ impl Source for MikanSource {
         &self,
         source_pointer: &dyn SourcePointer,
         limit: u32,
-    ) -> Result<SourceItems, ProcessingError> {
+    ) -> Result<SourceItemStream, ProcessingError> {
         let response = http::execute(
             &self.http_client,
             self.http_client.get(self.url.as_str()),
@@ -146,7 +146,7 @@ impl Source for MikanSource {
                     item_pointer: EMPTY_POINTER.clone(),
                 })
                 .collect();
-            return Ok(source_items(result));
+            return Ok(source_item_stream(result));
         }
 
         let pointer =
@@ -162,7 +162,7 @@ impl Source for MikanSource {
             .collect_all()
             .await?;
 
-        Ok(source_items(expanded_items))
+        Ok(source_item_stream(expanded_items))
     }
 
     fn default_pointer(&self) -> Box<dyn SourcePointer> {

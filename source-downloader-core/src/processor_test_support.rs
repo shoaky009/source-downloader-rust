@@ -321,16 +321,16 @@ pub mod test_support {
             &self,
             _: &dyn SourcePointer,
             _: u32,
-        ) -> Result<SourceItems, ProcessingError> {
+        ) -> Result<SourceItemStream, ProcessingError> {
             let mut fetches = self.fetches.lock();
             let Some(fetch) = fetches.front() else {
-                return Ok(source_items(Vec::new()));
+                return Ok(source_item_stream(Vec::new()));
             };
             let result = fetch.result.clone();
             if fetch.consume {
                 fetches.pop_front();
             }
-            result.map(source_items)
+            result.map(source_item_stream)
         }
 
         fn default_pointer(&self) -> Box<dyn SourcePointer> {

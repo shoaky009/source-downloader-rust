@@ -3,8 +3,8 @@ use serde::Deserialize;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, EmptyPointer, PointedItem,
-    ProcessingError, SdComponent, SdComponentMetadata, Source, SourceItems,
-    SourcePointer, deserialize_component_config, format_error_chain, source_items,
+    ProcessingError, SdComponent, SdComponentMetadata, Source, SourceItemStream,
+    SourcePointer, deserialize_component_config, format_error_chain, source_item_stream,
 };
 use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::fmt::{Display, Formatter};
@@ -73,7 +73,7 @@ impl Source for UriSource {
         &self,
         _: &dyn SourcePointer,
         limit: u32,
-    ) -> Result<SourceItems, ProcessingError> {
+    ) -> Result<SourceItemStream, ProcessingError> {
         let bytes = if self.uri.scheme_str() == Some("file") {
             let url = url::Url::parse(&self.uri.to_string())
                 .map_err(|error| ProcessingError::non_retryable(error.to_string()))?;
@@ -100,7 +100,7 @@ impl Source for UriSource {
         };
         let parsed_items: Vec<SourceItem> = serde_json::from_slice(&bytes)
             .map_err(|error| ProcessingError::non_retryable(error.to_string()))?;
-        Ok(source_items(
+        Ok(source_item_stream(
             parsed_items
                 .into_iter()
                 .take(limit as usize)

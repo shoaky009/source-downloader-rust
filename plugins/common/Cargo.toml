@@ -26,6 +26,7 @@ quick-xml = { workspace = true }
 sha1 = { workspace = true }
 tokio = { workspace = true }
 hex = { workspace = true }
+futures-util = { workspace = true, features = ["std", "async-await"] }
 
 [dev-dependencies]
 wiremock = "0.6"

@@ -43,6 +43,7 @@ problem_details = "0.9"
 async-trait = "0.1"
 tower-http = { version = "0.7" }
 futures-util = { version = "0.3", default-features = false }
+async-stream = "0.3"
 serde_qs = "1.0.0-rc.3"
 retry = "2"
 tokio-retry2 = "0.9"

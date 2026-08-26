@@ -4,7 +4,7 @@ use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, EmptyPointer, ItemFileResolver,
     PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourceFile,
-    SourceItems, SourcePointer, deserialize_component_config, source_items,
+    SourceItemStream, SourcePointer, deserialize_component_config, source_item_stream,
 };
 use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::fmt::{Debug, Display, Formatter};
@@ -171,7 +171,7 @@ impl Source for FixedSource {
         &self,
         source_pointer: &dyn SourcePointer,
         limit: u32,
-    ) -> Result<SourceItems, ProcessingError> {
+    ) -> Result<SourceItemStream, ProcessingError> {
         let offset = source_pointer
             .as_any()
             .downcast_ref::<OffsetPointer>()
@@ -186,7 +186,7 @@ impl Source for FixedSource {
         } else {
             items.take(limit as usize).collect()
         };
-        Ok(source_items(items))
+        Ok(source_item_stream(items))
     }
 
     fn default_pointer(&self) -> Box<dyn SourcePointer> {

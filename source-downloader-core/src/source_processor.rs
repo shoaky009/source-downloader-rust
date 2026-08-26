@@ -26,8 +26,8 @@ use source_downloader_sdk::component::{
     SourceFileRef, SourceItemFilter,
 };
 use source_downloader_sdk::component::{
-    EmptyPointer, ItemFileResolver, ItemPointer, PointedItem, SourceItems, SourcePointer,
-    source_items,
+    EmptyPointer, ItemFileResolver, ItemPointer, PointedItem, SourceItemStream,
+    SourcePointer, source_item_stream,
 };
 use source_downloader_sdk::component::{FileContent, Source};
 use source_downloader_sdk::component::{FileMover, ProcessingError};
@@ -1556,7 +1556,7 @@ trait Process {
         &self,
         processor: &SourceProcessor,
         source_pointer: &dyn SourcePointer,
-    ) -> Result<SourceItems, ProcessingError> {
+    ) -> Result<SourceItemStream, ProcessingError> {
         SourceProcessor::apply_retry(
             || processor.source.fetch(source_pointer, processor.options.fetch_limit),
             "fetch-source-items",
@@ -1569,12 +1569,12 @@ trait Process {
     async fn next_source_item(
         &self,
         processor: &SourceProcessor,
-        items: &mut SourceItems,
+        items: &mut SourceItemStream,
     ) -> Result<Option<PointedItem>, ProcessingError> {
         let mut retries = 0;
         loop {
             match items.next().await {
-                Err(error @ ProcessingError::Retryable { .. })
+                Some(Err(error @ ProcessingError::Retryable { .. }))
                     if retries < processor.options.retry_attempts =>
                 {
                     retries += 1;
@@ -1585,7 +1585,9 @@ trait Process {
                     );
                     tokio::time::sleep(processor.options.retry_backoff).await;
                 }
-                result => return result,
+                Some(Ok(item)) => return Ok(Some(item)),
+                Some(Err(error)) => return Err(error),
+                None => return Ok(None),
             }
         }
     }
@@ -1918,9 +1920,6 @@ trait Process {
             );
             let mut items =
                 self.fetch_items(p, p_rt.coordinator.source_pointer.as_ref()).await?;
-            if let Some(total) = items.total() {
-                crate::processor_run_state::set_total_items(total as usize);
-            }
             crate::processor_run_state::set_run_stage(
                 crate::processor_run_state::ProcessorRunStage::ProcessingItems,
             );
@@ -3365,8 +3364,8 @@ impl Process for Reprocess {
         &self,
         _: &SourceProcessor,
         _: &dyn SourcePointer,
-    ) -> Result<SourceItems, ProcessingError> {
-        Ok(source_items(vec![PointedItem {
+    ) -> Result<SourceItemStream, ProcessingError> {
+        Ok(source_item_stream(vec![PointedItem {
             source_item: self.content.item_content.source_item.clone(),
             item_pointer: Arc::new(EmptyPointer),
         }]))
@@ -3424,8 +3423,8 @@ impl Process for FixedItemProcess {
         &self,
         _: &SourceProcessor,
         _: &dyn SourcePointer,
-    ) -> Result<SourceItems, ProcessingError> {
-        Ok(source_items(
+    ) -> Result<SourceItemStream, ProcessingError> {
+        Ok(source_item_stream(
             self.items
                 .iter()
                 .cloned()

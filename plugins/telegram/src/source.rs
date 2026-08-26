@@ -7,7 +7,7 @@ use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
     ComponentCreateContext, ComponentError, ComponentSupplier, ComponentType,
     ItemPointer, PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source,
-    SourceItems, SourcePointer, deserialize_component_config, source_items,
+    SourceItemStream, SourcePointer, deserialize_component_config,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value};
@@ -215,67 +215,106 @@ impl Source for TelegramSource {
         &self,
         pointer: &dyn SourcePointer,
         limit: u32,
-    ) -> Result<SourceItems, ProcessingError> {
-        let pointer =
-            pointer.as_any().downcast_ref::<TelegramPointer>().ok_or_else(|| {
+    ) -> Result<SourceItemStream, ProcessingError> {
+        let pointer = pointer
+            .as_any()
+            .downcast_ref::<TelegramPointer>()
+            .ok_or_else(|| {
                 ProcessingError::non_retryable("Invalid Telegram source pointer")
-            })?;
-        let client = self.client.client().await?;
-        let mut items = Vec::new();
-        for chat in &self.chats {
-            if items.len() >= limit as usize {
-                break;
+            })?
+            .clone();
+        let client_instance = self.client.clone();
+        let chats = self.chats.clone();
+        let sites = self.sites.clone();
+        let include_non_media = self.include_non_media;
+        Ok(Box::pin(async_stream::stream! {
+            if limit == 0 {
+                return;
             }
-            let (peer, chat_name) = self.client.chat(chat.chat_id).await?;
-            let offset = pointer
-                .chat_last_message_ids
-                .get(&chat.chat_id)
-                .copied()
-                .unwrap_or_default();
-            let mut messages = client.iter_messages(peer).offset_id(offset).reverse(true);
-            if offset == 0
-                && let Some(begin_date) = chat.begin_date
-            {
-                let timestamp = i32::try_from(
-                    begin_date.with_time(Time::MIDNIGHT).assume_utc().unix_timestamp(),
-                )
-                .map_err(|_| {
-                    ProcessingError::non_retryable(
-                        "Telegram begin-date is outside the supported range",
-                    )
-                })?;
-                messages = messages.offset_date(timestamp);
-            }
-            while let Some(message) =
-                messages.next().await.map_err(crate::client::telegram_error)?
-            {
-                if let Some(begin_date) = chat.begin_date
-                    && message.date().timestamp()
-                        < begin_date
-                            .with_time(Time::MIDNIGHT)
-                            .assume_utc()
-                            .unix_timestamp()
+            let client = loop {
+                match client_instance.client().await {
+                    Ok(client) => break client,
+                    Err(error) => yield Err(error),
+                }
+            };
+            let mut emitted = 0usize;
+            for chat in chats {
+                if emitted >= limit as usize {
+                    return;
+                }
+                let (peer, chat_name) = loop {
+                    match client_instance.chat(chat.chat_id).await {
+                        Ok(chat) => break chat,
+                        Err(error) => yield Err(error),
+                    }
+                };
+                let offset = pointer
+                    .chat_last_message_ids
+                    .get(&chat.chat_id)
+                    .copied()
+                    .unwrap_or_default();
+                let mut messages = client.iter_messages(peer).offset_id(offset).reverse(true);
+                if offset == 0
+                    && let Some(begin_date) = chat.begin_date
                 {
-                    continue;
+                    let timestamp = match i32::try_from(
+                        begin_date.with_time(Time::MIDNIGHT).assume_utc().unix_timestamp(),
+                    ) {
+                        Ok(timestamp) => timestamp,
+                        Err(_) => {
+                            yield Err(ProcessingError::non_retryable(
+                                "Telegram begin-date is outside the supported range",
+                            ));
+                            return;
+                        }
+                    };
+                    messages = messages.offset_date(timestamp);
                 }
-                let message_id = message.id();
-                if let Some(source_item) =
-                    self.convert_message(chat.chat_id, &chat_name, &message)?
-                {
-                    items.push(PointedItem {
-                        source_item,
-                        item_pointer: Arc::new(ChatPointer {
-                            chat_id: chat.chat_id,
-                            message_id,
-                        }),
-                    });
-                }
-                if items.len() >= limit as usize {
-                    break;
+                loop {
+                    let message = match messages.next().await {
+                        Ok(Some(message)) => message,
+                        Ok(None) => break,
+                        Err(error) => {
+                            yield Err(crate::client::telegram_error(error));
+                            continue;
+                        }
+                    };
+                    if let Some(begin_date) = chat.begin_date
+                        && message.date().timestamp()
+                            < begin_date
+                                .with_time(Time::MIDNIGHT)
+                                .assume_utc()
+                                .unix_timestamp()
+                    {
+                        continue;
+                    }
+                    let message_id = message.id();
+                    match Self::convert_message(
+                        include_non_media,
+                        &sites,
+                        chat.chat_id,
+                        &chat_name,
+                        &message,
+                    ) {
+                        Ok(Some(source_item)) => {
+                            emitted += 1;
+                            yield Ok(PointedItem {
+                                source_item,
+                                item_pointer: Arc::new(ChatPointer {
+                                    chat_id: chat.chat_id,
+                                    message_id,
+                                }),
+                            });
+                            if emitted >= limit as usize {
+                                return;
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => yield Err(error),
+                    }
                 }
             }
-        }
-        Ok(source_items(items))
+        }))
     }
 
     fn default_pointer(&self) -> Box<dyn SourcePointer> {
@@ -299,7 +338,8 @@ impl Source for TelegramSource {
 
 impl TelegramSource {
     fn convert_message(
-        &self,
+        include_non_media: bool,
+        sites: &HashSet<String>,
         configured_chat_id: i64,
         chat_name: &str,
         message: &grammers_client::message::Message,
@@ -326,7 +366,7 @@ impl TelegramSource {
         }
 
         let Some(media) = message.media() else {
-            return Ok(self.include_non_media.then(|| SourceItem {
+            return Ok(include_non_media.then(|| SourceItem {
                 title: format!("message-{message_id}"),
                 link,
                 datetime,
@@ -399,7 +439,8 @@ impl TelegramSource {
                     identity: Some(document.id().to_string()),
                 }))
             }
-            Media::WebPage(webpage) => self.convert_webpage(
+            Media::WebPage(webpage) => Self::convert_webpage(
+                sites,
                 webpage,
                 message.text(),
                 link,
@@ -412,7 +453,7 @@ impl TelegramSource {
     }
 
     fn convert_webpage(
-        &self,
+        sites: &HashSet<String>,
         webpage: grammers_client::media::WebPage,
         message_text: &str,
         link: Uri,
@@ -426,7 +467,7 @@ impl TelegramSource {
         let Some(site_name) = page.site_name else {
             return Ok(None);
         };
-        if !self.sites.contains(&site_name) {
+        if !sites.contains(&site_name) {
             tracing::debug!(site = site_name, "Ignoring Telegram web page site");
             return Ok(None);
         }
@@ -454,6 +495,7 @@ fn uri(value: String) -> Result<Uri, ProcessingError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures_util::StreamExt;
 
     #[test]
     fn pointer_round_trips_and_refreshes_configured_chats() {
@@ -477,6 +519,28 @@ mod tests {
             }));
         assert_eq!(pointer.dump()["chatLastMessageIds"]["-7"], 12);
         assert!(pointer.dump()["chatLastMessageIds"].get("9").is_none());
+    }
+    #[tokio::test]
+    async fn zero_limit_stream_does_not_connect() {
+        let source = TelegramSource {
+            client: Arc::new(TelegramClientInstance::disconnected(
+                crate::client::TelegramClientConfig {
+                    api_id: 1,
+                    api_hash: "hash".into(),
+                    metadata_path: "session".into(),
+                    proxy: None,
+                    timeout: 1,
+                },
+            )),
+            chats: vec![ChatConfig { chat_id: -7, begin_date: None }],
+            sites: default_sites(),
+            include_non_media: false,
+        };
+        let pointer = source.default_pointer();
+
+        let mut items = source.fetch(pointer.as_ref(), 0).await.unwrap();
+
+        assert!(items.next().await.is_none());
     }
 
     #[test]

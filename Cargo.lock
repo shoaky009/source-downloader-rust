@@ -1028,6 +1028,7 @@ dependencies = [
  "chardetng",
  "criterion",
  "encoding_rs",
+ "futures-util",
  "hex",
  "imagesize",
  "infer",
@@ -5282,6 +5283,7 @@ dependencies = [
  "async-trait",
  "component-macro",
  "fastmurmur3",
+ "futures-util",
  "http",
  "http-serde",
  "parking_lot",
@@ -5691,6 +5693,7 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 name = "telegram"
 version = "0.1.0"
 dependencies = [
+ "async-stream",
  "base64 0.23.1",
  "futures-util",
  "grammers-client",

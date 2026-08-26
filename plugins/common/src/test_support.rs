@@ -1,3 +1,4 @@
+use futures_util::TryStreamExt;
 use source_downloader_sdk::component::{PointedItem, Source, SourcePointer};
 use source_downloader_sdk::serde_json::Value;
 
@@ -11,7 +12,8 @@ pub(crate) async fn fetch_and_commit(
     pointer: &mut dyn SourcePointer,
     limit: u32,
 ) -> FetchRound {
-    let items = source.fetch(pointer, limit).await.unwrap().collect().await.unwrap();
+    let items: Vec<PointedItem> =
+        source.fetch(pointer, limit).await.unwrap().try_collect().await.unwrap();
     for item in &items {
         pointer.update(&item.source_item, item.item_pointer.as_ref());
     }
@@ -24,8 +26,8 @@ mod tests {
     use source_downloader_sdk::SourceItem;
     use source_downloader_sdk::async_trait::async_trait;
     use source_downloader_sdk::component::{
-        EMPTY_POINTER, EmptyPointer, ProcessingError, SdComponent, SourceItems,
-        source_items,
+        EMPTY_POINTER, EmptyPointer, ProcessingError, SdComponent, SourceItemStream,
+        source_item_stream,
     };
     use std::fmt::{Display, Formatter};
 
@@ -46,8 +48,8 @@ mod tests {
             &self,
             _: &dyn SourcePointer,
             _: u32,
-        ) -> Result<SourceItems, ProcessingError> {
-            Ok(source_items(vec![PointedItem {
+        ) -> Result<SourceItemStream, ProcessingError> {
+            Ok(source_item_stream(vec![PointedItem {
                 source_item: SourceItem {
                     title: "item".to_owned(),
                     link: "https://example.test/item".parse().unwrap(),
