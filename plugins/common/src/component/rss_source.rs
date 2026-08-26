@@ -140,11 +140,11 @@ impl SourcePointer for LatestPointer {
 }
 #[async_trait]
 impl Source for RssSource {
-    async fn fetch<'p>(
+    async fn fetch(
         &self,
-        p: &'p dyn SourcePointer,
+        p: &dyn SourcePointer,
         limit: u32,
-    ) -> Result<SourceItems<'p>, ProcessingError> {
+    ) -> Result<SourceItems, ProcessingError> {
         let latest = p
             .as_any()
             .downcast_ref::<LatestPointer>()

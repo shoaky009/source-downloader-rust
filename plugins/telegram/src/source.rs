@@ -211,11 +211,11 @@ impl Display for TelegramSource {
 
 #[async_trait]
 impl Source for TelegramSource {
-    async fn fetch<'pointer>(
+    async fn fetch(
         &self,
-        pointer: &'pointer dyn SourcePointer,
+        pointer: &dyn SourcePointer,
         limit: u32,
-    ) -> Result<SourceItems<'pointer>, ProcessingError> {
+    ) -> Result<SourceItems, ProcessingError> {
         let pointer =
             pointer.as_any().downcast_ref::<TelegramPointer>().ok_or_else(|| {
                 ProcessingError::non_retryable("Invalid Telegram source pointer")

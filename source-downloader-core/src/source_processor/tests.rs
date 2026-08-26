@@ -4,7 +4,9 @@ use crate::process::variable::SmartStrategy;
 use crate::processor_test_support::test_support::*;
 use jsonpath_rust::JsonPath;
 use parking_lot::Mutex as ParkingMutex;
-use source_downloader_sdk::component::{PointedItem, SourceItems, source_items};
+use source_downloader_sdk::component::{
+    PointedItem, SourceItemIterator, SourceItems, source_items,
+};
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{Value, json};
 use source_downloader_sdk::storage::{
@@ -14,6 +16,7 @@ use std::any::Any;
 use std::fmt::{Display, Formatter};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use tokio::sync::Notify;
 
 /// 测试用的可比较 item pointer，只模拟 pointer 身份，不推进真实 source 状态。
 #[derive(Debug)]
@@ -129,6 +132,87 @@ struct PointerTestComponent {
     target_exists: bool,
 }
 
+struct LazyPointerTestIterator {
+    items: std::vec::IntoIter<PointedItem>,
+    produced: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl SourceItemIterator for LazyPointerTestIterator {
+    async fn next(&mut self) -> Result<Option<PointedItem>, ProcessingError> {
+        let item = self.items.next();
+        if item.is_some() {
+            self.produced.fetch_add(1, AtomicOrdering::AcqRel);
+        }
+        Ok(item)
+    }
+}
+
+#[derive(Debug)]
+struct LazyPointerSource {
+    produced: Arc<AtomicUsize>,
+    first_processed: Arc<Notify>,
+}
+
+impl Display for LazyPointerSource {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("lazy-pointer-source")
+    }
+}
+
+impl source_downloader_sdk::component::SdComponent for LazyPointerSource {}
+
+#[async_trait]
+impl Source for LazyPointerSource {
+    async fn fetch(
+        &self,
+        _: &dyn SourcePointer,
+        _: u32,
+    ) -> Result<SourceItems, ProcessingError> {
+        let items = (1..=3)
+            .map(|sequence| PointedItem {
+                source_item: SourceItem {
+                    title: format!("item-{sequence}"),
+                    link: Uri::from_static("http://localhost/item"),
+                    datetime: OffsetDateTime::UNIX_EPOCH,
+                    content_type: "test".to_owned(),
+                    download_uri: Uri::from_static("http://localhost/download"),
+                    attrs: Default::default(),
+                    tags: Vec::new(),
+                    identity: None,
+                },
+                item_pointer: Arc::new(PointerItem(sequence)),
+            })
+            .collect::<Vec<_>>();
+        Ok(Box::new(LazyPointerTestIterator {
+            items: items.into_iter(),
+            produced: self.produced.clone(),
+        }))
+    }
+
+    fn default_pointer(&self) -> Box<dyn SourcePointer> {
+        Box::new(TestSourcePointer::default())
+    }
+
+    fn parse_raw_pointer(&self, _: Value) -> Box<dyn SourcePointer> {
+        self.default_pointer()
+    }
+}
+
+#[async_trait]
+impl ItemFileResolver for LazyPointerSource {
+    async fn resolve_files(
+        &self,
+        item: &SourceItem,
+    ) -> Result<Vec<SourceFile>, ProcessingError> {
+        if item.title == "item-1" {
+            assert_eq!(self.produced.load(AtomicOrdering::Acquire), 1);
+            self.first_processed.notify_one();
+        }
+        Ok(Vec::new())
+    }
+}
+
 impl Display for PointerTestComponent {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "pointer-test")
@@ -146,11 +230,11 @@ impl source_downloader_sdk::component::SdComponent for PointerTestComponent {
 
 #[async_trait]
 impl Source for PointerTestComponent {
-    async fn fetch<'pointer>(
+    async fn fetch(
         &self,
-        _: &'pointer dyn SourcePointer,
+        _: &dyn SourcePointer,
         _: u32,
-    ) -> Result<SourceItems<'pointer>, ProcessingError> {
+    ) -> Result<SourceItems, ProcessingError> {
         if let Some(failures) = &self.retryable_fetch_failures
             && failures
                 .try_update(
@@ -1371,6 +1455,25 @@ async fn pointer_batch_mode_saves_once_after_fetch() {
     processor.run().await.unwrap();
 
     assert_eq!(storage.saved_pointers(), vec![json!(2)]);
+}
+
+#[tokio::test]
+async fn source_iterator_is_consumed_as_parallelism_allows() {
+    let produced = Arc::new(AtomicUsize::new(0));
+    let first_processed = Arc::new(Notify::new());
+    let source = Arc::new(LazyPointerSource {
+        produced: produced.clone(),
+        first_processed: first_processed.clone(),
+    });
+    let (mut processor, storage) = pointer_test_processor(false, 0, false);
+    processor.source = source.clone();
+    processor.item_file_resolver = source;
+    processor.options.parallelism = 1;
+
+    processor.run().await.unwrap();
+
+    assert_eq!(produced.load(AtomicOrdering::Acquire), 3);
+    assert_eq!(storage.saved_pointers(), vec![json!(1), json!(2), json!(3)]);
 }
 
 #[tokio::test]

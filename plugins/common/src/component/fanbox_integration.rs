@@ -324,11 +324,11 @@ impl FanboxIntegration {
 
 #[async_trait]
 impl Source for FanboxIntegration {
-    async fn fetch<'pointer>(
+    async fn fetch(
         &self,
-        pointer: &'pointer dyn SourcePointer,
+        pointer: &dyn SourcePointer,
         limit: u32,
-    ) -> Result<SourceItems<'pointer>, ProcessingError> {
+    ) -> Result<SourceItems, ProcessingError> {
         if self.latest_only {
             let posts: Posts = self
                 .json(

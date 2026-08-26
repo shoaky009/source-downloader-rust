@@ -26,7 +26,8 @@ use source_downloader_sdk::component::{
     SourceFileRef, SourceItemFilter,
 };
 use source_downloader_sdk::component::{
-    EmptyPointer, ItemFileResolver, ItemPointer, PointedItem, SourcePointer,
+    EmptyPointer, ItemFileResolver, ItemPointer, PointedItem, SourceItems, SourcePointer,
+    source_items,
 };
 use source_downloader_sdk::component::{FileContent, Source};
 use source_downloader_sdk::component::{FileMover, ProcessingError};
@@ -1540,11 +1541,6 @@ impl Drop for SourceProcessor {
     }
 }
 
-struct FetchedItems {
-    items: Vec<PointedItem>,
-    total: Option<u32>,
-}
-
 #[allow(dead_code)]
 trait Process {
     fn select_item_filter<'a>(
@@ -1560,20 +1556,38 @@ trait Process {
         &self,
         processor: &SourceProcessor,
         source_pointer: &dyn SourcePointer,
-    ) -> Result<FetchedItems, ProcessingError> {
+    ) -> Result<SourceItems, ProcessingError> {
         SourceProcessor::apply_retry(
-            || async {
-                let limit = processor.options.fetch_limit;
-                let source_items = processor.source.fetch(source_pointer, limit).await?;
-                let total = source_items.total();
-                let items = source_items.collect().await?;
-                Ok(FetchedItems { items, total })
-            },
+            || processor.source.fetch(source_pointer, processor.options.fetch_limit),
             "fetch-source-items",
             processor.options.retry_attempts,
             processor.options.retry_backoff,
         )
         .await
+    }
+
+    async fn next_source_item(
+        &self,
+        processor: &SourceProcessor,
+        items: &mut SourceItems,
+    ) -> Result<Option<PointedItem>, ProcessingError> {
+        let mut retries = 0;
+        loop {
+            match items.next().await {
+                Err(error @ ProcessingError::Retryable { .. })
+                    if retries < processor.options.retry_attempts =>
+                {
+                    retries += 1;
+                    warn!(
+                        "Retrying fetch-source-item delay {} cause={} ",
+                        format_duration(processor.options.retry_backoff),
+                        error.message()
+                    );
+                    tokio::time::sleep(processor.options.retry_backoff).await;
+                }
+                result => return result,
+            }
+        }
     }
 
     async fn on_process_complete(
@@ -1902,12 +1916,11 @@ trait Process {
             crate::processor_run_state::set_run_stage(
                 crate::processor_run_state::ProcessorRunStage::FetchingItems,
             );
-            let fetched =
+            let mut items =
                 self.fetch_items(p, p_rt.coordinator.source_pointer.as_ref()).await?;
-            if let Some(total) = fetched.total {
+            if let Some(total) = items.total() {
                 crate::processor_run_state::set_total_items(total as usize);
             }
-            let items = fetched.items;
             crate::processor_run_state::set_run_stage(
                 crate::processor_run_state::ProcessorRunStage::ProcessingItems,
             );
@@ -1943,17 +1956,18 @@ trait Process {
             let make_sequenced_future = |sequence, item| {
                 make_item_future(item).map(move |completed| (sequence, completed))
             };
-            let mut remaining_items = items.into_iter();
             let mut stop_scheduling = false;
             if p.options.item_error_continue {
                 let mut item_results = FuturesUnordered::new();
-                for (sequence, item) in
-                    remaining_items.by_ref().enumerate().take(parallelism)
-                {
-                    item_results.push(make_sequenced_future(sequence, item));
+                let mut next_submit_sequence = 0;
+                while item_results.len() < parallelism {
+                    let Some(item) = self.next_source_item(p, &mut items).await? else {
+                        break;
+                    };
+                    item_results.push(make_sequenced_future(next_submit_sequence, item));
+                    next_submit_sequence += 1;
                 }
                 let mut next_sequence = 0;
-                let mut next_submit_sequence = item_results.len();
                 let mut completed_by_sequence = BTreeMap::new();
                 while let Some((sequence, completed)) = item_results.next().await {
                     completed_by_sequence.insert(sequence, completed);
@@ -1975,7 +1989,9 @@ trait Process {
                         }
                         next_sequence += 1;
                     }
-                    if !stop_scheduling && let Some(item) = remaining_items.next() {
+                    if !stop_scheduling
+                        && let Some(item) = self.next_source_item(p, &mut items).await?
+                    {
                         let sequence = next_submit_sequence;
                         next_submit_sequence += 1;
                         item_results.push(make_sequenced_future(sequence, item));
@@ -1983,7 +1999,10 @@ trait Process {
                 }
             } else {
                 let mut item_results = FuturesOrdered::new();
-                for item in remaining_items.by_ref().take(parallelism) {
+                while item_results.len() < parallelism {
+                    let Some(item) = self.next_source_item(p, &mut items).await? else {
+                        break;
+                    };
                     item_results.push_back(make_item_future(item));
                 }
                 while let Some(completed) = item_results.next().await {
@@ -2001,7 +2020,9 @@ trait Process {
                     {
                         stop_scheduling = true;
                     }
-                    if !stop_scheduling && let Some(item) = remaining_items.next() {
+                    if !stop_scheduling
+                        && let Some(item) = self.next_source_item(p, &mut items).await?
+                    {
                         item_results.push_back(make_item_future(item));
                     }
                 }
@@ -3344,14 +3365,11 @@ impl Process for Reprocess {
         &self,
         _: &SourceProcessor,
         _: &dyn SourcePointer,
-    ) -> Result<FetchedItems, ProcessingError> {
-        Ok(FetchedItems {
-            items: vec![PointedItem {
-                source_item: self.content.item_content.source_item.clone(),
-                item_pointer: Arc::new(EmptyPointer),
-            }],
-            total: Some(1),
-        })
+    ) -> Result<SourceItems, ProcessingError> {
+        Ok(source_items(vec![PointedItem {
+            source_item: self.content.item_content.source_item.clone(),
+            item_pointer: Arc::new(EmptyPointer),
+        }]))
     }
 
     async fn on_process_complete(
@@ -3406,17 +3424,17 @@ impl Process for FixedItemProcess {
         &self,
         _: &SourceProcessor,
         _: &dyn SourcePointer,
-    ) -> Result<FetchedItems, ProcessingError> {
-        let items = self
-            .items
-            .iter()
-            .cloned()
-            .map(|source_item| PointedItem {
-                source_item,
-                item_pointer: Arc::new(EmptyPointer),
-            })
-            .collect::<Vec<_>>();
-        Ok(FetchedItems { total: Some(items.len() as u32), items })
+    ) -> Result<SourceItems, ProcessingError> {
+        Ok(source_items(
+            self.items
+                .iter()
+                .cloned()
+                .map(|source_item| PointedItem {
+                    source_item,
+                    item_pointer: Arc::new(EmptyPointer),
+                })
+                .collect(),
+        ))
     }
 
     async fn on_process_complete(

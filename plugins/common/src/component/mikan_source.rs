@@ -114,11 +114,11 @@ impl Display for MikanSource {
 
 #[async_trait]
 impl Source for MikanSource {
-    async fn fetch<'pointer>(
+    async fn fetch(
         &self,
-        source_pointer: &'pointer dyn SourcePointer,
+        source_pointer: &dyn SourcePointer,
         limit: u32,
-    ) -> Result<SourceItems<'pointer>, ProcessingError> {
+    ) -> Result<SourceItems, ProcessingError> {
         let response = http::execute(
             &self.http_client,
             self.http_client.get(self.url.as_str()),

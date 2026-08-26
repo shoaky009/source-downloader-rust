@@ -317,11 +317,11 @@ pub mod test_support {
 
     #[async_trait]
     impl Source for MockSource {
-        async fn fetch<'pointer>(
+        async fn fetch(
             &self,
-            _: &'pointer dyn SourcePointer,
+            _: &dyn SourcePointer,
             _: u32,
-        ) -> Result<SourceItems<'pointer>, ProcessingError> {
+        ) -> Result<SourceItems, ProcessingError> {
             let mut fetches = self.fetches.lock();
             let Some(fetch) = fetches.front() else {
                 return Ok(source_items(Vec::new()));

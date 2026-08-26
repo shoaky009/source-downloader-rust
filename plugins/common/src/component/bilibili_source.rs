@@ -250,11 +250,11 @@ impl BilibiliSource {
 }
 #[async_trait]
 impl Source for BilibiliSource {
-    async fn fetch<'p>(
+    async fn fetch(
         &self,
-        p: &'p dyn SourcePointer,
+        p: &dyn SourcePointer,
         limit: u32,
-    ) -> Result<SourceItems<'p>, ProcessingError> {
+    ) -> Result<SourceItems, ProcessingError> {
         let p = p.as_any().downcast_ref::<BilibiliPointer>().ok_or_else(|| {
             ProcessingError::non_retryable("Invalid Bilibili source pointer")
         })?;

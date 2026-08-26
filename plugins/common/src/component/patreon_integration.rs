@@ -229,11 +229,11 @@ impl PatreonIntegration {
 }
 #[async_trait]
 impl Source for PatreonIntegration {
-    async fn fetch<'p>(
+    async fn fetch(
         &self,
-        p: &'p dyn SourcePointer,
+        p: &dyn SourcePointer,
         limit: u32,
-    ) -> Result<SourceItems<'p>, ProcessingError> {
+    ) -> Result<SourceItems, ProcessingError> {
         let p = p.as_any().downcast_ref::<PatreonPointer>().ok_or_else(|| {
             ProcessingError::non_retryable("Invalid Patreon source pointer")
         })?;

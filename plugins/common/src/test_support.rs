@@ -42,11 +42,11 @@ mod tests {
 
     #[async_trait]
     impl Source for EmptySource {
-        async fn fetch<'pointer>(
+        async fn fetch(
             &self,
-            _: &'pointer dyn SourcePointer,
+            _: &dyn SourcePointer,
             _: u32,
-        ) -> Result<SourceItems<'pointer>, ProcessingError> {
+        ) -> Result<SourceItems, ProcessingError> {
             Ok(source_items(vec![PointedItem {
                 source_item: SourceItem {
                     title: "item".to_owned(),

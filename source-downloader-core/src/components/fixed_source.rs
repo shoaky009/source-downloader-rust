@@ -167,11 +167,11 @@ impl Display for FixedSource {
 
 #[async_trait]
 impl Source for FixedSource {
-    async fn fetch<'pointer>(
+    async fn fetch(
         &self,
-        source_pointer: &'pointer dyn SourcePointer,
+        source_pointer: &dyn SourcePointer,
         limit: u32,
-    ) -> Result<SourceItems<'pointer>, ProcessingError> {
+    ) -> Result<SourceItems, ProcessingError> {
         let offset = source_pointer
             .as_any()
             .downcast_ref::<OffsetPointer>()

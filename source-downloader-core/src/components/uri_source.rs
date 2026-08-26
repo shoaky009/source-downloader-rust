@@ -69,11 +69,11 @@ impl Display for UriSource {
 
 #[async_trait]
 impl Source for UriSource {
-    async fn fetch<'pointer>(
+    async fn fetch(
         &self,
-        _: &'pointer dyn SourcePointer,
+        _: &dyn SourcePointer,
         limit: u32,
-    ) -> Result<SourceItems<'pointer>, ProcessingError> {
+    ) -> Result<SourceItems, ProcessingError> {
         let bytes = if self.uri.scheme_str() == Some("file") {
             let url = url::Url::parse(&self.uri.to_string())
                 .map_err(|error| ProcessingError::non_retryable(error.to_string()))?;

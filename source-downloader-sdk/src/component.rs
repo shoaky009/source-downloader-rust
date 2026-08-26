@@ -447,7 +447,7 @@ pub trait SourceItemIterator: Send {
     }
 }
 
-pub type SourceItems<'a> = Box<dyn SourceItemIterator + 'a>;
+pub type SourceItems = Box<dyn SourceItemIterator>;
 
 pub struct VecSourceItemIterator {
     items: std::vec::IntoIter<PointedItem>,
@@ -465,18 +465,18 @@ impl SourceItemIterator for VecSourceItemIterator {
     }
 }
 
-pub fn source_items(items: Vec<PointedItem>) -> SourceItems<'static> {
+pub fn source_items(items: Vec<PointedItem>) -> SourceItems {
     let total = items.len() as u32;
     Box::new(VecSourceItemIterator { items: items.into_iter(), total })
 }
 
 #[async_trait]
 pub trait Source: SdComponent {
-    async fn fetch<'pointer>(
+    async fn fetch(
         &self,
-        source_pointer: &'pointer dyn SourcePointer,
+        source_pointer: &dyn SourcePointer,
         limit: u32,
-    ) -> Result<SourceItems<'pointer>, ProcessingError>;
+    ) -> Result<SourceItems, ProcessingError>;
     fn default_pointer(&self) -> Box<dyn SourcePointer>;
     fn parse_raw_pointer(&self, value: Value) -> Box<dyn SourcePointer>;
     fn headers(&self, _: &SourceItem) -> Option<HashMap<String, String>> {

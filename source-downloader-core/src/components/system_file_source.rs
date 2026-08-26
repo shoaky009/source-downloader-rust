@@ -92,11 +92,11 @@ impl Display for SystemFileSource {
 
 #[async_trait]
 impl Source for SystemFileSource {
-    async fn fetch<'pointer>(
+    async fn fetch(
         &self,
-        _: &'pointer dyn SourcePointer,
+        _: &dyn SourcePointer,
         limit: u32,
-    ) -> Result<SourceItems<'pointer>, ProcessingError> {
+    ) -> Result<SourceItems, ProcessingError> {
         let items = match self.mode {
             0 => self.create_root_file_source_items(),
             1 => self.create_each_file_source_items(),
