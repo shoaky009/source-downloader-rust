@@ -455,15 +455,20 @@ impl ProcessingStorage for SeaProcessingStorage {
         Ok(Self::model_to_processor_source_state(saved)?)
     }
 
-    async fn save_paths(&self, paths: Vec<ProcessingTargetPath>) -> Result<(), Error> {
+    async fn save_paths(
+        &self,
+        processor_name: &str,
+        item_hash: &str,
+        paths: Vec<String>,
+    ) -> Result<(), Error> {
         if paths.is_empty() {
             return Ok(());
         }
         let now = time::OffsetDateTime::now_utc();
         let models = paths.into_iter().map(|path| target_path::ActiveModel {
-            id: Set(path.path),
-            processor_name: Set(path.processor_name),
-            item_hash: Set(path.item_hash),
+            id: Set(path),
+            processor_name: Set(processor_name.to_owned()),
+            item_hash: Set(item_hash.to_owned()),
             created_at: Set(now),
         });
         target_path::Entity::insert_many(models)
@@ -567,7 +572,7 @@ mod test {
     use source_downloader_sdk::SourceItem;
     use source_downloader_sdk::storage::{
         ItemContentCondition, ItemContentLite, ProcessingContent, ProcessingContentQuery,
-        ProcessingStatus, ProcessingStorage, ProcessingTargetPath, ProcessorSourceState,
+        ProcessingStatus, ProcessingStorage, ProcessorSourceState,
     };
     use std::collections::HashMap;
     use time::OffsetDateTime;
@@ -768,27 +773,13 @@ mod test {
     async fn test_target_path_lifecycle() {
         let storage = SeaProcessingStorage::new("sqlite::memory:").await.unwrap();
         let path = "/target/file.txt".to_owned();
-        storage
-            .save_paths(vec![ProcessingTargetPath {
-                path: path.clone(),
-                processor_name: "processor".to_owned(),
-                item_hash: "first".to_owned(),
-            }])
-            .await
-            .unwrap();
+        storage.save_paths("processor", "first", vec![path.clone()]).await.unwrap();
 
         let saved = storage.find_paths(std::slice::from_ref(&path)).await.unwrap();
         assert_eq!(saved.len(), 1);
         assert_eq!(saved[0].item_hash, "first");
 
-        storage
-            .save_paths(vec![ProcessingTargetPath {
-                path: path.clone(),
-                processor_name: "processor".to_owned(),
-                item_hash: "second".to_owned(),
-            }])
-            .await
-            .unwrap();
+        storage.save_paths("processor", "second", vec![path.clone()]).await.unwrap();
         storage.delete_paths(std::slice::from_ref(&path), Some("first")).await.unwrap();
         assert_eq!(
             storage.find_paths(std::slice::from_ref(&path)).await.unwrap()[0].item_hash,
@@ -804,18 +795,7 @@ mod test {
         let matching = "/target/sub/file.txt".to_owned();
         let retained = "/other/file.txt".to_owned();
         storage
-            .save_paths(vec![
-                ProcessingTargetPath {
-                    path: matching.clone(),
-                    processor_name: "processor".to_owned(),
-                    item_hash: "hash".to_owned(),
-                },
-                ProcessingTargetPath {
-                    path: retained.clone(),
-                    processor_name: "processor".to_owned(),
-                    item_hash: "hash".to_owned(),
-                },
-            ])
+            .save_paths("processor", "hash", vec![matching.clone(), retained.clone()])
             .await
             .unwrap();
 
@@ -850,23 +830,15 @@ mod test {
             .await
             .unwrap();
         storage
-            .save_paths(vec![
-                ProcessingTargetPath {
-                    path: "/selected/one".to_owned(),
-                    processor_name: "selected".to_owned(),
-                    item_hash: "one".to_owned(),
-                },
-                ProcessingTargetPath {
-                    path: "/selected/two".to_owned(),
-                    processor_name: "selected".to_owned(),
-                    item_hash: "two".to_owned(),
-                },
-                ProcessingTargetPath {
-                    path: "/retained/one".to_owned(),
-                    processor_name: "retained".to_owned(),
-                    item_hash: "one".to_owned(),
-                },
-            ])
+            .save_paths("selected", "one", vec!["/selected/one".to_owned()])
+            .await
+            .unwrap();
+        storage
+            .save_paths("selected", "two", vec!["/selected/two".to_owned()])
+            .await
+            .unwrap();
+        storage
+            .save_paths("retained", "one", vec!["/retained/one".to_owned()])
             .await
             .unwrap();
 

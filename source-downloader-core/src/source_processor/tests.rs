@@ -713,7 +713,12 @@ impl ProcessingStorage for PointerStorage {
         Ok(state.clone())
     }
 
-    async fn save_paths(&self, _: Vec<ProcessingTargetPath>) -> Result<(), StorageError> {
+    async fn save_paths(
+        &self,
+        _: &str,
+        _: &str,
+        _: Vec<String>,
+    ) -> Result<(), StorageError> {
         Ok(())
     }
 
@@ -3022,11 +3027,11 @@ async fn async_rename_moves_download_and_completes_record() {
         .await
         .unwrap();
     storage
-        .save_paths(vec![ProcessingTargetPath {
-            path: target_dir.join("renamed.txt").to_string_lossy().into_owned(),
-            processor_name: processor_name.to_owned(),
-            item_hash: content.item_hash.clone(),
-        }])
+        .save_paths(
+            processor_name,
+            &content.item_hash,
+            vec![target_dir.join("renamed.txt").to_string_lossy().into_owned()],
+        )
         .await
         .unwrap();
 
@@ -3289,11 +3294,11 @@ async fn replacement_decider_receives_prior_item_and_replaces_target() {
         .await
         .unwrap();
     storage
-        .save_paths(vec![ProcessingTargetPath {
-            path: target_file.to_string_lossy().into_owned(),
-            processor_name: processor_name.to_owned(),
-            item_hash: previous_content.item_hash.clone(),
-        }])
+        .save_paths(
+            processor_name,
+            &previous_content.item_hash,
+            vec![target_file.to_string_lossy().into_owned()],
+        )
         .await
         .unwrap();
 

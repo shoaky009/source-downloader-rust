@@ -70,7 +70,12 @@ pub trait ProcessingStorage: Send + Sync {
         state: &ProcessorSourceState,
     ) -> Result<ProcessorSourceState, Error>;
 
-    async fn save_paths(&self, paths: Vec<ProcessingTargetPath>) -> Result<(), Error>;
+    async fn save_paths(
+        &self,
+        processor_name: &str,
+        item_hash: &str,
+        paths: Vec<String>,
+    ) -> Result<(), Error>;
 
     async fn find_paths(
         &self,

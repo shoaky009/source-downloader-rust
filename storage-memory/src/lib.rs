@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use source_downloader_sdk::storage::{
     Error, ProcessingContent, ProcessingContentQuery, ProcessingStorage,
-    ProcessingTargetPath, ProcessorSourceState,
+    ProcessorSourceState,
 };
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -84,7 +84,7 @@ impl ProcessingStorage for MemoryProcessingStorage {
         todo!()
     }
 
-    async fn save_paths(&self, _: Vec<ProcessingTargetPath>) -> Result<(), Error> {
+    async fn save_paths(&self, _: &str, _: &str, _: Vec<String>) -> Result<(), Error> {
         todo!()
     }
 

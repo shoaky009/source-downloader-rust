@@ -36,7 +36,7 @@ use source_downloader_sdk::component::{PatternVariables, VariableProvider};
 use source_downloader_sdk::serde_json::Value;
 use source_downloader_sdk::storage::{
     ItemContentLite, ProcessingContent, ProcessingContentQuery, ProcessingStatus,
-    ProcessingStorage, ProcessingTargetPath, ProcessorSourceState,
+    ProcessingStorage, ProcessorSourceState,
 };
 use source_downloader_sdk::time::OffsetDateTime;
 use std::any::TypeId;
@@ -2652,18 +2652,16 @@ trait Process {
         if p.options.save_processing_content {
             let paths = downloadable_files
                 .into_iter()
-                .map(|file| ProcessingTargetPath {
-                    path: file.target_path().to_string_lossy().into_owned(),
-                    processor_name: p.name.clone(),
-                    item_hash: item_hash.to_owned(),
-                })
+                .map(|file| file.target_path().to_string_lossy().into_owned())
                 .collect();
-            p.processing_storage.save_paths(paths).await.map_err(|error| {
-                ProcessingError::non_retryable(format!(
-                    "Failed to save target paths: {}",
-                    error.message
-                ))
-            })?;
+            p.processing_storage.save_paths(&p.name, item_hash, paths).await.map_err(
+                |error| {
+                    ProcessingError::non_retryable(format!(
+                        "Failed to save target paths: {}",
+                        error.message
+                    ))
+                },
+            )?;
         }
         Ok(true)
     }

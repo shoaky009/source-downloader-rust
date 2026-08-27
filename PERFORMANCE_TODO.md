@@ -13,7 +13,7 @@ reason under **Decision log**.
 - [x] Batch replacement file-content reads to remove serial storage round trips.
 - [ ] Store only replacement-relevant data in the in-flight snapshot instead of cloning complete processing models. **Skipped:** replacement deciders receive the full `InProcessingItem` interface, including source item, item variables, files, status, and failure metadata. Narrowing the snapshot would either break that interface or add a second near-duplicate model; use allocation profiling before accepting that maintenance cost.
 - [x] Compute each SourceItem hash once and pass it through the processing pipeline.
-- [ ] Avoid repeated owned path, processor-name, and item-hash strings when persisting target-path metadata. **Skipped:** `ProcessingTargetPath` intentionally owns all three fields and the storage call crosses an async seam. Removing the per-row processor/hash copies requires changing the shared storage model or normalizing persistence; `Arc<str>` would only move atomic-reference overhead into every adapter. No change without evidence that items commonly contain enough files for this metadata to matter.
+- [x] Avoid repeated owned processor-name and item-hash strings when persisting target-path metadata. `ProcessingStorage::save_paths` now receives the shared processor name and item hash once per batch plus owned path strings.
 - [x] Skip downloader submission when an item has only inline-data files. After inline data is written directly, an empty `download_files` slice now means there is no remote work to submit.
 
 ## Decision log
@@ -23,5 +23,5 @@ reason under **Decision log**.
 - Completed merged-variable-tree caching: `RenameVariables::all_variables` materializes the merged map once and invalidates the cache only when trim variables change.
 - Skipped coordination-mutex changes: reducing the critical section safely requires a new revalidation protocol and concurrency regression tests; the current serialization preserves path ownership correctness.
 - Skipped in-flight snapshot narrowing: the replacement-decider interface exposes nearly the full stored model, so a smaller snapshot would not remain behaviorally equivalent without broader interface redesign.
-- Skipped target-path metadata ownership changes: the shared async storage model requires owned rows; avoiding these strings needs a broader data-model change rather than a local optimization.
+- Completed target-path metadata batching: the storage seam accepts `processor_name`, `item_hash`, and `Vec<String>` separately, so callers no longer allocate duplicate metadata per path; adapters expand rows only when required by persistence.
 - Completed empty downloader submission skipping: `SourceProcessor` calls `Downloader::submit` only when at least one non-inline file remains; inline-only items are covered by a regression test.

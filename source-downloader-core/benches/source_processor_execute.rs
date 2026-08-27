@@ -14,7 +14,7 @@ use source_downloader_sdk::component::{
 use source_downloader_sdk::serde_json::{Map, json};
 use source_downloader_sdk::storage::{
     Error as StorageError, ProcessingContent, ProcessingContentQuery, ProcessingStorage,
-    ProcessingTargetPath, ProcessorSourceState,
+    ProcessorSourceState,
 };
 use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
@@ -145,7 +145,12 @@ impl ProcessingStorage for NoopStorage {
         Ok(state.clone())
     }
 
-    async fn save_paths(&self, _: Vec<ProcessingTargetPath>) -> Result<(), StorageError> {
+    async fn save_paths(
+        &self,
+        _: &str,
+        _: &str,
+        _: Vec<String>,
+    ) -> Result<(), StorageError> {
         Ok(())
     }
 
