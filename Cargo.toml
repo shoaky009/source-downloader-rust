@@ -85,5 +85,6 @@ hex = "0.4.3"
 itertools = "0.15"
 
 # 使用cargo tree -p sea-orm -i sqlx查看sea-orm依赖的版本, 因为不喜欢用sea-orm的migration改用sqlx的方式
-sea-orm = { version = "2.0.1" }
+sea-orm = { version = "2.0.2" }
+sea-bae = { version = "0.2.2" }
 sqlx = { version = "0.9.0" }

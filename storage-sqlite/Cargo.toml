@@ -10,6 +10,8 @@ serde_json = { workspace = true }
 time = { workspace = true, features = ["local-offset"] }
 async-trait = { workspace = true }
 sea-orm = { workspace = true, features = ["runtime-tokio", "sqlx-sqlite", "with-json", "time", "with-time"] }
+# >= 0.2.2 avoid E0365 future-incompatibility warning
+sea-bae = { workspace = true }
 sqlx = { workspace = true, features = ["migrate"] }
 
 [dev-dependencies]

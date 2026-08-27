@@ -5,9 +5,7 @@ use crate::processor_test_support::test_support::*;
 use futures_util::stream;
 use jsonpath_rust::JsonPath;
 use parking_lot::Mutex as ParkingMutex;
-use source_downloader_sdk::component::{
-    PointedItem, SourceItemStream, source_item_stream,
-};
+use source_downloader_sdk::component::{PointedItem, SourceItemStream};
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{Value, json};
 use source_downloader_sdk::storage::{

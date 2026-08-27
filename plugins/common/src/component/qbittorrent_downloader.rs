@@ -278,7 +278,7 @@ impl QbittorrentDownloader {
         old_path: &Path,
         new_path: &Path,
     ) -> Result<(), ProcessingError> {
-        tracing::info!(
+        tracing::debug!(
             torrent_hash = hash,
             old_path = %old_path.display(),
             new_path = %new_path.display(),
@@ -303,7 +303,7 @@ impl QbittorrentDownloader {
         hash: &str,
         location: &Path,
     ) -> Result<(), ProcessingError> {
-        tracing::info!(
+        tracing::debug!(
             torrent_hash = hash,
             location = %location.display(),
             "qBittorrent setLocation request"
@@ -581,7 +581,7 @@ impl QbittorrentDownloader {
         let item_location = first_file
             .file_save_root_dir()
             .unwrap_or_else(|| first_file.target_save_path.clone());
-        tracing::info!(
+        tracing::debug!(
             torrent_hash = hash,
             item_location = %item_location.display(),
             file_count = files.len(),
@@ -612,7 +612,7 @@ impl QbittorrentDownloader {
                         item_location.display(),
                     ))
                 })?;
-            tracing::info!(
+            tracing::debug!(
                 torrent_hash = hash,
                 download_path = %file.download_path.display(),
                 file_download_path = %file.file_download_path.display(),
