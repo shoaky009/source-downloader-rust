@@ -1,4 +1,4 @@
-use crate::expression::cel::FACTORY;
+use crate::expression::cel::{FACTORY, timestamp_value};
 use crate::expression::{
     CompiledExpression, CompiledExpressionFactory, source_item_variables,
 };
@@ -8,6 +8,7 @@ use source_downloader_sdk::component::{
     SourceItemFilter, deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value, json};
+use source_downloader_sdk::time::format_description::well_known::Rfc3339;
 use source_downloader_sdk::{SdComponent, SourceItem};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
@@ -119,7 +120,12 @@ impl SourceItemFilter for ExpressionItemFilter {
             return true;
         }
 
-        let item_var = source_item_variables(item);
+        let mut item_var = source_item_variables(item);
+        if let Some(Value::Object(item_vars)) = item_var.get_mut("item")
+            && let Ok(datetime) = item.datetime.format(&Rfc3339)
+        {
+            item_vars.insert("datetime".to_owned(), timestamp_value(&datetime));
+        }
         if self.exclusions.iter().any(|expr| {
             expr.execute(&item_var)
                 .inspect_err(|e| {
@@ -182,6 +188,32 @@ mod test {
             let expected = data.expected;
             assert_eq!(expected, actual, "{:#?}", data);
         }
+    }
+
+    #[tokio::test]
+    async fn test_datetime_timestamp_comparison() {
+        use crate::expression::CompiledExpressionFactory;
+        use crate::expression::cel::FACTORY;
+
+        let mut props = Map::new();
+        props.insert(
+            "exclusions".into(),
+            Value::from(vec!["item.datetime < timestamp('2024-01-27T00:00:00Z')"]),
+        );
+        let filter = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &props,
+            )
+            .unwrap()
+            .as_source_item_filter()
+            .unwrap();
+        let item: SourceItem = from_str(
+            r#"{"title":"test","link":"localhost","downloadUri":"localhost","contentType":"txt","datetime":"2023-01-27T00:00:00Z"}"#,
+        )
+        .unwrap();
+
+        assert!(!filter.filter(&item).await);
     }
 
     #[derive(Deserialize, Debug, Clone)]

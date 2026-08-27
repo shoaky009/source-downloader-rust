@@ -14,6 +14,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 parking_lot = { workspace = true }
 cel = { workspace = true, features = ["chrono", "json"] }
+chrono = { workspace = true }
 humantime = { workspace = true }
 iso8601-duration = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

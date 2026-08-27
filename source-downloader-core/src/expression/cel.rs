@@ -14,6 +14,12 @@ pub const FACTORY: CelCompiledExpressionFactory = CelCompiledExpressionFactory {
 static REGEX_CACHE: LazyLock<Cache<String, Arc<regex::Regex>>> =
     LazyLock::new(|| Cache::new(256));
 
+const TIMESTAMP_MARKER: &str = "$__source_downloader_cel_timestamp";
+
+pub(crate) fn timestamp_value(value: &str) -> serde_json::Value {
+    serde_json::json!({ TIMESTAMP_MARKER: value })
+}
+
 impl CompiledExpressionFactory for CelCompiledExpressionFactory {
     fn create<T>(
         &self,
@@ -69,6 +75,13 @@ impl<T> CelCompiledExpression<T> {
                 Value::List(Arc::new(arr.iter().map(Self::json_to_cel).collect()))
             }
             serde_json::Value::Object(obj) => {
+                if let Some(serde_json::Value::String(timestamp)) =
+                    obj.get(TIMESTAMP_MARKER)
+                    && obj.len() == 1
+                    && let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(timestamp)
+                {
+                    return Value::Timestamp(timestamp);
+                }
                 let map: HashMap<String, Value> =
                     obj.iter().map(|(k, v)| (k.clone(), Self::json_to_cel(v))).collect();
                 Value::Map(map.into())
