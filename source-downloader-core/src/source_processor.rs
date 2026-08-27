@@ -2619,36 +2619,38 @@ trait Process {
             }
         }
 
-        let source_headers = p.source.headers(source_item);
-        let options = &p.options.download_options;
-        let headers: Option<HashMap<&String, &String>> =
-            match (&source_headers, &options.headers) {
-                (None, None) => None,
-                (h1, h2) => {
-                    let mut merged = HashMap::new();
-                    if let Some(map1) = h1 {
-                        for (k, v) in map1 {
-                            merged.insert(k, v);
+        if !download_files.is_empty() {
+            let source_headers = p.source.headers(source_item);
+            let options = &p.options.download_options;
+            let headers: Option<HashMap<&String, &String>> =
+                match (&source_headers, &options.headers) {
+                    (None, None) => None,
+                    (h1, h2) => {
+                        let mut merged = HashMap::new();
+                        if let Some(map1) = h1 {
+                            for (k, v) in map1 {
+                                merged.insert(k, v);
+                            }
                         }
-                    }
-                    if let Some(map2) = h2 {
-                        for (k, v) in map2 {
-                            merged.insert(k, v);
+                        if let Some(map2) = h2 {
+                            for (k, v) in map2 {
+                                merged.insert(k, v);
+                            }
                         }
+                        Some(merged)
                     }
-                    Some(merged)
-                }
-            };
+                };
 
-        let opt = DownloadTask {
-            source_item,
-            download_files: &download_files,
-            download_path: p.download_path.as_ref(),
-            category: &options.category,
-            tags: options.tags.as_deref(),
-            headers,
-        };
-        p.downloader.submit(&opt).await?;
+            let task = DownloadTask {
+                source_item,
+                download_files: &download_files,
+                download_path: p.download_path.as_ref(),
+                category: &options.category,
+                tags: options.tags.as_deref(),
+                headers,
+            };
+            p.downloader.submit(&task).await?;
+        }
         if p.options.save_processing_content {
             let paths = downloadable_files
                 .into_iter()

@@ -13,6 +13,7 @@ use source_downloader_sdk::storage::{
 };
 use std::any::Any;
 use std::fmt::{Display, Formatter};
+use std::fs;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use tokio::sync::Notify;
@@ -118,6 +119,7 @@ struct PointerTestComponent {
     invalid_item: Option<usize>,
     resolved_file: Option<PathBuf>,
     submit_count: Option<Arc<AtomicUsize>>,
+    inline_data: Option<Arc<[u8]>>,
     unique_files: bool,
     skippable_download_item: Option<usize>,
     retryable_fetch_failures: Option<Arc<AtomicUsize>>,
@@ -296,6 +298,7 @@ impl ItemFileResolver for PointerTestComponent {
         if let Some(path) = &self.resolved_file {
             return Ok(vec![SourceFile {
                 tags: self.resolved_file_tags.clone(),
+                data: self.inline_data.clone(),
                 ..SourceFile::new(path.clone())
             }]);
         }
@@ -734,6 +737,7 @@ struct PointerTestSettings {
     invalid_item: Option<usize>,
     resolved_file: Option<PathBuf>,
     submit_count: Option<Arc<AtomicUsize>>,
+    inline_data: Option<Arc<[u8]>>,
     unique_files: bool,
     skippable_download_item: Option<usize>,
     retryable_submit_failures: Option<Arc<AtomicUsize>>,
@@ -762,6 +766,7 @@ impl Default for PointerTestSettings {
             resolved_file: None,
             duplicate_source_item: false,
             submit_count: None,
+            inline_data: None,
             unique_files: false,
             skippable_download_item: None,
             retryable_submit_failures: None,
@@ -807,6 +812,7 @@ fn pointer_test_processor_with_settings(
         invalid_item: settings.invalid_item,
         resolved_file: settings.resolved_file,
         submit_count: settings.submit_count,
+        inline_data: settings.inline_data,
         unique_files: settings.unique_files,
         skippable_download_item: settings.skippable_download_item,
         duplicate_source_item: settings.duplicate_source_item,
@@ -945,6 +951,36 @@ async fn processor_download_headers_override_source_headers() {
             ("processor-only".to_owned(), "processor".to_owned()),
         ]))
     );
+}
+
+#[tokio::test]
+async fn inline_data_files_skip_downloader_submission() {
+    let root = std::env::temp_dir().join(format!(
+        "source-downloader-inline-data-{}",
+        OffsetDateTime::now_utc().unix_timestamp_nanos()
+    ));
+    let submit_count = Arc::new(AtomicUsize::new(0));
+    let (processor, _) = pointer_test_processor_with_settings(
+        false,
+        1,
+        false,
+        PointerTestSettings {
+            resolved_file: Some(PathBuf::from("inline.txt")),
+            inline_data: Some(Arc::from(&b"inline payload"[..])),
+            submit_count: Some(submit_count.clone()),
+            download_path: root.join("downloads").to_string_lossy().into_owned(),
+            save_path: root.join("target"),
+            ..Default::default()
+        },
+    );
+
+    processor
+        .run_items(vec![SourceItem { title: "item-1".to_owned(), ..Default::default() }])
+        .await
+        .unwrap();
+
+    assert_eq!(submit_count.load(AtomicOrdering::Acquire), 0);
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
