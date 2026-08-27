@@ -1271,11 +1271,7 @@ impl SourceProcessor {
                         .save_processing_content(&content)
                         .await
                         .map_err(|error| ProcessingError::non_retryable(error.message))?;
-                    let paths = self.load_content_paths(&content).await?;
-                    self.processing_storage
-                        .delete_paths(&paths, Some(&content.item_hash))
-                        .await
-                        .map_err(|error| ProcessingError::non_retryable(error.message))?;
+                    self.release_target_paths(&content.item_hash).await?;
                 }
                 Some(false) => {}
                 Some(true) => movable.push(content),
@@ -1390,16 +1386,12 @@ impl SourceProcessor {
         decode_files_from_compressed(&bytes)
     }
 
-    async fn load_content_paths(
-        &self,
-        content: &ProcessingContent,
-    ) -> Result<Vec<String>, ProcessingError> {
-        Ok(self
-            .load_file_contents(content)
-            .await?
-            .iter()
-            .map(|file| file.target_path().to_string_lossy().into_owned())
-            .collect())
+    async fn release_target_paths(&self, item_hash: &str) -> Result<(), ProcessingError> {
+        self.processing_storage
+            .delete_paths_by_item(&self.name, item_hash)
+            .await
+            .map_err(|error| ProcessingError::non_retryable(error.message))?;
+        Ok(())
     }
 
     async fn process_rename_content(
@@ -1467,14 +1459,7 @@ impl SourceProcessor {
         if let Some(Err(error)) = rename_result {
             return Err(error);
         }
-        let paths = files
-            .iter()
-            .map(|file| file.target_path().to_string_lossy().into_owned())
-            .collect_vec();
-        self.processing_storage
-            .delete_paths(&paths, None)
-            .await
-            .map_err(|error| ProcessingError::non_retryable(error.message))?;
+        self.release_target_paths(&content.item_hash).await?;
         Ok(files)
     }
 
@@ -2400,6 +2385,19 @@ trait Process {
             p.options.retry_backoff,
         )
         .await;
+        if p.async_downloader.is_none()
+            && let Err(error) = p.release_target_paths(item_hash).await
+        {
+            if result.is_ok() {
+                return Err(error);
+            }
+            warn!(
+                "Processor[target-path-release-error] {} item={} {}",
+                p.name,
+                source_item,
+                error.message()
+            );
+        }
         if result.is_err() {
             rt.release_target_paths(item_hash);
         }

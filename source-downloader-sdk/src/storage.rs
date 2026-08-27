@@ -86,6 +86,14 @@ pub trait ProcessingStorage: Send + Sync {
     ) -> Result<(), Error> {
         Ok(())
     }
+    async fn delete_paths_by_item(
+        &self,
+        _processor_name: &str,
+        _item_hash: &str,
+    ) -> Result<u64, Error> {
+        Ok(0)
+    }
+
     async fn delete_paths_by_processor(&self, processor_name: &str)
     -> Result<u64, Error>;
 }

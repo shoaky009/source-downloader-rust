@@ -533,6 +533,20 @@ impl ProcessingStorage for SeaProcessingStorage {
         Ok(())
     }
 
+    async fn delete_paths_by_item(
+        &self,
+        processor_name: &str,
+        item_hash: &str,
+    ) -> Result<u64, Error> {
+        target_path::Entity::delete_many()
+            .filter(target_path::Column::ProcessorName.eq(processor_name))
+            .filter(target_path::Column::ItemHash.eq(item_hash))
+            .exec(&self.db)
+            .await
+            .map(|result| result.rows_affected)
+            .map_err(|error| Error { message: error.to_string() })
+    }
+
     async fn delete_paths_by_processor(
         &self,
         processor_name: &str,
