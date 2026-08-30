@@ -49,7 +49,7 @@ use std::time::{Duration, Instant};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, mpsc};
-use tracing::{debug, info, warn};
+use tracing::{Instrument, Span, debug, info, info_span, warn};
 
 static INSTANCE_ID_GENERATOR: AtomicI64 = AtomicI64::new(0);
 static PROCESS_ID_GENERATOR: AtomicI64 = AtomicI64::new(i64::MIN);
@@ -57,6 +57,19 @@ static PROCESS_ID_GENERATOR: AtomicI64 = AtomicI64::new(i64::MIN);
 // static EMPTY_PATTERN_VARIABLES: LazyLock<PatternVariables> = LazyLock::new(|| HashMap::new());
 #[cfg(test)]
 type SubmittedHeaders = Arc<parking_lot::Mutex<Option<HashMap<String, String>>>>;
+
+fn item_stage_span(stage: ProcessorItemStage) -> Span {
+    info_span!("item.stage", item_stage = stage.as_str())
+}
+
+async fn item_stage<T>(
+    progress: &ProcessorRunItemGuard,
+    stage: ProcessorItemStage,
+    future: impl Future<Output = T>,
+) -> T {
+    progress.set_stage(stage);
+    future.instrument(item_stage_span(stage)).await
+}
 
 /// 单个 item 处理后的文件、变量和状态；这里只承载结果，不负责执行处理、
 /// 持久化或通知监听器。
@@ -1285,7 +1298,7 @@ impl SourceProcessor {
         for mut content in movable {
             let progress = ProcessorRunItemGuard::new(
                 &content.item_content.source_item.title,
-                ProcessorItemStage::CheckingFiles,
+                ProcessorItemStage::MovingFiles,
             );
             match self.process_rename_content(&mut content, &progress).await {
                 Ok(files) => {
@@ -1301,7 +1314,7 @@ impl SourceProcessor {
                         item_variables: completed.item_variables,
                         status: *completed.status,
                     };
-                    progress.set_stage(ProcessorItemStage::Notifying);
+                    progress.set_stage(ProcessorItemStage::SettlingItem);
                     if renamed {
                         self.notify_process_listeners(
                             ListenerMode::Each,
@@ -1337,7 +1350,7 @@ impl SourceProcessor {
                     let failed = listener_context
                         .get_item_content_by_hash(&item_hash)
                         .expect("failed rename item content was just inserted");
-                    progress.set_stage(ProcessorItemStage::Notifying);
+                    progress.set_stage(ProcessorItemStage::SettlingItem);
                     self.notify_process_listeners(
                         ListenerMode::Each,
                         "item-error",
@@ -1426,7 +1439,6 @@ impl SourceProcessor {
             let movement_result = process
                 .do_movement(self, &content.item_content.source_item, &files)
                 .await;
-            progress.set_stage(ProcessorItemStage::ReplacingFiles);
             let replacement_result = process
                 .do_replacement(self, &content.item_content.source_item, &files)
                 .await;
@@ -1442,7 +1454,7 @@ impl SourceProcessor {
             content.updated_at = Some(OffsetDateTime::now_utc());
         }
 
-        progress.set_stage(ProcessorItemStage::Persisting);
+        progress.set_stage(ProcessorItemStage::SettlingItem);
         self.processing_storage
             .save_processing_content(content)
             .await
@@ -1827,7 +1839,7 @@ trait Process {
     ) -> ScheduleDecision {
         let CompletedItem { item_pointer, source_item, item_hash, action, progress } =
             completed;
-        progress.set_stage(ProcessorItemStage::Persisting);
+        progress.set_stage(ProcessorItemStage::SettlingItem);
         match action {
             ItemAction::Skip(reason) => self.settle_skipped_item(&source_item, reason),
             ItemAction::Filtered(reason) => {
@@ -1934,7 +1946,6 @@ trait Process {
                     )
                     .await
                     .unwrap_or_else(ItemAction::Error);
-                progress.set_stage(ProcessorItemStage::AwaitingSettlement);
                 CompletedItem { item_pointer, source_item, item_hash, action, progress }
             };
             let make_sequenced_future = |sequence, item| {
@@ -2360,16 +2371,23 @@ trait Process {
         let item_filters = item_strategy
             .and_then(|strategy| strategy.item_filters.as_ref())
             .unwrap_or_else(|| self.select_item_filter(p));
-        for filter in item_filters {
-            let filtered = !filter.filter(source_item).await;
-            if filtered {
-                debug!("[item-filtered] {}", source_item);
-                rt.filter_inc();
-                return Ok(ItemAction::Filtered(format!("Filtered by: {}", filter)));
-            }
+        let filtered_by =
+            item_stage(progress, ProcessorItemStage::FilteringItem, async {
+                for filter in item_filters {
+                    if !filter.filter(source_item).await {
+                        return Some(filter.to_string());
+                    }
+                }
+                None
+            })
+            .await;
+        if let Some(filter) = filtered_by {
+            debug!("[item-filtered] {}", source_item);
+            rt.filter_inc();
+            return Ok(ItemAction::Filtered(format!("Filtered by: {filter}")));
         }
         let result = SourceProcessor::apply_retry(
-            || async {
+            || {
                 self.process_item_attempt(
                     source_item,
                     item_hash,
@@ -2378,7 +2396,6 @@ trait Process {
                     item_strategy,
                     progress,
                 )
-                .await
             },
             "process-item",
             p.options.retry_attempts,
@@ -2413,29 +2430,42 @@ trait Process {
         item_strategy: Option<&ItemStrategy>,
         progress: &ProcessorRunItemGuard,
     ) -> Result<ItemAction, ProcessingError> {
-        progress.set_stage(ProcessorItemStage::ResolvingVariables);
         let opt = &p.options;
         let mut item_raw_vars = vec![];
         let variable_providers = item_strategy
             .and_then(|x| x.variable_providers.as_ref())
             .unwrap_or(&opt.variable_providers);
-        for x in variable_providers {
-            item_raw_vars.push((x.accuracy(), x.item_variables(source_item).await))
-        }
+        item_stage(progress, ProcessorItemStage::ResolvingVariables, async {
+            for provider in variable_providers {
+                item_raw_vars.push((
+                    provider.accuracy(),
+                    provider.item_variables(source_item).await,
+                ));
+            }
+        })
+        .await;
         let item_variables = opt.variable_aggregation.merge(&item_raw_vars);
 
-        let resolved_files = self.resolve_files(source_item, p).await?;
-        progress.set_stage(ProcessorItemStage::ResolvingFiles);
-        let mut file_contents = self
-            .process_source_files(
+        let resolved_files = item_stage(
+            progress,
+            ProcessorItemStage::ResolvingFiles,
+            self.resolve_files(source_item, p),
+        )
+        .await?;
+        let mut file_contents = item_stage(
+            progress,
+            ProcessorItemStage::ResolvingVariables,
+            self.process_source_files(
                 p,
                 source_item,
                 &item_variables,
                 variable_providers,
                 resolved_files,
                 item_strategy,
-            )
-            .await?;
+                progress,
+            ),
+        )
+        .await?;
 
         let mut content_status = ProcessingStatus::WaitingToRename;
         let mut failure_reason: Option<String> = None;
@@ -2445,15 +2475,21 @@ trait Process {
             item_variables: &item_variables,
             status: content_status,
         };
-        for x in &opt.item_content_filters {
-            let filtered = !x.filter(&item_content).await;
-            if filtered {
-                debug!("[item-content-filtered] {}", source_item);
-                rt.filter_inc();
-                content_status = ProcessingStatus::Filtered;
-                failure_reason = Some(format!("Filtered by: {}", x));
-                break;
-            }
+        let filtered_by =
+            item_stage(progress, ProcessorItemStage::FilteringContent, async {
+                for filter in &opt.item_content_filters {
+                    if !filter.filter(&item_content).await {
+                        return Some(filter.to_string());
+                    }
+                }
+                None
+            })
+            .await;
+        if let Some(filter) = filtered_by {
+            debug!("[item-content-filtered] {}", source_item);
+            rt.filter_inc();
+            content_status = ProcessingStatus::Filtered;
+            failure_reason = Some(format!("Filtered by: {filter}"));
         }
         if content_status == ProcessingStatus::Filtered {
             return Ok(ItemAction::Success {
@@ -2464,7 +2500,6 @@ trait Process {
                 failure_reason,
             });
         }
-        progress.set_stage(ProcessorItemStage::CheckingFiles);
         let (should_download, mut content_status) = {
             let _guard = rt.mutex.lock().await;
             self.update_file_content_status(p, source_item, &mut file_contents).await;
@@ -2500,18 +2535,26 @@ trait Process {
             )
             .await
         };
-        progress.set_stage(ProcessorItemStage::SubmittingDownload);
         let mut rename_times = 0;
         if should_download
-            && self.do_download(p, source_item, item_hash, &file_contents).await?
+            && item_stage(
+                progress,
+                ProcessorItemStage::SubmittingDownload,
+                self.do_download(p, source_item, item_hash, &file_contents),
+            )
+            .await?
         {
             let is_sync = p.async_downloader.is_none();
             if is_sync {
-                progress.set_stage(ProcessorItemStage::MovingFiles);
-                let movement_res = self.do_movement(p, source_item, &file_contents).await;
-                progress.set_stage(ProcessorItemStage::ReplacingFiles);
-                let replacement_res =
-                    self.do_replacement(p, source_item, &file_contents).await;
+                let (movement_res, replacement_res) =
+                    item_stage(progress, ProcessorItemStage::MovingFiles, async {
+                        let movement =
+                            self.do_movement(p, source_item, &file_contents).await;
+                        let replacement =
+                            self.do_replacement(p, source_item, &file_contents).await;
+                        (movement, replacement)
+                    })
+                    .await;
                 let has_replacements =
                     file_contents.iter().any(|file| file.status == ReadyReplace);
                 let postprocessing_succeeded = if has_replacements {
@@ -2864,6 +2907,7 @@ trait Process {
         Ok(resolved_files)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn process_source_files(
         &self,
         p: &SourceProcessor,
@@ -2872,6 +2916,7 @@ trait Process {
         variable_providers: &[Arc<dyn VariableProvider>],
         source_files: Vec<SourceFile>,
         item_group_options: Option<&ItemStrategy>,
+        progress: &ProcessorRunItemGuard,
     ) -> Result<Vec<FileContent>, ProcessingError> {
         let mut relative_files = Vec::with_capacity(source_files.len());
         let opt = &p.options;
@@ -2945,6 +2990,7 @@ trait Process {
                 p.renamer.create_file_content(source_item, raw, &item_var).await?;
 
             // <editor-fold desc="Stage using FileContentFilter">
+            progress.set_stage(ProcessorItemStage::FilteringContent);
             let file_content_filters = file_strategy
                 .and_then(|s| s.file_content_filters.as_ref())
                 .unwrap_or(&opt.file_content_filters);

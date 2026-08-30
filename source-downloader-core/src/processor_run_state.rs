@@ -20,16 +20,26 @@ pub enum ProcessorItemStage {
     FilteringItem,
     ResolvingVariables,
     ResolvingFiles,
-    BuildingTargets,
     FilteringContent,
-    CheckingFiles,
     DecidingReplacements,
     SubmittingDownload,
     MovingFiles,
-    ReplacingFiles,
-    AwaitingSettlement,
-    Persisting,
-    Notifying,
+    SettlingItem,
+}
+
+impl ProcessorItemStage {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::FilteringItem => "filter-item",
+            Self::ResolvingVariables => "resolve-variables",
+            Self::ResolvingFiles => "resolve-files",
+            Self::FilteringContent => "filter-content",
+            Self::DecidingReplacements => "decide-replacements",
+            Self::SubmittingDownload => "submit-download",
+            Self::MovingFiles => "move-files",
+            Self::SettlingItem => "settle-item",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -108,6 +118,29 @@ impl Drop for ProcessorRunItemGuard {
     fn drop(&mut self) {
         if let Some(reporter) = &self.reporter {
             reporter.complete_item(self.id);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProcessorItemStage;
+
+    #[test]
+    fn item_stage_log_names_are_stable() {
+        let stages = [
+            (ProcessorItemStage::FilteringItem, "filter-item"),
+            (ProcessorItemStage::ResolvingVariables, "resolve-variables"),
+            (ProcessorItemStage::ResolvingFiles, "resolve-files"),
+            (ProcessorItemStage::FilteringContent, "filter-content"),
+            (ProcessorItemStage::DecidingReplacements, "decide-replacements"),
+            (ProcessorItemStage::SubmittingDownload, "submit-download"),
+            (ProcessorItemStage::MovingFiles, "move-files"),
+            (ProcessorItemStage::SettlingItem, "settle-item"),
+        ];
+
+        for (stage, expected) in stages {
+            assert_eq!(stage.as_str(), expected);
         }
     }
 }
