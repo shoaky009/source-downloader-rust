@@ -1921,13 +1921,13 @@ async fn item_error_stops_new_work_and_drains_started_items() {
 
     assert_eq!(*probe.completed.lock(), vec![2, 1]);
     assert!(storage.saved_pointers().is_empty());
-    assert!(
-        storage
-            .saved_contents
-            .lock()
-            .iter()
-            .all(|content| content.status != ProcessingStatus::Failure)
-    );
+    let saved_contents = storage.saved_contents.lock();
+    let failed = saved_contents
+        .iter()
+        .find(|content| content.item_content.source_item.title == "item-1")
+        .expect("stopping item error should be persisted");
+    assert_eq!(failed.status, ProcessingStatus::Failure);
+    assert!(failed.failure_reason.as_deref().is_some_and(|reason| !reason.is_empty()));
 }
 
 #[tokio::test]

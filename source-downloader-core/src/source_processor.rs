@@ -1712,9 +1712,9 @@ trait Process {
         item_runtime.processed_inc();
         coordinator.listener_context.has_error = true;
         self.on_item_error(p, coordinator, source_item, &err).await;
+        self.persist_item_failure(p, source_item, &err, None, None).await;
         let skippable = matches!(&err, ProcessingError::NonRetryable { skip: true, .. });
         let decision = if skippable || p.options.item_error_continue {
-            self.persist_item_failure(p, source_item, &err, None, None).await;
             warn!("[item-continue-on-error] {} {}", err.message(), source_item);
             ScheduleDecision::Continue
         } else {
