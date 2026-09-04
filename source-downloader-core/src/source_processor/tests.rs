@@ -645,10 +645,17 @@ impl ProcessingStorage for PointerStorage {
 
     async fn find_by_name_and_hash(
         &self,
-        _: &str,
-        _: &str,
+        processor_name: &str,
+        item_hash: &str,
     ) -> Result<Option<ProcessingContent>, StorageError> {
-        Ok(None)
+        Ok(self
+            .saved_contents
+            .lock()
+            .iter()
+            .find(|content| {
+                content.processor_name == processor_name && content.item_hash == item_hash
+            })
+            .cloned())
     }
 
     async fn find_content_by_id(
@@ -1795,6 +1802,42 @@ async fn process_item_retries_retryable_download_errors() {
 }
 
 #[tokio::test]
+async fn failed_download_is_retried_on_the_next_run() {
+    let submit_count = Arc::new(AtomicUsize::new(0));
+    let retryable_failures = Arc::new(AtomicUsize::new(usize::MAX));
+    let (mut processor, storage) = pointer_test_processor_with_settings(
+        false,
+        1,
+        false,
+        PointerTestSettings {
+            unique_files: true,
+            submit_count: Some(submit_count.clone()),
+            retryable_submit_failures: Some(retryable_failures.clone()),
+            ..Default::default()
+        },
+    );
+    processor.options.save_processing_content = true;
+    processor.options.item_filters = vec![Arc::new(SourceItemIdentityFilter {
+        processor_name: processor.name.clone(),
+        storage: storage.clone(),
+    })];
+
+    processor.run().await.unwrap();
+    assert!(storage.saved_pointers().is_empty());
+    assert!(storage.saved_contents.lock().is_empty());
+
+    retryable_failures.store(0, AtomicOrdering::Release);
+    processor.run().await.unwrap();
+
+    assert_eq!(submit_count.load(AtomicOrdering::Acquire), 5);
+    assert_eq!(storage.saved_pointers(), vec![json!(1)]);
+    let saved_contents = storage.saved_contents.lock();
+    assert_eq!(saved_contents.len(), 1);
+    assert_ne!(saved_contents[0].status, ProcessingStatus::Failure);
+    assert_eq!(saved_contents[0].failure_reason, None);
+}
+
+#[tokio::test]
 async fn fetch_retries_retryable_source_errors() {
     let fetch_failures = Arc::new(AtomicUsize::new(2));
     let (processor, storage) = pointer_test_processor_with_settings(
@@ -1902,7 +1945,7 @@ async fn rename_flag_is_released_after_failure() {
 }
 
 #[tokio::test]
-async fn item_error_stops_new_work_and_drains_started_items() {
+async fn item_error_stops_new_work_without_persisting_failed_item() {
     let probe = Arc::new(ParallelismProbe::new(2));
     let (mut processor, storage) = pointer_test_processor_with_settings(
         false,
@@ -1922,12 +1965,8 @@ async fn item_error_stops_new_work_and_drains_started_items() {
     assert_eq!(*probe.completed.lock(), vec![2, 1]);
     assert!(storage.saved_pointers().is_empty());
     let saved_contents = storage.saved_contents.lock();
-    let failed = saved_contents
-        .iter()
-        .find(|content| content.item_content.source_item.title == "item-1")
-        .expect("stopping item error should be persisted");
-    assert_eq!(failed.status, ProcessingStatus::Failure);
-    assert!(failed.failure_reason.as_deref().is_some_and(|reason| !reason.is_empty()));
+    assert_eq!(saved_contents.len(), 1);
+    assert_eq!(saved_contents[0].item_content.source_item.title, "item-2");
 }
 
 #[tokio::test]

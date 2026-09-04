@@ -192,9 +192,6 @@ mod test {
 
     #[tokio::test]
     async fn test_datetime_timestamp_comparison() {
-        use crate::expression::CompiledExpressionFactory;
-        use crate::expression::cel::FACTORY;
-
         let mut props = Map::new();
         props.insert(
             "exclusions".into(),

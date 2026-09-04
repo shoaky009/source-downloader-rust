@@ -49,7 +49,7 @@ use std::time::{Duration, Instant};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, mpsc};
-use tracing::{Instrument, Span, debug, info, info_span, warn};
+use tracing::{Instrument, Span, debug, error, info, info_span, warn};
 
 static INSTANCE_ID_GENERATOR: AtomicI64 = AtomicI64::new(0);
 static PROCESS_ID_GENERATOR: AtomicI64 = AtomicI64::new(i64::MIN);
@@ -1724,12 +1724,18 @@ trait Process {
         item_runtime.processed_inc();
         coordinator.listener_context.has_error = true;
         self.on_item_error(p, coordinator, source_item, &err).await;
-        self.persist_item_failure(p, source_item, &err, None, None).await;
         let skippable = matches!(&err, ProcessingError::NonRetryable { skip: true, .. });
         let decision = if skippable || p.options.item_error_continue {
+            self.persist_item_failure(p, source_item, &err, None, None).await;
             warn!("[item-continue-on-error] {} {}", err.message(), source_item);
             ScheduleDecision::Continue
         } else {
+            error!(
+                processor = %p.name,
+                item = %source_item,
+                cause = %err.message(),
+                "Item processing failed and was not persisted"
+            );
             warn!("[item-stop-on-error] {}, 停止提交新 Item", err.message());
             ScheduleDecision::Stop
         };
