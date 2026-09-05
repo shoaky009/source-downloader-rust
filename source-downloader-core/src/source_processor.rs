@@ -246,7 +246,7 @@ pub struct ProcessorOptionInformation {
     pub retry_backoff: Duration,
     /// 处理器加入的任务组。
     pub task_group: Option<String>,
-    /// 每次从 source 获取的最大 item 数量。
+    /// 建议 source 每次获取的 item 数量；处理器不据此截断返回流。
     pub fetch_limit: u32,
     /// 单个 item 失败时是否继续处理后续 item。
     pub item_error_continue: bool,
@@ -436,7 +436,7 @@ pub struct ProcessorOptions {
     pub retry_backoff: Duration,
     /// 处理器加入的任务组。
     pub task_group: Option<String>,
-    /// 每次从 source 获取的最大 item 数量。
+    /// 建议 source 每次获取的 item 数量；处理器不据此截断返回流。
     pub fetch_limit: u32,
     /// 单个 item 失败时是否继续处理后续 item。
     pub item_error_continue: bool,

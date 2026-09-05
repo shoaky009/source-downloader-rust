@@ -442,6 +442,10 @@ pub fn source_item_stream(items: Vec<PointedItem>) -> SourceItemStream {
 
 #[async_trait]
 pub trait Source: SdComponent {
+    /// Fetch items using `limit` as a target count, not a strict upper bound.
+    /// Sources should aim for this count but may return more items, for example
+    /// to keep a page or group intact. Consumers must not truncate the returned
+    /// stream based on `limit`.
     async fn fetch(
         &self,
         source_pointer: &dyn SourcePointer,

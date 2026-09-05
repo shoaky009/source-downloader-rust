@@ -1498,6 +1498,28 @@ async fn pointer_batch_mode_saves_once_after_fetch() {
 }
 
 #[tokio::test]
+async fn processes_all_source_items_beyond_fetch_limit() {
+    for pointer_batch_mode in [false, true] {
+        for item_error_continue in [false, true] {
+            let (mut processor, storage) =
+                pointer_test_processor(pointer_batch_mode, 5, false);
+            processor.options.fetch_limit = 1;
+            processor.options.parallelism = 2;
+            processor.options.item_error_continue = item_error_continue;
+
+            processor.run().await.unwrap();
+
+            let expected = if pointer_batch_mode {
+                vec![json!(5)]
+            } else {
+                (1..=5).map(|sequence| json!(sequence)).collect()
+            };
+            assert_eq!(storage.saved_pointers(), expected);
+        }
+    }
+}
+
+#[tokio::test]
 async fn source_iterator_is_consumed_as_parallelism_allows() {
     let produced = Arc::new(AtomicUsize::new(0));
     let first_processed = Arc::new(Notify::new());
