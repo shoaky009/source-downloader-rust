@@ -1,4 +1,6 @@
-use crate::process::file::{PathOverflowStrategy, VariableErrorStrategy};
+use crate::process::file::{
+    PathOverflowStrategy, VariableErrorStrategy, VariableProviderErrorStrategy,
+};
 use indexmap::IndexMap;
 #[allow(dead_code, unused)]
 use moka::sync::Cache;
@@ -107,6 +109,8 @@ pub struct ProcessorOptionConfig {
     pub variable_name_replace: HashMap<String, String>,
     #[serde(skip_serializing_if = "is_default")]
     pub variable_error_strategy: VariableErrorStrategy,
+    #[serde(skip_serializing_if = "is_default")]
+    pub variable_provider_error_strategy: VariableProviderErrorStrategy,
     #[serde(skip_serializing_if = "Clone::clone")]
     pub save_processing_content: bool,
     #[serde(skip_serializing_if = "is_rename_task_interval_default")]
@@ -357,6 +361,7 @@ impl Default for ProcessorOptionConfig {
             variable_name_replace: HashMap::new(),
             variable_conflict_strategy: None,
             variable_error_strategy: VariableErrorStrategy::Stay,
+            variable_provider_error_strategy: VariableProviderErrorStrategy::Ignore,
             save_processing_content: true,
             rename_task_interval: "PT5M".to_string(),
             rename_times_threshold: 3,

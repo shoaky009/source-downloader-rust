@@ -135,8 +135,11 @@ impl KeywordIntegration {
 
 #[async_trait]
 impl VariableProvider for KeywordIntegration {
-    async fn item_variables(&self, source_item: &SourceItem) -> PatternVariables {
-        self.keyword_variables(&source_item.title)
+    async fn item_variables(
+        &self,
+        source_item: &SourceItem,
+    ) -> Result<PatternVariables, source_downloader_sdk::component::ProcessingError> {
+        Ok(self.keyword_variables(&source_item.title))
     }
 
     async fn file_variables(
@@ -144,19 +147,23 @@ impl VariableProvider for KeywordIntegration {
         _: &SourceItem,
         _: &PatternVariables,
         source_files: &[source_downloader_sdk::component::SourceFile],
-    ) -> Vec<PatternVariables> {
-        vec![PatternVariables::default(); source_files.len()]
+    ) -> Result<Vec<PatternVariables>, source_downloader_sdk::component::ProcessingError>
+    {
+        Ok(vec![PatternVariables::default(); source_files.len()])
     }
 
     async fn extract_from(
         &self,
         _: &SourceItem,
         value: &str,
-    ) -> Option<HashMap<String, Value>> {
+    ) -> Result<
+        Option<HashMap<String, Value>>,
+        source_downloader_sdk::component::ProcessingError,
+    > {
         let vars = self.keyword_variables(value);
-        (!vars.is_empty()).then(|| {
+        Ok((!vars.is_empty()).then(|| {
             vars.into_iter().map(|(key, value)| (key, Value::String(value))).collect()
-        })
+        }))
     }
 
     fn primary_variable_name(&self) -> Option<String> {

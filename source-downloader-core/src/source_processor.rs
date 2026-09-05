@@ -1,7 +1,10 @@
 use crate::components::simple_file_exists_detector::SimpleFileExistsDetector;
 use crate::components::source_item_identity_filter::SourceItemIdentityFilter;
 use crate::config::ListenerMode;
-use crate::process::file::{PathPattern, RawFileContent, Renamer, VariableErrorStrategy};
+use crate::process::file::{
+    PathPattern, RawFileContent, Renamer, VariableErrorStrategy,
+    VariableProviderErrorStrategy,
+};
 use crate::process::rule::{FileRule, ItemRule, ItemStrategy};
 use crate::process::variable::VariableAggregation;
 use crate::processor_run_state::{ProcessorItemStage, ProcessorRunItemGuard};
@@ -232,7 +235,8 @@ pub struct ProcessorOptionInformation {
     pub filename_pattern: String,
     /// 变量解析失败时采用的处理策略。
     pub variable_error_strategy: VariableErrorStrategy,
-    /// 是否保存处理内容。
+    /// 变量提供器失败时采用的处理策略。
+    pub variable_provider_error_strategy: VariableProviderErrorStrategy,
     pub save_processing_content: bool,
     /// 重命名任务的执行间隔。
     pub rename_task_interval: Duration,
@@ -420,9 +424,10 @@ pub struct ProcessorOptions {
     pub file_content_filters: Vec<Arc<dyn FileContentFilter>>,
     /// 文件标签器列表。
     pub file_taggers: Vec<Arc<dyn FileTagger>>,
+    /// Strategy for provider failures.
+    pub variable_provider_error_strategy: VariableProviderErrorStrategy,
     /// 变量聚合方式。
     pub variable_aggregation: VariableAggregation,
-    /// 是否保存处理内容。
     pub save_processing_content: bool,
     /// 重命名任务的执行间隔。
     pub rename_task_interval: Duration,
@@ -467,6 +472,7 @@ impl Default for ProcessorOptions {
             source_file_filters: Vec::new(),
             file_content_filters: Vec::new(),
             file_taggers: Vec::new(),
+            variable_provider_error_strategy: VariableProviderErrorStrategy::Ignore,
             variable_aggregation: VariableAggregation::new(
                 Box::new(crate::process::variable::SmartStrategy),
                 HashMap::new(),
@@ -903,9 +909,11 @@ impl SourceProcessor {
         processing_storage: Arc<dyn ProcessingStorage>,
         category: Option<String>,
         tags: HashSet<String>,
-        renamer: Renamer,
+        mut renamer: Renamer,
         options: ProcessorOptions,
     ) -> Self {
+        renamer.variable_provider_error_strategy =
+            options.variable_provider_error_strategy;
         let save_path = absolute_processor_path(&save_path);
         let download_path =
             absolute_processor_path(Path::new(downloader.default_download_path()));
@@ -1067,6 +1075,9 @@ impl SourceProcessor {
                 save_path_pattern: self.options.save_path_pattern.pattern.clone(),
                 filename_pattern: self.options.filename_pattern.pattern.clone(),
                 variable_error_strategy: self.renamer.variable_error_strategy,
+                variable_provider_error_strategy: self
+                    .options
+                    .variable_provider_error_strategy,
                 save_processing_content: self.options.save_processing_content,
                 rename_task_interval: self.options.rename_task_interval,
                 rename_times_threshold: self.options.rename_times_threshold,
@@ -2443,13 +2454,16 @@ trait Process {
             .unwrap_or(&opt.variable_providers);
         item_stage(progress, ProcessorItemStage::ResolvingVariables, async {
             for provider in variable_providers {
-                item_raw_vars.push((
-                    provider.accuracy(),
-                    provider.item_variables(source_item).await,
-                ));
+                match provider.item_variables(source_item).await {
+                    Ok(vars) => item_raw_vars.push((provider.accuracy(), vars)),
+                    Err(error) => match opt.variable_provider_error_strategy {
+                        VariableProviderErrorStrategy::Ignore => tracing::warn!(provider = %provider, stage = "item-variables", "variable provider failed: {}", error.message()),
+                        VariableProviderErrorStrategy::Error => return Err(error),
+                    },
+                }
             }
-        })
-        .await;
+            Ok::<(), ProcessingError>(())
+        }).await?;
         let item_variables = opt.variable_aggregation.merge(&item_raw_vars);
 
         let resolved_files = item_stage(
@@ -2938,12 +2952,21 @@ trait Process {
             relative_files.push(file);
         }
 
-        // <editor-fold desc="Stage using VariableProviders for file">
         let mut file_raw_vars = vec![];
         for (idx, provider) in variable_providers.iter().enumerate() {
-            let vars = provider
+            let vars = match provider
                 .file_variables(source_item, item_variables, &relative_files)
-                .await;
+                .await
+            {
+                Ok(vars) => vars,
+                Err(error) => match opt.variable_provider_error_strategy {
+                    VariableProviderErrorStrategy::Ignore => {
+                        tracing::warn!(provider = %provider, stage = "file-variables", "variable provider failed: {}", error.message());
+                        continue;
+                    }
+                    VariableProviderErrorStrategy::Error => return Err(error),
+                },
+            };
             if vars.len() != relative_files.len() {
                 return Err(ProcessingError::non_retryable(format!(
                     "Resolved files:{} and file variables:{} size not match, variable provider at {} implementation error",
@@ -2958,7 +2981,8 @@ trait Process {
         // </editor-fold>
         let mut result: Vec<FileContent> = vec![];
 
-        let item_var = p.renamer.item_rename_variables(source_item, item_variables).await;
+        let item_var =
+            p.renamer.item_rename_variables(source_item, item_variables).await?;
 
         let empty_vars = &PatternVariables::new();
         let file_count = relative_files.len();

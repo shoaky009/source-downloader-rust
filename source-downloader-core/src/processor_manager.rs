@@ -452,6 +452,9 @@ impl ProcessorManager {
 
         Ok(Renamer {
             variable_error_strategy: config.options.variable_error_strategy,
+            variable_provider_error_strategy: config
+                .options
+                .variable_provider_error_strategy,
             variable_replacers,
             trimming,
             path_name_length_limit: config.options.path_name_length_limit,
@@ -604,6 +607,7 @@ impl ProcessorManager {
             process_listeners,
             file_exists_detector,
             file_replacement_decider,
+            variable_provider_error_strategy: opt.variable_provider_error_strategy,
             variable_aggregation: VariableAggregation::new(
                 match &opt.variable_conflict_strategy {
                     None => Box::new(SmartStrategy),
@@ -1288,7 +1292,8 @@ mod test {
             content_type: "video/mp4".to_owned(),
             ..Default::default()
         };
-        let variables = renamer.item_rename_variables(&item, &HashMap::new()).await;
+        let variables =
+            renamer.item_rename_variables(&item, &HashMap::new()).await.unwrap();
 
         assert_eq!("series：01", variables.variables["item"]["title"]);
         assert_eq!("video/mp4", variables.variables["item"]["contentType"]);

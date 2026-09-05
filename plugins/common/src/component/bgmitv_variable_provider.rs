@@ -4,8 +4,8 @@ use parking_lot::Mutex;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
-    SdComponentMetadata, SourceFile, VariableProvider,
+    ComponentError, ComponentSupplier, ComponentType, PatternVariables, ProcessingError,
+    SdComponent, SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use std::collections::{HashMap, VecDeque};
@@ -85,20 +85,16 @@ impl Display for BgmTvVariableProvider {
 }
 
 impl BgmTvVariableProvider {
-    async fn search(&self, title: &str) -> PatternVariables {
+    async fn search(&self, title: &str) -> Result<PatternVariables, ProcessingError> {
         if title.trim().is_empty() {
-            return HashMap::new();
+            return Ok(HashMap::new());
         }
         if let Some(value) = self.cache.lock().values.get(title).cloned() {
-            return value;
+            return Ok(value);
         }
-        let variables = match self.client.search_legacy_subject(title).await {
-            Ok(Some(name)) => HashMap::from([("nativeName".to_string(), name)]),
-            Ok(None) => HashMap::new(),
-            Err(error) => {
-                tracing::warn!(error = %error, "Bangumi search failed");
-                HashMap::new()
-            }
+        let variables = match self.client.search_legacy_subject(title).await? {
+            Some(name) => HashMap::from([("nativeName".to_string(), name)]),
+            None => HashMap::new(),
         };
         let mut cache = self.cache.lock();
         if cache.values.len() == 500
@@ -108,12 +104,15 @@ impl BgmTvVariableProvider {
         }
         cache.order.push_back(title.to_string());
         cache.values.insert(title.to_string(), variables.clone());
-        variables
+        Ok(variables)
     }
 }
 #[async_trait]
 impl VariableProvider for BgmTvVariableProvider {
-    async fn item_variables(&self, item: &SourceItem) -> HashMap<String, String> {
+    async fn item_variables(
+        &self,
+        item: &SourceItem,
+    ) -> Result<HashMap<String, String>, ProcessingError> {
         self.search(item.title.trim()).await
     }
     async fn file_variables(
@@ -121,21 +120,21 @@ impl VariableProvider for BgmTvVariableProvider {
         _: &SourceItem,
         _: &PatternVariables,
         _: &[SourceFile],
-    ) -> Vec<PatternVariables> {
-        vec![]
+    ) -> Result<Vec<PatternVariables>, ProcessingError> {
+        Ok(vec![])
     }
     async fn extract_from(
         &self,
         _: &SourceItem,
         value: &str,
-    ) -> Option<HashMap<String, Value>> {
-        Some(
+    ) -> Result<Option<HashMap<String, Value>>, ProcessingError> {
+        Ok(Some(
             self.search(value)
-                .await
+                .await?
                 .into_iter()
                 .map(|(key, value)| (key, Value::String(value)))
                 .collect(),
-        )
+        ))
     }
     fn primary_variable_name(&self) -> Option<String> {
         Some("nativeName".to_string())
@@ -180,6 +179,7 @@ mod tests {
             provider
                 .item_variables(&item("Frieren"))
                 .await
+                .unwrap()
                 .get("nativeName")
                 .map(String::as_str)
         );
@@ -188,6 +188,7 @@ mod tests {
             provider
                 .item_variables(&item("Frieren"))
                 .await
+                .unwrap()
                 .get("nativeName")
                 .map(String::as_str)
         );
@@ -202,10 +203,9 @@ mod tests {
                 &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
                 &props,
             )
-            .unwrap()
-            .as_variable_provider()
             .unwrap();
-        assert!(provider.item_variables(&item(" ")).await.is_empty());
+        let provider = provider.as_variable_provider().unwrap();
+        assert!(provider.item_variables(&item(" ")).await.unwrap().is_empty());
         assert!(server.received_requests().await.unwrap().is_empty());
     }
 }

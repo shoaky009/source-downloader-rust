@@ -53,8 +53,12 @@ impl Display for SequenceVariableProvider {
 
 #[async_trait]
 impl VariableProvider for SequenceVariableProvider {
-    async fn item_variables(&self, _: &SourceItem) -> HashMap<String, String> {
-        HashMap::new()
+    async fn item_variables(
+        &self,
+        _: &SourceItem,
+    ) -> Result<HashMap<String, String>, source_downloader_sdk::component::ProcessingError>
+    {
+        Ok(HashMap::new())
     }
 
     async fn file_variables(
@@ -62,24 +66,28 @@ impl VariableProvider for SequenceVariableProvider {
         _: &SourceItem,
         _: &PatternVariables,
         source_files: &[SourceFile],
-    ) -> Vec<PatternVariables> {
+    ) -> Result<Vec<PatternVariables>, source_downloader_sdk::component::ProcessingError>
+    {
         let width = source_files.len().to_string().len();
-        (0..source_files.len())
+        Ok((0..source_files.len())
             .map(|index| {
                 HashMap::from([(
                     String::from("sequence"),
                     format!("{:0width$}", index + 1, width = width),
                 )])
             })
-            .collect()
+            .collect())
     }
 
     async fn extract_from(
         &self,
         _: &SourceItem,
         _: &str,
-    ) -> Option<HashMap<String, Value>> {
-        None
+    ) -> Result<
+        Option<HashMap<String, Value>>,
+        source_downloader_sdk::component::ProcessingError,
+    > {
+        Ok(None)
     }
 
     fn primary_variable_name(&self) -> Option<String> {

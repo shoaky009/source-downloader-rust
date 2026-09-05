@@ -4,8 +4,8 @@ use source_downloader_sdk::SdComponent;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
-    SdComponentMetadata, SourceFile, VariableProvider,
+    ComponentError, ComponentSupplier, ComponentType, PatternVariables, ProcessingError,
+    SdComponent, SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use std::collections::HashMap;
@@ -116,17 +116,19 @@ const COLLECT_LINES: usize = 10;
 
 #[async_trait]
 impl VariableProvider for LanguageVariableProvider {
-    async fn item_variables(&self, _: &SourceItem) -> HashMap<String, String> {
-        HashMap::new()
+    async fn item_variables(
+        &self,
+        _: &SourceItem,
+    ) -> Result<HashMap<String, String>, ProcessingError> {
+        Ok(HashMap::new())
     }
-
     async fn file_variables(
         &self,
         _: &SourceItem,
         _: &PatternVariables,
         files: &[SourceFile],
-    ) -> Vec<PatternVariables> {
-        files
+    ) -> Result<Vec<PatternVariables>, ProcessingError> {
+        Ok(files
             .iter()
             .map(|file| {
                 language_from_name(file)
@@ -136,19 +138,17 @@ impl VariableProvider for LanguageVariableProvider {
                     .map(|language| HashMap::from([("language".to_string(), language)]))
                     .unwrap_or_default()
             })
-            .collect()
+            .collect())
     }
-
     async fn extract_from(
         &self,
         _: &SourceItem,
         value: &str,
-    ) -> Option<HashMap<String, Value>> {
-        detect_language(value).map(|language| {
+    ) -> Result<Option<HashMap<String, Value>>, ProcessingError> {
+        Ok(detect_language(value).map(|language| {
             HashMap::from([("language".to_string(), Value::String(language))])
-        })
+        }))
     }
-
     fn primary_variable_name(&self) -> Option<String> {
         Some("language".to_string())
     }
@@ -299,7 +299,8 @@ mod tests {
         .map(|path| SourceFile::new(PathBuf::from(path)))
         .collect::<Vec<_>>();
         let provider = LanguageVariableProvider { read_content: false };
-        let variables = provider.file_variables(&item(), &HashMap::new(), &files).await;
+        let variables =
+            provider.file_variables(&item(), &HashMap::new(), &files).await.unwrap();
         assert_eq!(Some("zh-CHS"), variables[0].get("language").map(String::as_str));
         assert_eq!(Some("zh-CHT"), variables[1].get("language").map(String::as_str));
         assert_eq!(Some("zh-CHS.JP"), variables[2].get("language").map(String::as_str));
@@ -361,7 +362,8 @@ mod tests {
         let files = vec![SourceFile::new(ass), SourceFile::new(srt)];
         let variables = LanguageVariableProvider { read_content: true }
             .file_variables(&item(), &HashMap::new(), &files)
-            .await;
+            .await
+            .unwrap();
         assert_eq!(Some("zh-CHT"), variables[0].get("language").map(String::as_str));
         assert_eq!(Some("zh-CHS"), variables[1].get("language").map(String::as_str));
     }
@@ -378,7 +380,8 @@ mod tests {
         ];
         let variables = LanguageVariableProvider { read_content: true }
             .file_variables(&item(), &HashMap::new(), &files)
-            .await;
+            .await
+            .unwrap();
         assert!(variables.iter().all(HashMap::is_empty));
         assert_eq!(
             Some("language".to_string()),

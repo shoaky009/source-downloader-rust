@@ -2,8 +2,8 @@ use anitomy::ElementKind;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
-    SdComponentMetadata, SourceFile, VariableProvider,
+    ComponentError, ComponentSupplier, ComponentType, PatternVariables, ProcessingError,
+    SdComponent, SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -54,38 +54,41 @@ impl Display for AnitomVariableProvider {
 
 #[async_trait]
 impl VariableProvider for AnitomVariableProvider {
-    async fn item_variables(&self, _: &SourceItem) -> PatternVariables {
-        HashMap::new()
+    async fn item_variables(
+        &self,
+        _: &SourceItem,
+    ) -> Result<PatternVariables, ProcessingError> {
+        Ok(HashMap::new())
     }
-
     async fn file_variables(
         &self,
         _: &SourceItem,
         _: &PatternVariables,
         files: &[SourceFile],
-    ) -> Vec<PatternVariables> {
-        files
+    ) -> Result<Vec<PatternVariables>, ProcessingError> {
+        Ok(files
             .iter()
             .map(|file| {
-                let file_name = file.path.file_name().and_then(|name| name.to_str());
-                file_name.map(parse_variables).unwrap_or_default()
+                file.path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(parse_variables)
+                    .unwrap_or_default()
             })
-            .collect()
+            .collect())
     }
-
     async fn extract_from(
         &self,
         _: &SourceItem,
         value: &str,
-    ) -> Option<HashMap<String, Value>> {
-        Some(
+    ) -> Result<Option<HashMap<String, Value>>, ProcessingError> {
+        Ok(Some(
             parse_variables(value)
                 .into_iter()
                 .map(|(key, value)| (key, Value::String(value)))
                 .collect(),
-        )
+        ))
     }
-
     fn primary_variable_name(&self) -> Option<String> {
         Some("animeTitle".to_string())
     }
@@ -177,7 +180,8 @@ mod tests {
             "[TaigaSubs]_Toradora!_(2008)_-_01v2_-_Tiger_and_Dragon_[1280x720_H.264_FLAC][1234ABCD].mkv",
         ))];
 
-        let variables = provider.file_variables(&item(), &HashMap::new(), &files).await;
+        let variables =
+            provider.file_variables(&item(), &HashMap::new(), &files).await.unwrap();
 
         assert_eq!(variables[0].get("animeTitle").map(String::as_str), Some("Toradora!"));
         assert_eq!(variables[0].get("episodeNumber").map(String::as_str), Some("01"));
@@ -197,9 +201,9 @@ mod tests {
             SourceFile::new(PathBuf::from("notes.txt")),
         ];
 
-        let variables = provider.file_variables(&item(), &HashMap::new(), &files).await;
-
-        assert_eq!(variables.len(), files.len());
-        assert!(provider.item_variables(&item()).await.is_empty());
+        let variables =
+            provider.file_variables(&item(), &HashMap::new(), &files).await.unwrap();
+        assert_eq!(files.len(), variables.len());
+        assert!(provider.item_variables(&item()).await.unwrap().is_empty());
     }
 }

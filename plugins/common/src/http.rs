@@ -5,7 +5,7 @@ use source_downloader_sdk::component::{
 };
 use std::time::Duration;
 
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug)]
 pub(crate) struct HttpClient {

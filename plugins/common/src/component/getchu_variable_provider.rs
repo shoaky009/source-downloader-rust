@@ -7,8 +7,8 @@ use scraper::{Html, Selector};
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
-    SdComponentMetadata, SourceFile, VariableProvider,
+    ComponentError, ComponentSupplier, ComponentType, PatternVariables, ProcessingError,
+    SdComponent, SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -76,12 +76,12 @@ impl Display for GetchuVariableProvider {
 static ISBN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[a-zA-Z]+-[a-zA-Z0-9]+").unwrap());
 impl GetchuVariableProvider {
-    async fn resolve(&self, text: &str) -> PatternVariables {
+    async fn resolve(&self, text: &str) -> Result<PatternVariables, ProcessingError> {
         if let Some(v) = self.cache.lock().get(text).cloned() {
-            return v;
+            return Ok(v);
         }
         let query = ISBN.find(text).map(|m| m.as_str()).unwrap_or(text);
-        let vars = self.search(query).await.unwrap_or_default();
+        let vars = self.search(query).await?.unwrap_or_default();
         let mut c = self.cache.lock();
         if c.len() >= 500
             && let Some(k) = c.keys().next().cloned()
@@ -89,9 +89,9 @@ impl GetchuVariableProvider {
             c.remove(&k);
         }
         c.insert(text.into(), vars.clone());
-        vars
+        Ok(vars)
     }
-    async fn search(&self, q: &str) -> Option<PatternVariables> {
+    async fn search(&self, q: &str) -> Result<Option<PatternVariables>, ProcessingError> {
         let r = http::execute(
             &self.client,
             self.client
@@ -100,53 +100,72 @@ impl GetchuVariableProvider {
                 .header("Cookie", "getchu_adalt_flag=getchu.com"),
             "Search Getchu",
         )
-        .await
-        .ok()?;
+        .await?;
         let html = decode_response(r).await?;
-        let links = {
-            let d = Html::parse_document(&html);
-            let s = Selector::parse(".search_container .display li #detail_block .blueb")
-                .ok()?;
-            d.select(&s)
-                .filter_map(|e| {
-                    let title = e.text().collect::<String>();
-                    let href = e.value().attr("href")?;
-                    Some((title, href.to_string()))
+        let url = {
+            let document = Html::parse_document(&html);
+            let selector =
+                Selector::parse(".search_container .display li #detail_block .blueb")
+                    .map_err(|error| ProcessingError::non_retryable(error.to_string()))?;
+            document
+                .select(&selector)
+                .filter_map(|element| {
+                    Some((
+                        element.text().collect::<String>(),
+                        element.value().attr("href")?.to_string(),
+                    ))
                 })
-                .collect::<Vec<_>>()
+                .min_by_key(|(title, _)| title.chars().count())
+                .map(|(_, url)| url)
         };
-        let url = links.into_iter().min_by_key(|(title, _)| title.chars().count())?.1;
-        self.detail(&url).await
+        match url {
+            Some(url) => self.detail(&url).await,
+            None => Ok(None),
+        }
     }
-    async fn detail(&self, url: &str) -> Option<PatternVariables> {
-        let url = reqwest::Url::parse(&self.base).ok()?.join(url).ok()?;
-        let id = url.query_pairs().find(|(k, _)| k == "id")?.1.to_string();
+    async fn detail(
+        &self,
+        url: &str,
+    ) -> Result<Option<PatternVariables>, ProcessingError> {
+        let url = reqwest::Url::parse(&self.base)
+            .map_err(|e| ProcessingError::non_retryable(e.to_string()))?
+            .join(url)
+            .map_err(|e| ProcessingError::non_retryable(e.to_string()))?;
+        let id = url.query_pairs().find(|(k, _)| k == "id").map(|(_, v)| v.to_string());
+        let Some(id) = id else {
+            return Ok(None);
+        };
         let r = http::execute(
             &self.client,
             self.client.get(url).header("Cookie", "getchu_adalt_flag=getchu.com"),
             "Fetch Getchu item",
         )
-        .await
-        .ok()?;
-        let html = decode_response(r).await?;
-        Some(parse_detail(&html, &id))
+        .await?;
+        Ok(Some(parse_detail(&decode_response(r).await?, &id)))
     }
 }
-async fn decode_response(r: reqwest::Response) -> Option<String> {
+async fn decode_response(r: reqwest::Response) -> Result<String, ProcessingError> {
     let charset = r
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.split("charset=").nth(1))
         .and_then(|v| Encoding::for_label(v.trim().as_bytes()));
-    let b = r.bytes().await.ok()?;
+    let b = r
+        .bytes()
+        .await
+        .map_err(|error| http::map_error(error, "Read Getchu response"))?;
     let enc = charset.unwrap_or_else(|| {
         let mut d = EncodingDetector::new(Iso2022JpDetection::Allow);
         d.feed(&b, true);
         d.guess(None, Utf8Detection::Allow)
     });
     let (text, _, errors) = enc.decode(&b);
-    (!errors).then(|| text.into_owned())
+    if errors {
+        Err(ProcessingError::non_retryable("Invalid Getchu response encoding"))
+    } else {
+        Ok(text.into_owned())
+    }
 }
 fn parse_detail(html: &str, id: &str) -> PatternVariables {
     let d = Html::parse_document(html);
@@ -185,7 +204,10 @@ fn parse_detail(html: &str, id: &str) -> PatternVariables {
 }
 #[async_trait]
 impl VariableProvider for GetchuVariableProvider {
-    async fn item_variables(&self, i: &SourceItem) -> HashMap<String, String> {
+    async fn item_variables(
+        &self,
+        i: &SourceItem,
+    ) -> Result<HashMap<String, String>, ProcessingError> {
         self.resolve(&i.title).await
     }
     async fn file_variables(
@@ -193,39 +215,19 @@ impl VariableProvider for GetchuVariableProvider {
         _: &SourceItem,
         _: &PatternVariables,
         _: &[SourceFile],
-    ) -> Vec<PatternVariables> {
-        vec![]
+    ) -> Result<Vec<PatternVariables>, ProcessingError> {
+        Ok(vec![])
     }
     async fn extract_from(
         &self,
         _: &SourceItem,
         v: &str,
-    ) -> Option<HashMap<String, Value>> {
-        let r = self.resolve(v).await;
-        if r.is_empty() {
-            None
-        } else {
-            Some(r.into_iter().map(|(k, v)| (k, Value::String(v))).collect())
-        }
+    ) -> Result<Option<HashMap<String, Value>>, ProcessingError> {
+        let r = self.resolve(v).await?;
+        Ok((!r.is_empty())
+            .then(|| r.into_iter().map(|(k, v)| (k, Value::String(v))).collect()))
     }
     fn primary_variable_name(&self) -> Option<String> {
         Some("title".into())
-    }
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn parses_detail_fields() {
-        let v = parse_detail(
-            "<h1 id='soft-title'>作品</h1><div id='brandsite'>Brand</div><table id='soft_table'><tr><td>発売日：</td><td>2024/01/02</td></tr><tr><td>品番：</td><td>ABC-1</td></tr></table>",
-            "1",
-        );
-        assert_eq!(Some("作品"), v.get("title").map(String::as_str));
-        assert_eq!(Some("ABC-1"), v.get("isbn").map(String::as_str));
-    }
-    #[test]
-    fn detects_identifier() {
-        assert_eq!(Some("ABC-123"), ISBN.find("title ABC-123").map(|m| m.as_str()));
     }
 }

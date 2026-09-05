@@ -3,8 +3,8 @@ use source_downloader_sdk::SdComponent;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
-    SdComponentMetadata, SourceFile, VariableProvider,
+    ComponentError, ComponentSupplier, ComponentType, PatternVariables, ProcessingError,
+    SdComponent, SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -69,36 +69,40 @@ impl VariableProvider for SeasonVariableProvider {
     fn accuracy(&self) -> i32 {
         2
     }
-    async fn item_variables(&self, _: &SourceItem) -> HashMap<String, String> {
-        HashMap::new()
+    async fn item_variables(
+        &self,
+        _: &SourceItem,
+    ) -> Result<HashMap<String, String>, ProcessingError> {
+        Ok(HashMap::new())
     }
     async fn file_variables(
         &self,
         item: &SourceItem,
         _: &PatternVariables,
         files: &[SourceFile],
-    ) -> Vec<PatternVariables> {
-        files
+    ) -> Result<Vec<PatternVariables>, ProcessingError> {
+        Ok(files
             .iter()
             .map(|file| {
                 let filepath = file.path.to_string_lossy();
-                let season = parse_season(&filepath)
-                    .or_else(|| parse_season(&item.title))
-                    .unwrap_or(1);
-                season_variables(season)
+                season_variables(
+                    parse_season(&filepath)
+                        .or_else(|| parse_season(&item.title))
+                        .unwrap_or(1),
+                )
             })
-            .collect()
+            .collect())
     }
     async fn extract_from(
         &self,
         _: &SourceItem,
         value: &str,
-    ) -> Option<HashMap<String, Value>> {
+    ) -> Result<Option<HashMap<String, Value>>, ProcessingError> {
         let season = parse_season(value).unwrap_or(1);
-        Some(HashMap::from([(
+        Ok(Some(HashMap::from([(
             "season".to_string(),
             Value::String(format!("{season:02}")),
-        )]))
+        )])))
     }
     fn primary_variable_name(&self) -> Option<String> {
         Some("season".to_string())
@@ -227,14 +231,16 @@ mod tests {
             let title = fields.next().unwrap();
             let path = fields.next().unwrap_or("");
             let item = item(title);
-            let shared_variables = SeasonVariableProvider.item_variables(&item).await;
+            let shared_variables =
+                SeasonVariableProvider.item_variables(&item).await.unwrap();
             let variables = SeasonVariableProvider
                 .file_variables(
                     &item,
                     &shared_variables,
                     &[SourceFile::new(PathBuf::from(path))],
                 )
-                .await;
+                .await
+                .unwrap();
             assert_eq!(
                 Some(expected),
                 variables[0].get("season").map(String::as_str),
@@ -247,8 +253,9 @@ mod tests {
         let variables = SeasonVariableProvider
             .extract_from(&item(""), "Unmarked Show")
             .await
+            .unwrap()
             .unwrap();
-        assert_eq!(Some(&Value::String("01".to_string())), variables.get("season"));
+        assert_eq!(Some("01"), variables.get("season").and_then(Value::as_str));
         assert_eq!(2, SeasonVariableProvider.accuracy());
     }
 }

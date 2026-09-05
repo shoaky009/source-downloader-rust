@@ -122,6 +122,16 @@
       "level": "advanced"
     },
     {
+      "path": "options.variable-provider-error-strategy",
+      "title": "变量提供器错误策略",
+      "description": "IGNORE 忽略失败提供器的变量并继续；ERROR 将错误交给现有重试和条目失败流程。适用于条目、文件变量和变量处理链，不影响正常未匹配结果。",
+      "type": "enum",
+      "defaultValue": "IGNORE",
+      "componentTypes": ["IGNORE", "ERROR"],
+      "askMode": "auto",
+      "level": "advanced"
+    },
+    {
       "path": "options.fetch-limit",
       "title": "单次抓取数量",
       "type": "integer",

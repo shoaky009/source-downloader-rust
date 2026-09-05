@@ -62,6 +62,7 @@ impl<'a> RawFileContent<'a> {
 #[allow(unused)]
 pub struct Renamer {
     pub variable_error_strategy: VariableErrorStrategy,
+    pub variable_provider_error_strategy: VariableProviderErrorStrategy,
     pub variable_replacers: Vec<Arc<dyn VariableReplacer>>,
     pub variable_process_chain: Vec<VariableProcessChain>,
     pub trimming: HashMap<String, Vec<Arc<dyn Trimmer>>>,
@@ -77,6 +78,17 @@ pub enum VariableErrorStrategy {
     #[default]
     Stay,
     ToUnresolved,
+}
+
+/// Controls operational provider failures, independently of unresolved expressions.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum VariableProviderErrorStrategy {
+    /// Continue without the failed provider's contribution; keep prior chain output.
+    #[default]
+    Ignore,
+    /// Propagate the original error into the processor's retry and item-error flow.
+    Error,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -109,7 +121,9 @@ impl VariableProcessChain {
         item: &SourceItem,
         value: &str,
         context: &Map<String, Value>,
-    ) -> HashMap<String, String> {
+        strategy: VariableProviderErrorStrategy,
+    ) -> Result<HashMap<String, String>, source_downloader_sdk::component::ProcessingError>
+    {
         let mut accumulated = value.to_owned();
         let mut extracted = HashMap::new();
         let mut completed = true;
@@ -118,9 +132,20 @@ impl VariableProcessChain {
                 completed = false;
                 break;
             };
-            let Some(values) = provider.extract_from(item, &accumulated).await else {
-                completed = false;
-                break;
+            let values = match provider.extract_from(item, &accumulated).await {
+                Ok(Some(values)) => values,
+                Ok(None) => {
+                    completed = false;
+                    break;
+                }
+                Err(error) => match strategy {
+                    VariableProviderErrorStrategy::Ignore => {
+                        tracing::warn!(provider = %provider, stage = "renamer.variable-process", "variable provider failed: {}", error.message());
+                        completed = false;
+                        break;
+                    }
+                    VariableProviderErrorStrategy::Error => return Err(error),
+                },
             };
             for (key, value) in &values {
                 let text = match value {
@@ -133,7 +158,6 @@ impl VariableProcessChain {
                 accumulated.clone_from(value);
             }
         }
-
         let mut result = HashMap::new();
         for (key, value) in extracted {
             if context.contains_key(&key)
@@ -156,7 +180,7 @@ impl VariableProcessChain {
                 accumulated,
             );
         }
-        result
+        Ok(result)
     }
 }
 
@@ -216,6 +240,7 @@ impl Default for Renamer {
     fn default() -> Self {
         Self {
             variable_error_strategy: VariableErrorStrategy::Stay,
+            variable_provider_error_strategy: VariableProviderErrorStrategy::Ignore,
             variable_replacers: vec![],
             variable_process_chain: vec![],
             trimming: HashMap::new(),
@@ -299,7 +324,7 @@ impl Renamer {
                 &file_download_path,
                 extra_variables,
             )
-            .await;
+            .await?;
         let mut dir_result =
             self.save_directory_path(&file, &file_download_path, &variables);
         let mut filename_result =
@@ -680,41 +705,32 @@ impl Renamer {
         file: &RawFileContent<'_>,
         file_download_path: &Path,
         extra: &RenameVariables,
-    ) -> RenameVariables {
+    ) -> Result<RenameVariables, source_downloader_sdk::component::ProcessingError> {
         let mut vars = Map::new();
         let file_pattern_vars = self.apply_replacers_to_map(file.variables);
         for (key, value) in &file_pattern_vars {
             vars.insert(key.clone(), Value::String(value.clone()));
         }
-
         let file_attrs = self.apply_replacers_to_attrs(&file.source_file.attrs);
-        let file_obj = json!({
+        vars.insert("file".to_owned(), json!({
             "name": self.apply_replacers("file.name", file_download_path.file_stem().unwrap().to_string_lossy().into_owned()),
-            "attrs": file_attrs,
-            "tags": file.source_file.tags,
-            "vars": file.variables,
-            "originalLayout": file.get_path_original_layout().into_iter()
-                .map(|value| self.apply_replacers("file.originalLayout", value))
-                .collect::<Vec<_>>()
-                .join("/")
-        });
-        vars.insert("file".to_owned(), file_obj);
-
+            "attrs": file_attrs, "tags": file.source_file.tags, "vars": file.variables,
+            "originalLayout": file.get_path_original_layout().into_iter().map(|value| self.apply_replacers("file.originalLayout", value)).collect::<Vec<_>>().join("/")
+        }));
         let mut processed_variables =
-            self.process_variables(source_item, &mut vars, true).await;
+            self.process_variables(source_item, &mut vars, true).await?;
         for (key, value) in &extra.processed_variables {
             processed_variables.entry(key.clone()).or_insert_with(|| value.clone());
         }
         for (key, value) in &extra.variables {
             vars.entry(key.clone()).or_insert_with(|| value.clone());
         }
-
-        RenameVariables {
+        Ok(RenameVariables {
             variables: vars,
             processed_variables,
             pattern_variables: file_pattern_vars,
             ..Default::default()
-        }
+        })
     }
 
     fn apply_replacers(&self, name: &str, mut text: String) -> String {
@@ -751,7 +767,8 @@ impl Renamer {
         item: &SourceItem,
         variables: &mut Map<String, Value>,
         with_condition: bool,
-    ) -> HashMap<String, String> {
+    ) -> Result<HashMap<String, String>, source_downloader_sdk::component::ProcessingError>
+    {
         let mut processed = HashMap::new();
         for process in &self.variable_process_chain {
             if with_condition
@@ -773,20 +790,22 @@ impl Renamer {
             let Some(value) = value else {
                 continue;
             };
-            let extracted = process.process(item, value, variables).await;
+            let extracted = process
+                .process(item, value, variables, self.variable_provider_error_strategy)
+                .await?;
             for (key, value) in extracted {
                 variables.insert(key.clone(), Value::String(value.clone()));
                 processed.insert(key, value);
             }
         }
-        processed
+        Ok(processed)
     }
 
     pub async fn item_rename_variables(
         &self,
         item: &SourceItem,
         item_variables: &PatternVariables,
-    ) -> RenameVariables {
+    ) -> Result<RenameVariables, source_downloader_sdk::component::ProcessingError> {
         let replaced_item_variables = self.apply_replacers_to_map(item_variables);
         let mut variables: Map<String, Value> = replaced_item_variables
             .iter()
@@ -794,29 +813,25 @@ impl Renamer {
             .collect();
         variables.insert("vars".to_owned(), json!(replaced_item_variables));
         let item_attrs = self.apply_replacers_to_attrs(&item.attrs);
-        let item_variables = json!({
-            "title": self.apply_replacers("item.title", item.title.clone()),
-            "datetime": item.datetime,
+        variables.insert("item".to_owned(), json!({
+            "title": self.apply_replacers("item.title", item.title.clone()), "datetime": item.datetime,
             "date": self.apply_replacers("item.date", item.datetime.date().to_string()),
             "year": self.apply_replacers("item.year", item.datetime.year().to_string()),
             "month": self.apply_replacers("item.month", item.datetime.month().to_string()),
-            "contentType": self.apply_replacers("item.contentType", item.content_type.clone()),
-            "attrs": item_attrs,
-        });
-        variables.insert("item".to_owned(), item_variables);
+            "contentType": self.apply_replacers("item.contentType", item.content_type.clone()), "attrs": item_attrs,
+        }));
         let processed_variables = self
             .process_variables(item, &mut variables, false)
-            .await
+            .await?
             .into_iter()
             .map(|(key, value)| (key.clone(), self.apply_replacers(&key, value)))
             .collect();
-
-        RenameVariables {
+        Ok(RenameVariables {
             variables,
             processed_variables,
             pattern_variables: replaced_item_variables,
             ..Default::default()
-        }
+        })
     }
 }
 
@@ -826,6 +841,7 @@ mod tests {
     use super::*;
     use crate::process::file::VariableErrorStrategy::Pattern;
     use maplit::hashmap;
+    use source_downloader_sdk::component::ProcessingError;
     use std::fmt::{Display, Formatter};
     use std::str::FromStr;
     use std::sync::LazyLock;
@@ -853,33 +869,129 @@ mod tests {
 
     #[source_downloader_sdk::async_trait::async_trait]
     impl VariableProvider for TestExtractProvider {
-        async fn item_variables(&self, _: &SourceItem) -> HashMap<String, String> {
-            HashMap::new()
+        async fn item_variables(
+            &self,
+            _: &SourceItem,
+        ) -> Result<HashMap<String, String>, ProcessingError> {
+            Ok(HashMap::new())
         }
-
         async fn file_variables(
             &self,
             _: &SourceItem,
             _: &PatternVariables,
             _: &[SourceFile],
-        ) -> Vec<PatternVariables> {
-            Vec::new()
+        ) -> Result<Vec<PatternVariables>, ProcessingError> {
+            Ok(Vec::new())
         }
-
         async fn extract_from(
             &self,
             _: &SourceItem,
             value: &str,
-        ) -> Option<HashMap<String, Value>> {
-            Some(HashMap::from([(
+        ) -> Result<Option<HashMap<String, Value>>, ProcessingError> {
+            Ok(Some(HashMap::from([(
                 "primary".to_owned(),
                 Value::String(format!("{value}{}", self.suffix)),
-            )]))
+            )])))
         }
-
         fn primary_variable_name(&self) -> Option<String> {
             Some("primary".to_owned())
         }
+    }
+
+    #[derive(Debug, source_downloader_sdk::SdComponent)]
+    #[component(VariableProvider)]
+    struct FailedExtraction(bool);
+
+    impl Display for FailedExtraction {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            f.write_str("failed-extraction")
+        }
+    }
+
+    #[source_downloader_sdk::async_trait::async_trait]
+    impl VariableProvider for FailedExtraction {
+        async fn item_variables(
+            &self,
+            _: &SourceItem,
+        ) -> Result<PatternVariables, ProcessingError> {
+            Ok(HashMap::new())
+        }
+        async fn file_variables(
+            &self,
+            _: &SourceItem,
+            _: &PatternVariables,
+            _: &[SourceFile],
+        ) -> Result<Vec<PatternVariables>, ProcessingError> {
+            Ok(Vec::new())
+        }
+        async fn extract_from(
+            &self,
+            _: &SourceItem,
+            _: &str,
+        ) -> Result<Option<HashMap<String, Value>>, ProcessingError> {
+            if self.0 {
+                Err(ProcessingError::retryable("extraction unavailable"))
+            } else {
+                Ok(None)
+            }
+        }
+        fn primary_variable_name(&self) -> Option<String> {
+            Some("primary".to_owned())
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_errors_chain_preserves_partial_values_or_propagates() {
+        let chain = VariableProcessChain {
+            input: "raw".to_owned(),
+            chain: vec![
+                Arc::new(TestExtractProvider { suffix: "-one" }),
+                Arc::new(FailedExtraction(true)),
+                Arc::new(TestExtractProvider { suffix: "-unreachable" }),
+            ],
+            output: VariableProcessOutput::default(),
+            condition: None,
+        };
+        let result = chain
+            .process(
+                &SourceItem::default(),
+                "seed",
+                &Map::new(),
+                VariableProviderErrorStrategy::Ignore,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result,
+            HashMap::from([("primary".to_owned(), "seed-one".to_owned())])
+        );
+        assert!(matches!(
+            chain
+                .process(
+                    &SourceItem::default(),
+                    "seed",
+                    &Map::new(),
+                    VariableProviderErrorStrategy::Error
+                )
+                .await,
+            Err(ProcessingError::Retryable { .. })
+        ));
+        let no_match = VariableProcessChain {
+            chain: vec![Arc::new(FailedExtraction(false))],
+            ..chain
+        };
+        assert_eq!(
+            no_match
+                .process(
+                    &SourceItem::default(),
+                    "seed",
+                    &Map::new(),
+                    VariableProviderErrorStrategy::Error
+                )
+                .await
+                .unwrap(),
+            HashMap::new()
+        );
     }
     impl Display for KeyEchoReplacer {
         fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
@@ -952,7 +1064,7 @@ mod tests {
         };
 
         let item_variables =
-            renamer.item_rename_variables(&item, &item_pattern_vars).await;
+            renamer.item_rename_variables(&item, &item_pattern_vars).await.unwrap();
         assert_eq!(json!("series=Show"), item_variables.variables["series"]);
         assert_eq!(json!("series=Show"), item_variables.variables["vars"]["series"]);
         assert_eq!(
@@ -998,8 +1110,8 @@ mod tests {
                 &file_download_path,
                 &RenameVariables::default(),
             )
-            .await;
-        assert_eq!(json!("episode=01"), file_variables.variables["episode"]);
+            .await
+            .unwrap();
         assert_eq!(json!("01"), file_variables.variables["file"]["vars"]["episode"]);
         assert_eq!(json!("file.name=episode"), file_variables.variables["file"]["name"]);
         assert_eq!(
@@ -1070,7 +1182,8 @@ mod tests {
                 &SourceItem::default(),
                 &hashmap! { "raw".to_owned() => "seed".to_owned() },
             )
-            .await;
+            .await
+            .unwrap();
 
         assert_eq!(json!("seed-one-two"), variables.variables["raw"]);
         assert_eq!("seed-one-two", variables.processed_variables["raw"]);
@@ -1158,7 +1271,8 @@ mod tests {
             hashmap! { "providerTitle".to_owned() => "provider-value".to_owned() };
         let item_variables = DEFAULT_RENAMER
             .item_rename_variables(&SourceItem::default(), &provider_variables)
-            .await;
+            .await
+            .unwrap();
 
         let content = DEFAULT_RENAMER
             .create_file_content(&SourceItem::default(), raw, &item_variables)
@@ -1445,7 +1559,8 @@ mod tests {
             attrs: serde_json::from_str(r#"{"creatorId": "Idk111"}"#).unwrap(),
             ..Default::default()
         };
-        let item_vars = DEFAULT_RENAMER.item_rename_variables(&item, &hashmap! {}).await;
+        let item_vars =
+            DEFAULT_RENAMER.item_rename_variables(&item, &hashmap! {}).await.unwrap();
         let raw = RawFileContent {
             variables: &hashmap! {
                 "date".to_owned() => "2022-01-01".to_owned(),

@@ -3,8 +3,8 @@ use source_downloader_sdk::SdComponent;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
-    SdComponentMetadata, SourceFile, VariableProvider,
+    ComponentError, ComponentSupplier, ComponentType, PatternVariables, ProcessingError,
+    SdComponent, SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use std::collections::HashMap;
@@ -90,16 +90,19 @@ static RESOLUTIONS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
 
 #[async_trait]
 impl VariableProvider for ResolutionVariableProvider {
-    async fn item_variables(&self, _: &SourceItem) -> HashMap<String, String> {
-        HashMap::new()
+    async fn item_variables(
+        &self,
+        _: &SourceItem,
+    ) -> Result<HashMap<String, String>, ProcessingError> {
+        Ok(HashMap::new())
     }
     async fn file_variables(
         &self,
         _: &SourceItem,
         _: &PatternVariables,
         files: &[SourceFile],
-    ) -> Vec<PatternVariables> {
-        files
+    ) -> Result<Vec<PatternVariables>, ProcessingError> {
+        Ok(files
             .iter()
             .map(|file| {
                 let stem =
@@ -119,14 +122,14 @@ impl VariableProvider for ResolutionVariableProvider {
                     })
                     .unwrap_or_default()
             })
-            .collect()
+            .collect())
     }
     async fn extract_from(
         &self,
         _: &SourceItem,
         value: &str,
-    ) -> Option<HashMap<String, Value>> {
-        RESOLUTIONS
+    ) -> Result<Option<HashMap<String, Value>>, ProcessingError> {
+        Ok(RESOLUTIONS
             .iter()
             .filter(|(_, resolution)| {
                 !self.only_high_resolution || !resolution.contains("HD")
@@ -138,7 +141,7 @@ impl VariableProvider for ResolutionVariableProvider {
                         Value::String((*resolution).to_string()),
                     )])
                 })
-            })
+            }))
     }
     fn primary_variable_name(&self) -> Option<String> {
         None
@@ -174,6 +177,7 @@ mod tests {
         ResolutionVariableProvider { only_high_resolution }
             .file_variables(&item(), &HashMap::new(), &files)
             .await
+            .unwrap()
             .into_iter()
             .map(|variables| variables.get("resolution").cloned())
             .collect()

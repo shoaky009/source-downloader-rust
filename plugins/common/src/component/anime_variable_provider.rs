@@ -6,8 +6,8 @@ use regex::Regex;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
-    SdComponentMetadata, SourceFile, VariableProvider,
+    ComponentError, ComponentSupplier, ComponentType, PatternVariables, ProcessingError,
+    SdComponent, SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use std::collections::{HashMap, VecDeque};
@@ -144,15 +144,18 @@ impl Display for AnimeVariableProvider {
 }
 
 impl AnimeVariableProvider {
-    async fn variables(&self, raw_title: &str) -> PatternVariables {
+    async fn variables(
+        &self,
+        raw_title: &str,
+    ) -> Result<PatternVariables, ProcessingError> {
         let title = extract_title(raw_title);
         if title.is_empty() {
-            return HashMap::new();
+            return Ok(HashMap::new());
         }
         if let Some(value) = self.cache.lock().values.get(&title).cloned() {
-            return value;
+            return Ok(value);
         }
-        let variables = self.search(&title).await;
+        let variables = self.search(&title).await?;
         let mut cache = self.cache.lock();
         if cache.values.len() == 500
             && let Some(oldest) = cache.order.pop_front()
@@ -161,40 +164,45 @@ impl AnimeVariableProvider {
         }
         cache.order.push_back(title.clone());
         cache.values.insert(title, variables.clone());
-        variables
+        Ok(variables)
     }
 
-    async fn search(&self, title: &str) -> PatternVariables {
+    async fn search(&self, title: &str) -> Result<PatternVariables, ProcessingError> {
         let japanese = title.chars().any(is_kana);
         let chinese = title.chars().any(is_han);
         let mut anilist = if japanese || !chinese {
-            self.search_anilist(&reformat_anilist(title)).await
+            self.search_anilist(&reformat_anilist(title)).await?
         } else {
             None
         };
         if !self.prefer_bangumi && anilist.is_some() {
-            return anime_variables(anilist.as_ref(), None);
+            return Ok(anime_variables(anilist.as_ref(), None));
         }
         let keyword = anilist
             .as_ref()
             .and_then(|title| title.native.as_deref())
             .unwrap_or(title)
             .replace('-', "");
-        let bangumi = self.search_bangumi(&keyword).await;
+        let bangumi = self.search_bangumi(&keyword).await?;
         if anilist.is_none()
             && let Some(subject) = &bangumi
         {
-            anilist = self.search_anilist(&subject.name).await;
+            anilist = self.search_anilist(&subject.name).await?;
         }
-        anime_variables(anilist.as_ref(), bangumi.as_ref())
+        Ok(anime_variables(anilist.as_ref(), bangumi.as_ref()))
     }
 
-    async fn search_anilist(&self, title: &str) -> Option<AniListTitle> {
-        self.anilist.search(title).await.ok().flatten()
+    async fn search_anilist(
+        &self,
+        title: &str,
+    ) -> Result<Option<AniListTitle>, ProcessingError> {
+        self.anilist.search(title).await
     }
-
-    async fn search_bangumi(&self, title: &str) -> Option<BangumiSubject> {
-        self.bangumi.search_subjects(title).await.ok()?.into_iter().next()
+    async fn search_bangumi(
+        &self,
+        title: &str,
+    ) -> Result<Option<BangumiSubject>, ProcessingError> {
+        Ok(self.bangumi.search_subjects(title).await?.into_iter().next())
     }
 }
 
@@ -217,16 +225,18 @@ fn anime_variables(
 
 #[async_trait]
 impl VariableProvider for AnimeVariableProvider {
-    async fn item_variables(&self, item: &SourceItem) -> PatternVariables {
+    async fn item_variables(
+        &self,
+        item: &SourceItem,
+    ) -> Result<PatternVariables, ProcessingError> {
         self.variables(&item.title).await
     }
-
     async fn file_variables(
         &self,
         _: &SourceItem,
         _: &PatternVariables,
         files: &[SourceFile],
-    ) -> Vec<PatternVariables> {
+    ) -> Result<Vec<PatternVariables>, ProcessingError> {
         let mut variables = Vec::with_capacity(files.len());
         for file in files {
             let title = if file.path.is_absolute() {
@@ -242,25 +252,24 @@ impl VariableProvider for AnimeVariableProvider {
                     .map(|name| name.to_string_lossy())
             };
             variables.push(match title {
-                Some(title) => self.variables(&title).await,
+                Some(title) => self.variables(&title).await?,
                 None => HashMap::new(),
             });
         }
-        variables
+        Ok(variables)
     }
-
     async fn extract_from(
         &self,
         _: &SourceItem,
         value: &str,
-    ) -> Option<HashMap<String, Value>> {
-        Some(
+    ) -> Result<Option<HashMap<String, Value>>, ProcessingError> {
+        Ok(Some(
             self.variables(value)
-                .await
+                .await?
                 .into_iter()
                 .map(|(key, value)| (key, Value::String(value)))
                 .collect(),
-        )
+        ))
     }
 
     fn primary_variable_name(&self) -> Option<String> {
@@ -380,6 +389,18 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(wiremock::matchers::body_partial_json(
+                json!({"variables": {"search": NATIVE_NAME}}),
+            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"data": {"Page": {"media": []}}})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
 
         let http =
             HttpClient::from_reqwest(http::client_builder().no_proxy().build().unwrap());
@@ -396,7 +417,12 @@ mod tests {
 
         assert_eq!(
             Some(NATIVE_NAME),
-            provider.variables(&raw_title).await.get("nativeName").map(String::as_str)
+            provider
+                .variables(&raw_title)
+                .await
+                .unwrap()
+                .get("nativeName")
+                .map(String::as_str)
         );
     }
 

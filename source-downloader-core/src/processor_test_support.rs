@@ -504,14 +504,11 @@ pub mod test_support {
         #[async_trait]
         impl VariableProvider for Component {
             fn accuracy(&self) -> i32 { 1 }
-            async fn item_variables(&self, item: &SourceItem) -> std::collections::HashMap<String, String>;
+            async fn item_variables(&self, item: &SourceItem) -> Result<std::collections::HashMap<String, String>, ProcessingError>;
             async fn file_variables(
-                &self,
-                item: &SourceItem,
-                item_variables: &PatternVariables,
-                files: &[SourceFile],
-            ) -> Vec<PatternVariables>;
-            async fn extract_from(&self, item: &SourceItem, value: &str) -> Option<std::collections::HashMap<String, Value>>;
+                &self, item: &SourceItem, item_variables: &PatternVariables, files: &[SourceFile],
+            ) -> Result<Vec<PatternVariables>, ProcessingError>;
+            async fn extract_from(&self, item: &SourceItem, value: &str) -> Result<Option<std::collections::HashMap<String, Value>>, ProcessingError>;
             fn primary_variable_name(&self) -> Option<String>;
         }
     }

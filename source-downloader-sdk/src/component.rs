@@ -636,23 +636,32 @@ pub trait FileExistsDetector: SdComponent {
     ) -> HashMap<&'a PathBuf, Option<PathBuf>>;
 }
 
+/// Provides variables used while processing source items and files.
+///
+/// `Ok` with an empty map, a vector of empty maps (one per input file), or
+/// `Ok(None)` means that this provider found no matching variables. `Err` means
+/// the provider could not complete its operation; callers decide whether to
+/// propagate the error or continue without this provider's variables.
 #[async_trait]
 pub trait VariableProvider: SdComponent {
     fn accuracy(&self) -> i32 {
         1
     }
-    async fn item_variables(&self, item: &SourceItem) -> HashMap<String, String>;
+    async fn item_variables(
+        &self,
+        item: &SourceItem,
+    ) -> Result<HashMap<String, String>, ProcessingError>;
     async fn file_variables(
         &self,
         item: &SourceItem,
         item_variables: &PatternVariables,
         files: &[SourceFile],
-    ) -> Vec<PatternVariables>;
+    ) -> Result<Vec<PatternVariables>, ProcessingError>;
     async fn extract_from(
         &self,
         item: &SourceItem,
         value: &str,
-    ) -> Option<HashMap<String, Value>>;
+    ) -> Result<Option<HashMap<String, Value>>, ProcessingError>;
     fn primary_variable_name(&self) -> Option<String>;
 }
 

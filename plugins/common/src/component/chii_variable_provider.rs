@@ -3,8 +3,8 @@ use crate::http::HttpClient;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
-    SdComponentMetadata, SourceFile, VariableProvider,
+    ComponentError, ComponentSupplier, ComponentType, PatternVariables, ProcessingError,
+    SdComponent, SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -64,24 +64,24 @@ impl Display for ChiiVariableProvider {
 }
 
 impl ChiiVariableProvider {
-    async fn request(&self, text: &str) -> PatternVariables {
-        match self.client.search_subject(text).await {
-            Ok(Some(subject)) => HashMap::from([
+    async fn request(&self, text: &str) -> Result<PatternVariables, ProcessingError> {
+        match self.client.search_subject(text).await? {
+            Some(subject) => Ok(HashMap::from([
                 ("bgmtvId".to_string(), subject.id),
                 ("subjectName".to_string(), subject.name),
                 ("subjectNameCn".to_string(), subject.name_cn),
-            ]),
-            Ok(None) => HashMap::new(),
-            Err(error) => {
-                tracing::warn!(error = %error, "Chii search failed");
-                HashMap::new()
-            }
+            ])),
+            None => Ok(HashMap::new()),
         }
     }
 }
+
 #[async_trait]
 impl VariableProvider for ChiiVariableProvider {
-    async fn item_variables(&self, item: &SourceItem) -> HashMap<String, String> {
+    async fn item_variables(
+        &self,
+        item: &SourceItem,
+    ) -> Result<HashMap<String, String>, ProcessingError> {
         self.request(&item.title).await
     }
     async fn file_variables(
@@ -89,21 +89,21 @@ impl VariableProvider for ChiiVariableProvider {
         _: &SourceItem,
         _: &PatternVariables,
         _: &[SourceFile],
-    ) -> Vec<PatternVariables> {
-        vec![]
+    ) -> Result<Vec<PatternVariables>, ProcessingError> {
+        Ok(vec![])
     }
     async fn extract_from(
         &self,
         _: &SourceItem,
         value: &str,
-    ) -> Option<HashMap<String, Value>> {
-        Some(
+    ) -> Result<Option<HashMap<String, Value>>, ProcessingError> {
+        Ok(Some(
             self.request(value)
-                .await
+                .await?
                 .into_iter()
                 .map(|(key, value)| (key, Value::String(value)))
                 .collect(),
-        )
+        ))
     }
     fn primary_variable_name(&self) -> Option<String> {
         Some("subjectName".to_string())
@@ -139,7 +139,7 @@ mod tests {
             .unwrap()
             .as_variable_provider()
             .unwrap();
-        let variables = provider.item_variables(&item("Frieren")).await;
+        let variables = provider.item_variables(&item("Frieren")).await.unwrap();
         assert_eq!(Some("1"), variables.get("bgmtvId").map(String::as_str));
         assert_eq!(
             Some("葬送のフリーレン"),
@@ -150,23 +150,31 @@ mod tests {
             variables.get("subjectNameCn").map(String::as_str)
         );
     }
+
     #[tokio::test]
-    async fn empty_result_is_empty() {
+    async fn service_failure_reaches_item_and_extraction_callers() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(
-                serde_json::json!({"data":{"querySubjectSearch":{"result":[]}}}),
-            ))
+            .and(path("/graphql"))
+            .respond_with(ResponseTemplate::new(503))
+            .expect(2)
             .mount(&server)
             .await;
         let provider = SUPPLIER
             .apply(
                 &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
-                &Map::from_iter([("base-url".to_string(), Value::String(server.uri()))]),
+                &Map::from_iter([("base-url".to_owned(), Value::String(server.uri()))]),
             )
             .unwrap()
             .as_variable_provider()
             .unwrap();
-        assert!(provider.item_variables(&item("none")).await.is_empty());
+        assert!(matches!(
+            provider.item_variables(&item("Frieren")).await,
+            Err(ProcessingError::Retryable { .. })
+        ));
+        assert!(matches!(
+            provider.extract_from(&item("Frieren"), "Frieren").await,
+            Err(ProcessingError::Retryable { .. })
+        ));
     }
 }

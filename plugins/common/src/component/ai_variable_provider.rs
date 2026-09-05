@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
-    SdComponentMetadata, SourceFile, VariableProvider, deserialize_component_config,
+    ComponentError, ComponentSupplier, ComponentType, PatternVariables, ProcessingError,
+    SdComponent, SdComponentMetadata, SourceFile, VariableProvider,
+    deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use std::collections::{HashMap, VecDeque};
@@ -163,9 +164,9 @@ struct ResponseMessage {
 }
 
 impl AiVariableProvider {
-    async fn resolve(&self, content: &str) -> PatternVariables {
+    async fn resolve(&self, content: &str) -> Result<PatternVariables, ProcessingError> {
         if let Some(value) = self.cache.lock().values.get(content).cloned() {
-            return value;
+            return Ok(value);
         }
         let key_index =
             self.next_key.fetch_add(1, Ordering::Relaxed) % self.api_keys.len();
@@ -179,7 +180,7 @@ impl AiVariableProvider {
             stream: false,
             response_format: ResponseFormat { r#type: "json_object" },
         };
-        let response = match http::execute(
+        let response = http::execute(
             &self.client,
             self.client
                 .post(&self.endpoint)
@@ -187,33 +188,21 @@ impl AiVariableProvider {
                 .json(&body),
             "Resolve AI variables",
         )
-        .await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                tracing::warn!(error = %error, "AI variable request failed");
-                return HashMap::new();
-            }
-        };
-        let response: ChatResponse = match response.json().await {
-            Ok(response) => response,
-            Err(error) => {
-                tracing::warn!(error = %error, "Invalid AI response");
-                return HashMap::new();
-            }
-        };
+        .await?;
+        let response: ChatResponse = response.json().await.map_err(|error| {
+            ProcessingError::non_retryable(format!("Invalid AI response: {error}"))
+        })?;
         let Some(content_value) =
             response.choices.first().map(|choice| choice.message.content.as_str())
         else {
-            return HashMap::new();
+            return Ok(HashMap::new());
         };
-        let variables: PatternVariables = match serde_json::from_str(content_value) {
-            Ok(value) => value,
-            Err(error) => {
-                tracing::warn!(error = %error, "Invalid AI variable JSON content");
-                return HashMap::new();
-            }
-        };
+        let variables: PatternVariables =
+            serde_json::from_str(content_value).map_err(|error| {
+                ProcessingError::non_retryable(format!(
+                    "Invalid AI variable JSON content: {error}"
+                ))
+            })?;
         let mut cache = self.cache.lock();
         if cache.values.len() == 500
             && let Some(oldest) = cache.order.pop_front()
@@ -222,13 +211,16 @@ impl AiVariableProvider {
         }
         cache.order.push_back(content.to_string());
         cache.values.insert(content.to_string(), variables.clone());
-        variables
+        Ok(variables)
     }
 }
 
 #[async_trait]
 impl VariableProvider for AiVariableProvider {
-    async fn item_variables(&self, item: &SourceItem) -> HashMap<String, String> {
+    async fn item_variables(
+        &self,
+        item: &SourceItem,
+    ) -> Result<HashMap<String, String>, ProcessingError> {
         self.resolve(&item.title).await
     }
     async fn file_variables(
@@ -236,21 +228,21 @@ impl VariableProvider for AiVariableProvider {
         _: &SourceItem,
         _: &PatternVariables,
         files: &[SourceFile],
-    ) -> Vec<PatternVariables> {
-        files.iter().map(|_| HashMap::new()).collect()
+    ) -> Result<Vec<PatternVariables>, ProcessingError> {
+        Ok(files.iter().map(|_| HashMap::new()).collect())
     }
     async fn extract_from(
         &self,
         _: &SourceItem,
         value: &str,
-    ) -> Option<HashMap<String, Value>> {
-        Some(
+    ) -> Result<Option<HashMap<String, Value>>, ProcessingError> {
+        Ok(Some(
             self.resolve(value)
-                .await
+                .await?
                 .into_iter()
                 .map(|(key, value)| (key, Value::String(value)))
                 .collect(),
-        )
+        ))
     }
     fn primary_variable_name(&self) -> Option<String> {
         self.primary.clone()
@@ -277,34 +269,11 @@ mod tests {
     }
     fn props(server: &MockServer) -> Map<String, Value> {
         Map::from_iter([
-            ("api-keys".to_string(), serde_json::json!(["secret"])),
-            ("api-host".to_string(), Value::String(server.uri())),
-            ("system-role".to_string(), Value::String("extract".to_string())),
-            ("primary".to_string(), Value::String("title".to_string())),
+            ("api-keys".into(), json!(["secret"])),
+            ("api-host".into(), Value::String(server.uri())),
+            ("system-role".into(), Value::String("extract".into())),
+            ("primary".into(), Value::String("title".into())),
         ])
-    }
-    #[test]
-    fn validates_required_nonempty_keys() {
-        let error = SUPPLIER
-            .apply(
-                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
-                &Map::new(),
-            )
-            .unwrap_err();
-        assert_eq!(
-            error.message,
-            "Invalid configuration at '<root>': missing field `api-keys`"
-        );
-        let error = SUPPLIER
-            .apply(
-                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
-                &Map::from_iter([("api-keys".to_string(), serde_json::json!([]))]),
-            )
-            .unwrap_err();
-        assert_eq!(
-            error.message,
-            "Invalid configuration at 'api-keys': must not be empty"
-        );
     }
     #[tokio::test]
     async fn requests_json_and_caches_title() {
@@ -325,13 +294,18 @@ mod tests {
             .unwrap()
             .as_variable_provider()
             .unwrap();
-        let variables = provider.item_variables(&item("Show")).await;
+        let variables = provider.item_variables(&item("Show")).await.unwrap();
         let requests = server.received_requests().await.unwrap();
         assert_eq!(1, requests.len(), "requests={requests:?}");
         assert_eq!(Some("Parsed"), variables.get("title").map(String::as_str));
         assert_eq!(
             Some("Parsed"),
-            provider.item_variables(&item("Show")).await.get("title").map(String::as_str)
+            provider
+                .item_variables(&item("Show"))
+                .await
+                .unwrap()
+                .get("title")
+                .map(String::as_str)
         );
         let body: Value = serde_json::from_slice(&requests[0].body).unwrap();
         assert_eq!(

@@ -3,8 +3,8 @@ use source_downloader_sdk::SdComponent;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
-    SdComponentMetadata, SourceFile, VariableProvider,
+    ComponentError, ComponentSupplier, ComponentType, PatternVariables, ProcessingError,
+    SdComponent, SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -102,8 +102,11 @@ const FALLBACK_CHAIN: &[Extractor] = &[
 
 #[async_trait]
 impl VariableProvider for AnimeTitleVariableProvider {
-    async fn item_variables(&self, item: &SourceItem) -> HashMap<String, String> {
-        extract_titles(&clean_title(&item.title)).unwrap_or_default()
+    async fn item_variables(
+        &self,
+        item: &SourceItem,
+    ) -> Result<HashMap<String, String>, ProcessingError> {
+        Ok(extract_titles(&clean_title(&item.title)).unwrap_or_default())
     }
 
     async fn file_variables(
@@ -111,22 +114,24 @@ impl VariableProvider for AnimeTitleVariableProvider {
         _item: &SourceItem,
         _item_variables: &PatternVariables,
         _files: &[SourceFile],
-    ) -> Vec<PatternVariables> {
-        vec![]
+    ) -> Result<Vec<PatternVariables>, ProcessingError> {
+        Ok(vec![])
     }
 
     async fn extract_from(
         &self,
         _item: &SourceItem,
         value: &str,
-    ) -> Option<HashMap<String, Value>> {
-        let variables = extract_titles(&clean_title(value))?;
-        Some(
+    ) -> Result<Option<HashMap<String, Value>>, ProcessingError> {
+        let Some(variables) = extract_titles(&clean_title(value)) else {
+            return Ok(None);
+        };
+        Ok(Some(
             variables
                 .into_iter()
                 .map(|(key, value)| (key, Value::String(value)))
                 .collect(),
-        )
+        ))
     }
 
     fn primary_variable_name(&self) -> Option<String> {
@@ -279,7 +284,8 @@ mod tests {
             .item_variables(&item(
                 "[ANi] 葬送的芙莉莲 / Sousou no Frieren - 01 [1080P][CHT]",
             ))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(Some("葬送的芙莉莲"), variables.get("title").map(String::as_str));
         assert_eq!(
             Some("Sousou no Frieren"),
@@ -291,7 +297,8 @@ mod tests {
     async fn extracts_separator_and_bracket_fallback_titles() {
         let variables = AnimeTitleVariableProvider
             .item_variables(&item("葬送的芙莉莲 | Sousou no Frieren [1080p]"))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(Some("葬送的芙莉莲"), variables.get("title").map(String::as_str));
         assert_eq!(
             Some("Sousou no Frieren"),
@@ -300,7 +307,8 @@ mod tests {
 
         let variables = AnimeTitleVariableProvider
             .item_variables(&item("[字幕组][葬送的芙莉莲][Sousou no Frieren]"))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(Some("葬送的芙莉莲"), variables.get("title").map(String::as_str));
         assert_eq!(
             Some("Sousou no Frieren"),
@@ -312,7 +320,8 @@ mod tests {
     async fn cleans_noise_and_handles_single_title() {
         let variables = AnimeTitleVariableProvider
             .item_variables(&item("★01月新番★ 葬送的芙莉莲 [1080p][简日双语][01]"))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             HashMap::from([("title".to_string(), "葬送的芙莉莲".to_string())]),
             variables
@@ -324,6 +333,7 @@ mod tests {
         let variables = AnimeTitleVariableProvider
             .extract_from(&item("unused"), "Frieren / 葬送的芙莉莲")
             .await
+            .unwrap()
             .unwrap();
         assert_eq!(
             Some(&Value::String("葬送的芙莉莲".to_string())),

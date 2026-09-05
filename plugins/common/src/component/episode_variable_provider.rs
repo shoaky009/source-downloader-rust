@@ -3,8 +3,8 @@ use source_downloader_sdk::SdComponent;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
-    SdComponentMetadata, SourceFile, VariableProvider,
+    ComponentError, ComponentSupplier, ComponentType, PatternVariables, ProcessingError,
+    SdComponent, SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -107,8 +107,11 @@ impl VariableProvider for EpisodeVariableProvider {
         3
     }
 
-    async fn item_variables(&self, _: &SourceItem) -> HashMap<String, String> {
-        HashMap::new()
+    async fn item_variables(
+        &self,
+        _: &SourceItem,
+    ) -> Result<HashMap<String, String>, ProcessingError> {
+        Ok(HashMap::new())
     }
 
     async fn file_variables(
@@ -116,7 +119,7 @@ impl VariableProvider for EpisodeVariableProvider {
         _: &SourceItem,
         _: &PatternVariables,
         files: &[SourceFile],
-    ) -> Vec<PatternVariables> {
+    ) -> Result<Vec<PatternVariables>, ProcessingError> {
         let mut result: Vec<_> = files
             .iter()
             .map(|file| {
@@ -139,16 +142,21 @@ impl VariableProvider for EpisodeVariableProvider {
                 }
             }
         }
-        result
+        Ok(result)
     }
 
     async fn extract_from(
         &self,
         _: &SourceItem,
         value: &str,
-    ) -> Option<HashMap<String, Value>> {
-        let episode = parse_episode(value)?;
-        Some(HashMap::from([("episode".to_string(), Value::String(pad(&episode, 2)))]))
+    ) -> Result<Option<HashMap<String, Value>>, ProcessingError> {
+        let Some(episode) = parse_episode(value) else {
+            return Ok(None);
+        };
+        Ok(Some(HashMap::from([(
+            "episode".to_string(),
+            Value::String(pad(&episode, 2)),
+        )])))
     }
 
     fn primary_variable_name(&self) -> Option<String> {
@@ -345,14 +353,16 @@ mod tests {
             .filter(|line| !line.trim().is_empty())
         {
             let (expected, path) = line.split_once(',').unwrap();
-            let shared_variables = EpisodeVariableProvider.item_variables(&item).await;
+            let shared_variables =
+                EpisodeVariableProvider.item_variables(&item).await.unwrap();
             let variables = EpisodeVariableProvider
                 .file_variables(
                     &item,
                     &shared_variables,
                     &[SourceFile::new(PathBuf::from(path))],
                 )
-                .await;
+                .await
+                .unwrap();
             assert_eq!(
                 expected,
                 variables[0].get("episode").map(String::as_str).unwrap_or(""),
@@ -368,15 +378,19 @@ mod tests {
             .collect::<Vec<_>>();
         let variables = EpisodeVariableProvider
             .file_variables(&item(), &HashMap::new(), &files)
-            .await;
+            .await
+            .unwrap();
         assert_eq!(Some("001"), variables[0].get("episode").map(String::as_str));
     }
 
     #[tokio::test]
     async fn extract_from_returns_padded_value() {
-        let variables =
-            EpisodeVariableProvider.extract_from(&item(), "第3集").await.unwrap();
-        assert_eq!(Some(&Value::String("03".to_string())), variables.get("episode"));
+        let variables = EpisodeVariableProvider
+            .extract_from(&item(), "第3集")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(Some("03"), variables.get("episode").and_then(Value::as_str));
         assert_eq!(3, EpisodeVariableProvider.accuracy());
         assert_eq!(
             Some("episode".to_string()),

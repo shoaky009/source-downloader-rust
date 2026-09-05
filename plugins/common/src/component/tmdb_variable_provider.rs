@@ -4,8 +4,9 @@ use serde::Deserialize;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
-    SdComponentMetadata, SourceFile, VariableProvider, deserialize_component_config,
+    ComponentError, ComponentSupplier, ComponentType, PatternVariables, ProcessingError,
+    SdComponent, SdComponentMetadata, SourceFile, VariableProvider,
+    deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -98,49 +99,41 @@ struct ResultItem {
     original_name: String,
 }
 impl TmdbVariableProvider {
-    async fn search(&self, q: &str) -> PatternVariables {
+    async fn search(&self, q: &str) -> Result<PatternVariables, ProcessingError> {
         if let Some(v) = self.cache.lock().get(q).cloned() {
-            return v;
+            return Ok(v);
         }
         let req = self.client.get(format!("{}/3/search/tv", self.base)).query(&[
-            ("api_key", self.key.as_str()),
-            ("query", q),
-            ("language", self.language.as_str()),
-            ("page", "1"),
-            ("include_adult", "true"),
+            ("api_key", &self.key),
+            ("query", &q.to_string()),
+            ("language", &self.language),
         ]);
-        let vars = match http::execute(&self.client, req, "Search TMDB TV").await {
-            Ok(r) => r
-                .json::<Page>()
-                .await
-                .ok()
-                .and_then(|p| p.results.into_iter().next())
-                .map(|x| {
-                    HashMap::from([
-                        ("tmdbId".into(), x.id.to_string()),
-                        ("tmdbName".into(), x.name),
-                        ("originalName".into(), x.original_name),
-                    ])
-                })
-                .unwrap_or_default(),
-            Err(e) => {
-                tracing::warn!(error=%e,"TMDB search failed");
-                HashMap::new()
-            }
-        };
-        let mut c = self.cache.lock();
-        if c.len() >= 500
-            && let Some(k) = c.keys().next().cloned()
-        {
-            c.remove(&k);
-        }
-        c.insert(q.into(), vars.clone());
-        vars
+        let r = http::execute(&self.client, req, "Search TMDB TV").await?;
+        let body: Page = r.json().await.map_err(|e| {
+            ProcessingError::non_retryable(format!("Invalid TMDB response: {e}"))
+        })?;
+        let vars = body
+            .results
+            .into_iter()
+            .next()
+            .map(|x| {
+                HashMap::from([
+                    ("tmdbId".into(), x.id.to_string()),
+                    ("tmdbName".into(), x.name),
+                    ("originalName".into(), x.original_name),
+                ])
+            })
+            .unwrap_or_default();
+        self.cache.lock().insert(q.into(), vars.clone());
+        Ok(vars)
     }
 }
 #[async_trait]
 impl VariableProvider for TmdbVariableProvider {
-    async fn item_variables(&self, i: &SourceItem) -> HashMap<String, String> {
+    async fn item_variables(
+        &self,
+        i: &SourceItem,
+    ) -> Result<HashMap<String, String>, ProcessingError> {
         self.search(&i.title).await
     }
     async fn file_variables(
@@ -148,25 +141,22 @@ impl VariableProvider for TmdbVariableProvider {
         _: &SourceItem,
         _: &PatternVariables,
         _: &[SourceFile],
-    ) -> Vec<PatternVariables> {
-        vec![]
+    ) -> Result<Vec<PatternVariables>, ProcessingError> {
+        Ok(vec![])
     }
     async fn extract_from(
         &self,
         _: &SourceItem,
         v: &str,
-    ) -> Option<HashMap<String, Value>> {
-        let mut r = self.search(v).await;
+    ) -> Result<Option<HashMap<String, Value>>, ProcessingError> {
+        let mut r = self.search(v).await?;
         if r.is_empty()
             && let Some(first) = v.split(' ').next()
         {
-            r = self.search(first).await
+            r = self.search(first).await?;
         }
-        if r.is_empty() {
-            None
-        } else {
-            Some(r.into_iter().map(|(k, v)| (k, Value::String(v))).collect())
-        }
+        Ok((!r.is_empty())
+            .then(|| r.into_iter().map(|(k, v)| (k, Value::String(v))).collect()))
     }
     fn primary_variable_name(&self) -> Option<String> {
         Some("originalName".into())
@@ -207,6 +197,7 @@ mod tests {
             Some("葬送のフリーレン"),
             v.item_variables(&item("Frieren"))
                 .await
+                .unwrap()
                 .get("originalName")
                 .map(String::as_str)
         );
@@ -214,6 +205,7 @@ mod tests {
             Some("葬送のフリーレン"),
             v.item_variables(&item("Frieren"))
                 .await
+                .unwrap()
                 .get("originalName")
                 .map(String::as_str)
         );

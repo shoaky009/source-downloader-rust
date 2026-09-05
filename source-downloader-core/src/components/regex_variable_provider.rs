@@ -108,8 +108,13 @@ impl Display for RegexVariableProvider {
 
 #[async_trait]
 impl VariableProvider for RegexVariableProvider {
-    async fn item_variables(&self, source_item: &SourceItem) -> HashMap<String, String> {
-        self.regexes
+    async fn item_variables(
+        &self,
+        source_item: &SourceItem,
+    ) -> Result<HashMap<String, String>, source_downloader_sdk::component::ProcessingError>
+    {
+        Ok(self
+            .regexes
             .iter()
             .filter_map(|variable| {
                 let value = resolve_field(source_item, &variable.field)?;
@@ -118,7 +123,7 @@ impl VariableProvider for RegexVariableProvider {
                     .find(value.as_ref())
                     .map(|matched| (variable.name.clone(), matched.as_str().to_owned()))
             })
-            .collect()
+            .collect())
     }
 
     async fn file_variables(
@@ -126,15 +131,19 @@ impl VariableProvider for RegexVariableProvider {
         _: &SourceItem,
         _: &PatternVariables,
         source_files: &[SourceFile],
-    ) -> Vec<PatternVariables> {
-        vec![HashMap::new(); source_files.len()]
+    ) -> Result<Vec<PatternVariables>, source_downloader_sdk::component::ProcessingError>
+    {
+        Ok(vec![HashMap::new(); source_files.len()])
     }
 
     async fn extract_from(
         &self,
         _: &SourceItem,
         text: &str,
-    ) -> Option<HashMap<String, Value>> {
+    ) -> Result<
+        Option<HashMap<String, Value>>,
+        source_downloader_sdk::component::ProcessingError,
+    > {
         let variables: HashMap<String, Value> = self
             .regexes
             .iter()
@@ -144,7 +153,7 @@ impl VariableProvider for RegexVariableProvider {
                 })
             })
             .collect();
-        (!variables.is_empty()).then_some(variables)
+        Ok((!variables.is_empty()).then_some(variables))
     }
 
     fn primary_variable_name(&self) -> Option<String> {

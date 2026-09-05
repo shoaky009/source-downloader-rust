@@ -6,8 +6,8 @@ use scraper::{Html, Selector};
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
-    SdComponentMetadata, SourceFile, VariableProvider,
+    ComponentError, ComponentSupplier, ComponentType, PatternVariables, ProcessingError,
+    SdComponent, SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use std::collections::{HashMap, VecDeque};
@@ -133,15 +133,12 @@ impl MikanVariableProvider {
         }
     }
 
-    async fn load(&self, item: &SourceItem) -> PatternVariables {
+    async fn load(&self, item: &SourceItem) -> Result<PatternVariables, ProcessingError> {
         let key = item.link.to_string();
         if let Some(value) = self.cache.lock().values.get(&key).cloned() {
-            return value;
+            return Ok(value);
         }
-        let variables = self.fetch_variables(item).await.unwrap_or_else(|error| {
-            tracing::warn!(error = %error, link = %item.link, "Mikan metadata failed");
-            HashMap::new()
-        });
+        let variables = self.fetch_variables(item).await?;
         let mut cache = self.cache.lock();
         if cache.values.len() == 500
             && let Some(oldest) = cache.order.pop_front()
@@ -150,7 +147,7 @@ impl MikanVariableProvider {
         }
         cache.order.push_back(key.clone());
         cache.values.insert(key, variables.clone());
-        variables
+        Ok(variables)
     }
 
     async fn fetch_variables(
@@ -222,23 +219,24 @@ impl VariableProvider for MikanVariableProvider {
     fn accuracy(&self) -> i32 {
         3
     }
-
-    async fn item_variables(&self, item: &SourceItem) -> PatternVariables {
+    async fn item_variables(
+        &self,
+        item: &SourceItem,
+    ) -> Result<PatternVariables, ProcessingError> {
         if item.link.host().is_none_or(|host| !host.contains("mikan"))
             && !self.mikan_base.contains(item.link.host().unwrap_or_default())
         {
-            return HashMap::new();
+            return Ok(HashMap::new());
         }
         self.load(item).await
     }
-
     async fn file_variables(
         &self,
         _: &SourceItem,
         item_variables: &PatternVariables,
         files: &[SourceFile],
-    ) -> Vec<PatternVariables> {
-        files
+    ) -> Result<Vec<PatternVariables>, ProcessingError> {
+        Ok(files
             .iter()
             .map(|_| {
                 item_variables
@@ -246,22 +244,19 @@ impl VariableProvider for MikanVariableProvider {
                     .map(|season| HashMap::from([("season".to_string(), season.clone())]))
                     .unwrap_or_default()
             })
-            .collect()
+            .collect())
     }
-
     async fn extract_from(
         &self,
         _: &SourceItem,
         _: &str,
-    ) -> Option<HashMap<String, Value>> {
-        None
+    ) -> Result<Option<HashMap<String, Value>>, ProcessingError> {
+        Ok(None)
     }
-
     fn primary_variable_name(&self) -> Option<String> {
         Some("name".to_string())
     }
 }
-
 fn parse_season(value: &str) -> Option<u32> {
     let captures = SEASON.captures(value)?;
     let value =

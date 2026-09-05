@@ -6,8 +6,8 @@ use scraper::{Html, Selector};
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, PatternVariables, SdComponent,
-    SdComponentMetadata, SourceFile, VariableProvider,
+    ComponentError, ComponentSupplier, ComponentType, PatternVariables, ProcessingError,
+    SdComponent, SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use std::collections::HashMap;
@@ -103,24 +103,21 @@ impl Display for DlsiteVariableProvider {
 
 static ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:RJ|VJ)\d+").unwrap());
 impl DlsiteVariableProvider {
-    async fn resolve(&self, text: &str) -> PatternVariables {
+    async fn resolve(&self, text: &str) -> Result<PatternVariables, ProcessingError> {
         let key = text.to_string();
         if let Some(v) = self.cache.lock().get(&key).cloned() {
-            return v;
+            return Ok(v);
         }
         let id = ID.find(text).map(|m| m.as_str().to_string());
         if self.only && id.is_none() {
-            return HashMap::new();
+            return Ok(HashMap::new());
         }
         let id = match id {
             Some(v) => Some(v),
-            None => self.keyword(text).await,
+            None => self.keyword(text).await?,
         };
         let vars = match id {
-            Some(id) => self
-                .detail(&id)
-                .await
-                .unwrap_or_else(|| HashMap::from([("dlsiteId".into(), id)])),
+            Some(id) => self.detail(&id).await?,
             None => HashMap::new(),
         };
         let mut c = self.cache.lock();
@@ -130,18 +127,19 @@ impl DlsiteVariableProvider {
             c.remove(&k);
         }
         c.insert(key, vars.clone());
-        vars
+        Ok(vars)
     }
-    async fn keyword(&self, text: &str) -> Option<String> {
+    async fn keyword(&self, text: &str) -> Result<Option<String>, ProcessingError> {
         if self.prefer
-            && let Some(v) = self.suggest(text).await
+            && let Some(v) = self.suggest(text).await?
         {
-            return Some(v);
+            return Ok(Some(v));
         }
-        let html = self.client.search(text).await.ok()?;
+        let html = self.client.search(text).await?;
         let found = {
             let doc = Html::parse_document(&html);
-            let sel = Selector::parse("#search_result_img_box .work_name a").ok()?;
+            let sel = Selector::parse("#search_result_img_box .work_name a")
+                .map_err(|e| ProcessingError::non_retryable(e.to_string()))?;
             doc.select(&sel).find_map(|element| {
                 element
                     .value()
@@ -151,16 +149,16 @@ impl DlsiteVariableProvider {
             })
         };
         if found.is_some() {
-            return found;
+            return Ok(found);
         }
-        if !self.prefer { self.suggest(text).await } else { None }
+        if !self.prefer { self.suggest(text).await } else { Ok(None) }
     }
-    async fn suggest(&self, text: &str) -> Option<String> {
-        self.client.suggest(text).await.ok().flatten()
+    async fn suggest(&self, text: &str) -> Result<Option<String>, ProcessingError> {
+        self.client.suggest(text).await
     }
-    async fn detail(&self, id: &str) -> Option<PatternVariables> {
-        let html = self.client.work(id).await.ok()?;
-        Some(parse_detail(&html, id))
+    async fn detail(&self, id: &str) -> Result<PatternVariables, ProcessingError> {
+        let html = self.client.work(id).await?;
+        Ok(parse_detail(&html, id))
     }
 }
 fn parse_detail(html: &str, id: &str) -> PatternVariables {
@@ -213,7 +211,10 @@ fn parse_detail(html: &str, id: &str) -> PatternVariables {
 }
 #[async_trait]
 impl VariableProvider for DlsiteVariableProvider {
-    async fn item_variables(&self, i: &SourceItem) -> HashMap<String, String> {
+    async fn item_variables(
+        &self,
+        i: &SourceItem,
+    ) -> Result<HashMap<String, String>, ProcessingError> {
         let link = i.link.to_string();
         let source = ID.find(&link).map(|m| m.as_str()).unwrap_or(&i.title);
         self.resolve(source).await
@@ -223,20 +224,17 @@ impl VariableProvider for DlsiteVariableProvider {
         _: &SourceItem,
         _: &PatternVariables,
         _: &[SourceFile],
-    ) -> Vec<PatternVariables> {
-        vec![]
+    ) -> Result<Vec<PatternVariables>, ProcessingError> {
+        Ok(vec![])
     }
     async fn extract_from(
         &self,
         _: &SourceItem,
         v: &str,
-    ) -> Option<HashMap<String, Value>> {
-        let r = self.resolve(v).await;
-        if r.is_empty() {
-            None
-        } else {
-            Some(r.into_iter().map(|(k, v)| (k, Value::String(v))).collect())
-        }
+    ) -> Result<Option<HashMap<String, Value>>, ProcessingError> {
+        let r = self.resolve(v).await?;
+        Ok((!r.is_empty())
+            .then(|| r.into_iter().map(|(k, v)| (k, Value::String(v))).collect()))
     }
     fn primary_variable_name(&self) -> Option<String> {
         Some("title".into())

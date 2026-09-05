@@ -462,30 +462,30 @@ impl source_downloader_sdk::component::SdComponent for StaticVariableProvider {}
 
 #[async_trait]
 impl VariableProvider for StaticVariableProvider {
-    async fn item_variables(&self, _: &SourceItem) -> HashMap<String, String> {
-        HashMap::new()
+    async fn item_variables(
+        &self,
+        _: &SourceItem,
+    ) -> Result<HashMap<String, String>, ProcessingError> {
+        Ok(HashMap::new())
     }
-
     async fn file_variables(
         &self,
         _: &SourceItem,
         _: &PatternVariables,
         files: &[SourceFile],
-    ) -> Vec<PatternVariables> {
-        files
+    ) -> Result<Vec<PatternVariables>, ProcessingError> {
+        Ok(files
             .iter()
             .map(|_| HashMap::from([("fileProvider".to_owned(), self.0.to_owned())]))
-            .collect()
+            .collect())
     }
-
     async fn extract_from(
         &self,
         _: &SourceItem,
         _: &str,
-    ) -> Option<HashMap<String, Value>> {
-        None
+    ) -> Result<Option<HashMap<String, Value>>, ProcessingError> {
+        Ok(None)
     }
-
     fn primary_variable_name(&self) -> Option<String> {
         None
     }
@@ -505,71 +505,30 @@ impl source_downloader_sdk::component::SdComponent for PathCaptureProvider {}
 
 #[async_trait]
 impl VariableProvider for PathCaptureProvider {
-    async fn item_variables(&self, _: &SourceItem) -> HashMap<String, String> {
-        HashMap::new()
+    async fn item_variables(
+        &self,
+        _: &SourceItem,
+    ) -> Result<HashMap<String, String>, ProcessingError> {
+        Ok(HashMap::new())
     }
-
     async fn file_variables(
         &self,
         _: &SourceItem,
         _: &PatternVariables,
         files: &[SourceFile],
-    ) -> Vec<PatternVariables> {
+    ) -> Result<Vec<PatternVariables>, ProcessingError> {
         *self.0.lock() = files.iter().map(|file| file.path.clone()).collect();
-        vec![HashMap::new(); files.len()]
+        Ok(vec![HashMap::new(); files.len()])
     }
-
     async fn extract_from(
         &self,
         _: &SourceItem,
         _: &str,
-    ) -> Option<HashMap<String, Value>> {
-        None
+    ) -> Result<Option<HashMap<String, Value>>, ProcessingError> {
+        Ok(None)
     }
-
     fn primary_variable_name(&self) -> Option<String> {
         None
-    }
-}
-
-/// 记录测试监听器收到的目标文件名，只验证监听通知内容。
-#[derive(Debug, Default)]
-struct TargetFilenameListener(ParkingMutex<Vec<String>>);
-
-impl Display for TargetFilenameListener {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "target-filename-listener")
-    }
-}
-
-impl source_downloader_sdk::component::SdComponent for TargetFilenameListener {}
-
-impl ProcessListener for TargetFilenameListener {
-    fn on_item_success(
-        &self,
-        _: &dyn ProcessContext,
-        item_content: &ItemContent,
-    ) -> Result<(), ProcessingError> {
-        self.0.lock().extend(
-            item_content.file_contents.iter().map(|file| file.target_filename.clone()),
-        );
-        Ok(())
-    }
-
-    fn on_item_error(
-        &self,
-        _: &dyn ProcessContext,
-        _: &SourceItem,
-        _: &ProcessingError,
-    ) -> Result<(), ProcessingError> {
-        Ok(())
-    }
-
-    fn on_process_completed(
-        &self,
-        _: &dyn ProcessContext,
-    ) -> Result<(), ProcessingError> {
-        Ok(())
     }
 }
 
@@ -868,6 +827,7 @@ fn pointer_test_processor_with_settings(
             source_file_filters: Vec::new(),
             file_content_filters: Vec::new(),
             file_taggers: Vec::new(),
+            variable_provider_error_strategy: VariableProviderErrorStrategy::Ignore,
             variable_aggregation: VariableAggregation::new(
                 Box::new(SmartStrategy),
                 HashMap::new(),
@@ -1151,6 +1111,102 @@ fn dry_run_results(events: Vec<DryRunEvent>) -> Vec<DryRunResult> {
             _ => None,
         })
         .collect()
+}
+
+#[derive(Debug)]
+struct FailingVariableProvider {
+    file_stage: bool,
+    calls: Arc<AtomicUsize>,
+}
+
+impl Display for FailingVariableProvider {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str("failing-variable-provider")
+    }
+}
+
+impl source_downloader_sdk::component::SdComponent for FailingVariableProvider {}
+
+#[async_trait]
+impl VariableProvider for FailingVariableProvider {
+    async fn item_variables(
+        &self,
+        _: &SourceItem,
+    ) -> Result<PatternVariables, ProcessingError> {
+        if self.file_stage {
+            Ok(HashMap::new())
+        } else {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Err(ProcessingError::retryable("provider unavailable"))
+        }
+    }
+
+    async fn file_variables(
+        &self,
+        _: &SourceItem,
+        _: &PatternVariables,
+        _: &[SourceFile],
+    ) -> Result<Vec<PatternVariables>, ProcessingError> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        Err(ProcessingError::retryable("provider unavailable"))
+    }
+
+    async fn extract_from(
+        &self,
+        _: &SourceItem,
+        _: &str,
+    ) -> Result<Option<HashMap<String, Value>>, ProcessingError> {
+        Err(ProcessingError::retryable("provider unavailable"))
+    }
+
+    fn primary_variable_name(&self) -> Option<String> {
+        Some("primary".to_owned())
+    }
+}
+
+#[tokio::test]
+async fn provider_errors_ignore_preserves_successful_file_variables() {
+    let (mut processor, _) = pointer_test_processor_with_settings(
+        false,
+        1,
+        false,
+        PointerTestSettings {
+            resolved_file: Some(PathBuf::from("example.txt")),
+            ..Default::default()
+        },
+    );
+    processor.options.variable_providers = vec![
+        Arc::new(StaticVariableProvider("retained")),
+        Arc::new(FailingVariableProvider {
+            file_stage: false,
+            calls: Arc::new(AtomicUsize::new(0)),
+        }),
+    ];
+    let results = dry_run_results(processor.dry_run(DryRunOptions::default()).await);
+    assert_eq!(results[0].file_contents[0].pattern_variables["fileProvider"], "retained");
+}
+
+#[tokio::test]
+async fn provider_errors_error_retries_item_and_file_failures() {
+    for file_stage in [false, true] {
+        let (mut processor, _) = pointer_test_processor(false, 1, false);
+        let calls = Arc::new(AtomicUsize::new(0));
+        processor.options.variable_providers =
+            vec![Arc::new(FailingVariableProvider { file_stage, calls: calls.clone() })];
+        processor.options.variable_provider_error_strategy =
+            VariableProviderErrorStrategy::Error;
+        processor.options.retry_attempts = 2;
+        processor.options.retry_backoff = Duration::ZERO;
+        let events = processor.dry_run(DryRunOptions::default()).await;
+        assert!(matches!(
+            &events[0],
+            DryRunEvent::ItemError {
+                error: DryRunError { kind: DryRunErrorKind::Retryable, .. },
+                ..
+            }
+        ));
+        assert_eq!(calls.load(Ordering::Relaxed), 3);
+    }
 }
 
 #[tokio::test]
@@ -2274,6 +2330,40 @@ struct RecordingListener {
     completed_items: ParkingMutex<Vec<String>>,
     error_messages: ParkingMutex<Vec<String>>,
     successful_statuses: ParkingMutex<Vec<ProcessingStatus>>,
+}
+#[derive(Debug, Default)]
+struct TargetFilenameListener(ParkingMutex<Vec<String>>);
+impl Display for TargetFilenameListener {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "target-filename-listener")
+    }
+}
+impl source_downloader_sdk::component::SdComponent for TargetFilenameListener {}
+impl ProcessListener for TargetFilenameListener {
+    fn on_item_success(
+        &self,
+        _: &dyn ProcessContext,
+        content: &ItemContent,
+    ) -> Result<(), ProcessingError> {
+        self.0.lock().extend(
+            content.file_contents.iter().map(|file| file.target_filename.clone()),
+        );
+        Ok(())
+    }
+    fn on_item_error(
+        &self,
+        _: &dyn ProcessContext,
+        _: &SourceItem,
+        _: &ProcessingError,
+    ) -> Result<(), ProcessingError> {
+        Ok(())
+    }
+    fn on_process_completed(
+        &self,
+        _: &dyn ProcessContext,
+    ) -> Result<(), ProcessingError> {
+        Ok(())
+    }
 }
 
 impl Display for RecordingListener {
