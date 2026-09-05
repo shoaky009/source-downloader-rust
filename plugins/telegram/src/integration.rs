@@ -1,6 +1,7 @@
 use crate::client::TelegramClientInstance;
 use crate::source::MEDIA_TYPE_ATTR;
 use futures_util::future::{AbortHandle, Abortable};
+use futures_util::{Stream, StreamExt};
 use parking_lot::Mutex;
 use serde::Deserialize;
 use source_downloader_sdk::SourceItem;
@@ -17,8 +18,8 @@ use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
-use tokio::io::AsyncWriteExt;
+use std::time::{Duration, Instant};
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -102,6 +103,7 @@ struct DownloadState {
     abort_handle: AbortHandle,
     total: u64,
     downloaded: Arc<AtomicU64>,
+    transferred: Arc<AtomicU64>,
     started_at: Instant,
 }
 
@@ -114,15 +116,6 @@ struct ActiveDownload<'a> {
 impl Drop for ActiveDownload<'_> {
     fn drop(&mut self) {
         self.downloads.lock().remove(&self.target);
-        if let Err(error) = std::fs::remove_file(&self.temporary)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!(
-                %error,
-                path = %self.temporary.display(),
-                "Failed to remove Telegram temporary file"
-            );
-        }
     }
 }
 
@@ -224,6 +217,7 @@ impl Downloader for TelegramIntegration {
         let temporary = temporary_path(&target);
         let (abort_handle, abort_registration) = AbortHandle::new_pair();
         let downloaded = Arc::new(AtomicU64::new(0));
+        let transferred = Arc::new(AtomicU64::new(0));
         {
             let mut downloads = self.downloads.lock();
             if downloads.contains_key(&target) {
@@ -238,6 +232,7 @@ impl Downloader for TelegramIntegration {
                     abort_handle,
                     total,
                     downloaded: downloaded.clone(),
+                    transferred: transferred.clone(),
                     started_at: Instant::now(),
                 },
             );
@@ -246,7 +241,13 @@ impl Downloader for TelegramIntegration {
             ActiveDownload { downloads: &self.downloads, target, temporary };
 
         let result = Abortable::new(
-            download_media(&client, &media, &active_download.temporary, downloaded),
+            download_media(
+                &client,
+                &media,
+                &active_download.temporary,
+                &downloaded,
+                &transferred,
+            ),
             abort_registration,
         )
         .await
@@ -303,7 +304,8 @@ impl Stateful for TelegramIntegration {
                 let rate = if elapsed.is_zero() {
                     0.0
                 } else {
-                    downloaded as f64 / elapsed.as_secs_f64()
+                    state.transferred.load(Ordering::Relaxed) as f64
+                        / elapsed.as_secs_f64()
                 };
                 let progress = if state.total == 0 {
                     0.0
@@ -327,20 +329,117 @@ impl Stateful for TelegramIntegration {
     }
 }
 
+const DOWNLOAD_CHUNK_SIZE: u64 = 512 * 1024;
+
 async fn download_media(
     client: &grammers_client::Client,
     media: &grammers_client::media::Media,
     path: &Path,
-    downloaded: Arc<AtomicU64>,
+    downloaded: &AtomicU64,
+    transferred: &AtomicU64,
 ) -> Result<(), ProcessingError> {
-    let mut output = tokio::fs::File::create(path).await?;
-    let mut parts = client.iter_download(media);
-    while let Some(bytes) = parts.next().await.map_err(crate::client::telegram_error)? {
-        output.write_all(&bytes).await?;
-        downloaded.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+    download_parts(
+        path,
+        media.size().map(|size| size as u64),
+        downloaded,
+        transferred,
+        |offset| {
+            let parts = client
+                .iter_download(media)
+                .chunk_size(DOWNLOAD_CHUNK_SIZE as i32)
+                .skip_chunks((offset / DOWNLOAD_CHUNK_SIZE) as i32);
+            futures_util::stream::try_unfold(parts, |mut parts| async move {
+                parts.next().await.map(|part| part.map(|bytes| (bytes, parts)))
+            })
+        },
+    )
+    .await
+}
+
+async fn download_parts<S>(
+    path: &Path,
+    total: Option<u64>,
+    downloaded: &AtomicU64,
+    transferred: &AtomicU64,
+    mut parts_at: impl FnMut(u64) -> S,
+) -> Result<(), ProcessingError>
+where
+    S: Stream<Item = Result<Vec<u8>, grammers_client::InvocationError>>,
+{
+    let mut output = tokio::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(path)
+        .await?;
+    let mut offset = output.metadata().await?.len();
+    if total.is_some_and(|total| offset > total) {
+        offset = 0;
+        output.set_len(0).await?;
     }
-    output.flush().await?;
-    Ok(())
+    loop {
+        if total == Some(offset) {
+            downloaded.store(offset, Ordering::Relaxed);
+            return Ok(());
+        }
+        // Telegram offsets must be aligned; replay an incomplete last chunk.
+        offset -= offset % DOWNLOAD_CHUNK_SIZE;
+        let chunks = offset / DOWNLOAD_CHUNK_SIZE;
+        if i32::try_from(chunks).is_err() {
+            return Err(ProcessingError::non_retryable(
+                "Telegram resume offset is too large",
+            ));
+        }
+        output.set_len(offset).await?;
+        output.seek(std::io::SeekFrom::Start(offset)).await?;
+        downloaded.store(offset, Ordering::Relaxed);
+        let parts = parts_at(offset);
+        futures_util::pin_mut!(parts);
+        let retry_delay = loop {
+            match parts.next().await {
+                Some(Ok(bytes)) => {
+                    output.write_all(&bytes).await?;
+                    // Finish pending Tokio file writes before publishing the checkpoint.
+                    output.flush().await?;
+                    offset += bytes.len() as u64;
+                    downloaded.store(offset, Ordering::Relaxed);
+                    transferred.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                }
+                Some(Err(error)) => match download_retry_delay(&error) {
+                    Some(delay) => {
+                        tracing::warn!(%error, offset, "Telegram download interrupted; resuming");
+                        break delay;
+                    }
+                    None => return Err(crate::client::telegram_error(error)),
+                },
+                None => {
+                    if total.is_some_and(|total| total != offset) {
+                        return Err(ProcessingError::retryable(format!(
+                            "Telegram download incomplete: expected {} bytes, received {offset}",
+                            total.unwrap_or_default()
+                        )));
+                    }
+                    return Ok(());
+                }
+            }
+        };
+        tokio::time::sleep(retry_delay).await;
+    }
+}
+
+fn download_retry_delay(error: &grammers_client::InvocationError) -> Option<Duration> {
+    let grammers_client::InvocationError::Rpc(rpc) = error else {
+        return None;
+    };
+    match rpc.code {
+        -503 => Some(Duration::from_secs(5)),
+        420 => Some(Duration::from_secs(if rpc.name == "FLOOD_WAIT" {
+            rpc.value.map(|value| u64::from(value) + 3).unwrap_or(5)
+        } else {
+            5
+        })),
+        _ => None,
+    }
 }
 
 fn readable_rate(rate: f64) -> String {
@@ -386,6 +485,208 @@ fn temporary_path(target: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use source_downloader_sdk::{http::Uri, time::OffsetDateTime};
+
+    fn rpc_error(
+        code: i32,
+        name: &str,
+        value: Option<u32>,
+    ) -> grammers_client::InvocationError {
+        grammers_client::InvocationError::Rpc(
+            grammers_client::tl::types::RpcError {
+                error_code: code,
+                error_message: match value {
+                    Some(value) => format!("{name}_{value}"),
+                    None => name.into(),
+                },
+            }
+            .into(),
+        )
+    }
+
+    #[tokio::test]
+    async fn resumes_after_error_without_redownloading_complete_chunks() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("media.tmp");
+        let prefix = vec![1; DOWNLOAD_CHUNK_SIZE as usize];
+        let downloaded = AtomicU64::new(0);
+        let transferred = AtomicU64::new(0);
+        let total = DOWNLOAD_CHUNK_SIZE + 3;
+        let result =
+            download_parts(&path, Some(total), &downloaded, &transferred, |offset| {
+                assert_eq!(offset, 0);
+                futures_util::stream::iter(vec![
+                    Ok(prefix.clone()),
+                    Err(rpc_error(500, "INTERNAL", None)),
+                ])
+            })
+            .await;
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), prefix);
+        // Simulate a partial write at interruption; only this tail is replayed.
+        let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        std::io::Write::write_all(&mut file, &[9, 9]).unwrap();
+        drop(file);
+        transferred.store(0, Ordering::Relaxed);
+        download_parts(&path, Some(total), &downloaded, &transferred, |offset| {
+            assert_eq!(offset, DOWNLOAD_CHUNK_SIZE);
+            futures_util::stream::iter(vec![Ok(vec![2, 3, 4])])
+        })
+        .await
+        .unwrap();
+        let mut expected = prefix;
+        expected.extend_from_slice(&[2, 3, 4]);
+        assert_eq!(std::fs::read(path).unwrap(), expected);
+        assert_eq!(downloaded.load(Ordering::Relaxed), total);
+        assert_eq!(transferred.load(Ordering::Relaxed), 3);
+    }
+
+    #[tokio::test]
+    async fn retries_timeout_from_saved_offset() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("media.tmp");
+        let downloaded = AtomicU64::new(0);
+        let transferred = AtomicU64::new(0);
+        let mut attempts = 0;
+        download_parts(
+            &path,
+            Some(DOWNLOAD_CHUNK_SIZE + 1),
+            &downloaded,
+            &transferred,
+            |offset| {
+                attempts += 1;
+                futures_util::stream::iter(if attempts == 1 {
+                    assert_eq!(offset, 0);
+                    vec![
+                        Ok(vec![7; DOWNLOAD_CHUNK_SIZE as usize]),
+                        Err(rpc_error(-503, "TIMEOUT", None)),
+                    ]
+                } else {
+                    assert_eq!(offset, DOWNLOAD_CHUNK_SIZE);
+                    vec![Ok(vec![8])]
+                })
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(attempts, 2);
+        let bytes = std::fs::read(path).unwrap();
+        assert_eq!(bytes.len(), DOWNLOAD_CHUNK_SIZE as usize + 1);
+        assert!(bytes[..bytes.len() - 1].iter().all(|byte| *byte == 7));
+        assert_eq!(bytes.last(), Some(&8));
+    }
+
+    #[tokio::test]
+    async fn completed_partial_file_needs_no_download() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("media.tmp");
+        std::fs::write(&path, b"complete").unwrap();
+        let downloaded = AtomicU64::new(0);
+        let transferred = AtomicU64::new(0);
+        let mut requested = false;
+        download_parts(&path, Some(8), &downloaded, &transferred, |_| {
+            requested = true;
+            futures_util::stream::empty()
+        })
+        .await
+        .unwrap();
+        assert!(!requested);
+        assert_eq!(std::fs::read(path).unwrap(), b"complete");
+        assert_eq!(downloaded.load(Ordering::Relaxed), 8);
+        assert_eq!(transferred.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn rejects_early_eof_and_retains_written_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("media.tmp");
+        let downloaded = AtomicU64::new(0);
+        let transferred = AtomicU64::new(0);
+        let result = download_parts(&path, Some(10), &downloaded, &transferred, |_| {
+            futures_util::stream::iter(vec![Ok(vec![1, 2, 3])])
+        })
+        .await;
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(path).unwrap(), [1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn cancellation_interrupts_retry_wait_and_preserves_checkpoint() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("media.tmp");
+        let downloaded = AtomicU64::new(0);
+        let transferred = AtomicU64::new(0);
+        let (abort, registration) = AbortHandle::new_pair();
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            Abortable::new(
+                download_parts(
+                    &path,
+                    Some(DOWNLOAD_CHUNK_SIZE + 1),
+                    &downloaded,
+                    &transferred,
+                    |_| {
+                        let abort = &abort;
+                        async_stream::stream! {
+                            yield Ok(vec![7; DOWNLOAD_CHUNK_SIZE as usize]);
+                            abort.abort();
+                            yield Err(rpc_error(420, "FLOOD_WAIT", Some(100)));
+                        }
+                    },
+                ),
+                registration,
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(path).unwrap(), vec![7; DOWNLOAD_CHUNK_SIZE as usize]);
+    }
+
+    #[test]
+    fn retry_delays_match_telegram_errors() {
+        assert_eq!(
+            download_retry_delay(&rpc_error(-503, "TIMEOUT", None)),
+            Some(Duration::from_secs(5))
+        );
+        assert_eq!(
+            download_retry_delay(&rpc_error(420, "FLOOD_WAIT", Some(17))),
+            Some(Duration::from_secs(20))
+        );
+        assert_eq!(
+            download_retry_delay(&rpc_error(420, "FLOOD_WAIT", None)),
+            Some(Duration::from_secs(5))
+        );
+        assert_eq!(
+            download_retry_delay(&rpc_error(400, "FILE_REFERENCE_EXPIRED", None)),
+            None
+        );
+    }
+    #[test]
+    fn failed_download_keeps_partial_file_and_releases_target() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("media.bin");
+        let temporary = temporary_path(&target);
+        std::fs::write(&temporary, b"downloaded prefix").unwrap();
+        let (abort_handle, _) = AbortHandle::new_pair();
+        let downloads = Mutex::new(HashMap::from([(
+            target.clone(),
+            DownloadState {
+                abort_handle,
+                total: 100,
+                downloaded: Arc::new(AtomicU64::new(17)),
+                transferred: Arc::new(AtomicU64::new(0)),
+                started_at: Instant::now(),
+            },
+        )]));
+        drop(ActiveDownload {
+            downloads: &downloads,
+            target: target.clone(),
+            temporary: temporary.clone(),
+        });
+        assert!(downloads.lock().is_empty());
+        assert_eq!(std::fs::read(temporary).unwrap(), b"downloaded prefix");
+        assert!(!target.exists());
+    }
 
     #[test]
     fn parses_private_post_target() {
