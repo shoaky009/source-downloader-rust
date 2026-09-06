@@ -14,10 +14,6 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, LazyLock};
 
-static TITLE_SELECTOR: LazyLock<Selector> =
-    LazyLock::new(|| Selector::parse(".bangumi-title a").unwrap());
-static SUBJECT_SELECTOR: LazyLock<Selector> =
-    LazyLock::new(|| Selector::parse(".bangumi-info a").unwrap());
 static SEASON: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)S(\d{1,2})|Season\s*(\d{1,2})|第([一二三四五六七八九十]+|\d+)[季期]")
         .unwrap()
@@ -154,35 +150,24 @@ impl MikanVariableProvider {
         &self,
         item: &SourceItem,
     ) -> Result<PatternVariables, source_downloader_sdk::component::ProcessingError> {
-        let episode = self
-            .http
-            .text(self.mikan_request(&item.link.to_string()), "Fetch Mikan episode")
-            .await?;
-        let (mikan_title, href) = {
-            let document = Html::parse_document(&episode);
-            let title = document.select(&TITLE_SELECTOR).next();
-            let mikan_title = title
-                .as_ref()
-                .map(|element| element.text().collect::<String>().trim().to_string());
-            let href = title
-                .and_then(|element| element.value().attr("href"))
-                .map(str::to_string);
-            (mikan_title, href)
-        };
-        let Some(href) = href else {
+        let Some((mikan_title, href)) = self
+            .find_in_response(
+                self.mikan_request(&item.link.to_string()),
+                "Fetch Mikan episode",
+                find_mikan_title,
+            )
+            .await?
+        else {
             return Ok(HashMap::new());
         };
-        let bangumi_page =
-            self.http.text(self.mikan_request(&href), "Fetch Mikan bangumi").await?;
-        let subject_id = {
-            let page = Html::parse_document(&bangumi_page);
-            page.select(&SUBJECT_SELECTOR)
-                .flat_map(|element| element.text())
-                .find_map(|text| text.split("/subject/").nth(1).map(str::trim))
-                .filter(|id| !id.is_empty())
-                .map(str::to_string)
-        };
-        let Some(subject_id) = subject_id else {
+        let Some(subject_id) = self
+            .find_in_response(
+                self.mikan_request(&href),
+                "Fetch Mikan bangumi",
+                find_subject_id,
+            )
+            .await?
+        else {
             return Ok(HashMap::new());
         };
         let subject = self.bangumi.get_subject(&subject_id).await?;
@@ -211,6 +196,24 @@ impl MikanVariableProvider {
             }
         }
         Ok(variables)
+    }
+    async fn find_in_response<T>(
+        &self,
+        request: reqwest::RequestBuilder,
+        operation: &str,
+        find: impl Fn(&str) -> Option<T>,
+    ) -> Result<Option<T>, ProcessingError> {
+        let mut response = self.http.send(request, operation).await?;
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|error| {
+            crate::http::map_error(error, &format!("Read {operation} response"))
+        })? {
+            body.extend_from_slice(&chunk);
+            if let Some(value) = find(&String::from_utf8_lossy(&body)) {
+                return Ok(Some(value));
+            }
+        }
+        Ok(find(&String::from_utf8_lossy(&body)))
     }
 }
 
@@ -276,9 +279,98 @@ fn parse_season(value: &str) -> Option<u32> {
     })
 }
 
+fn class_fragment<'a>(html: &'a str, class: &str, end: &str) -> Option<&'a str> {
+    let class_start = html.find(class)?;
+    let element_start = html[..class_start].rfind('<')?;
+    let element_end = html[class_start..].find(end)? + class_start + end.len();
+    Some(&html[element_start..element_end])
+}
+
+fn find_mikan_title(html: &str) -> Option<(Option<String>, String)> {
+    let fragment = class_fragment(html, "bangumi-title", "</a>")?;
+    let document = Html::parse_fragment(fragment);
+    let selector = Selector::parse("a").unwrap();
+    let title = document.select(&selector).next()?;
+    let href = title.value().attr("href")?.to_string();
+    let text = title.text().collect::<String>();
+    let text = text.trim();
+    Some(((!text.is_empty()).then(|| text.to_string()), href))
+}
+
+fn find_subject_id(html: &str) -> Option<String> {
+    let class_start = html.find("bangumi-info")?;
+    let subject_start =
+        html[class_start..].find("/subject/")? + class_start + "/subject/".len();
+    let id = html[subject_start..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>();
+    (!id.is_empty()).then_some(id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::http::client_builder;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::time::{Duration, timeout};
+
+    async fn delayed_response(prefix: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 1024];
+            stream.read(&mut request).await.unwrap();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+                .await
+                .unwrap();
+            stream
+                .write_all(format!("{:X}\r\n{prefix}\r\n", prefix.len()).as_bytes())
+                .await
+                .unwrap();
+            stream.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let _ = stream.write_all(b"4\r\ntail\r\n0\r\n\r\n").await;
+        });
+        format!("http://{address}")
+    }
+
+    fn provider() -> MikanVariableProvider {
+        let http = HttpClient::from_reqwest(client_builder().no_proxy().build().unwrap());
+        MikanVariableProvider {
+            bangumi: BangumiClient::new(http.clone(), "http://unused".into(), None),
+            http,
+            mikan_base: "http://unused".into(),
+            token: None,
+            cache: Mutex::new(Cache::default()),
+        }
+    }
+
+    #[tokio::test]
+    async fn returns_subject_before_stream_finishes() {
+        let url = delayed_response(
+            r#"<p class="bangumi-info">Bangumi番组计划链接：<br/><a class="w-other-c" target="_blank" href="https://bgm.tv/subject/530725">https://bgm.tv/subject/530725</a></p>"#,
+        )
+        .await;
+        let provider = provider();
+
+        let subject_id = timeout(
+            Duration::from_millis(500),
+            provider.find_in_response(
+                provider.mikan_request(&url),
+                "Fetch delayed Mikan bangumi",
+                find_subject_id,
+            ),
+        )
+        .await
+        .expect("target should be returned without waiting for the response tail")
+        .unwrap();
+
+        assert_eq!(subject_id.as_deref(), Some("530725"));
+    }
 
     #[test]
     fn parses_season() {
