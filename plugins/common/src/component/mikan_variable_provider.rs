@@ -312,7 +312,7 @@ fn find_subject_id(html: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::http::client_builder;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
     use tokio::time::{Duration, timeout};
 
@@ -321,8 +321,6 @@ mod tests {
         let address = listener.local_addr().unwrap();
         tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            let mut request = [0; 1024];
-            stream.read(&mut request).await.unwrap();
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
                 .await

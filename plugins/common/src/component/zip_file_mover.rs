@@ -492,15 +492,42 @@ mod tests {
     use source_downloader_sdk::component::{
         EMPTY_COMPONENT_CREATE_CONTEXT, FileContentStatus,
     };
+    use source_downloader_sdk::time::OffsetDateTime;
     use std::io::Read;
+    use std::sync::OnceLock;
 
     fn file(source_path: PathBuf, target_save_path: PathBuf, name: &str) -> FileContent {
         FileContent {
+            download_path: source_path.parent().unwrap().to_path_buf(),
             file_download_path: source_path,
+            source_save_path: target_save_path.clone(),
+            pattern_variables: Default::default(),
+            file_save_path_pattern: String::new(),
+            filename_pattern: String::new(),
+            tags: Vec::new(),
+            attrs: Map::new(),
+            file_uri: None,
             target_save_path,
             target_filename: name.to_owned(),
+            exist_target_path: None,
+            errors: Vec::new(),
             status: FileContentStatus::Normal,
-            ..Default::default()
+            target_path: OnceLock::new(),
+            data: None,
+            processed_variables: None,
+        }
+    }
+
+    fn source_item() -> SourceItem {
+        SourceItem {
+            title: "item".to_owned(),
+            link: "https://example.test/item".parse().unwrap(),
+            datetime: OffsetDateTime::UNIX_EPOCH,
+            content_type: "application/octet-stream".to_owned(),
+            download_uri: "https://example.test/file".parse().unwrap(),
+            attrs: Map::new(),
+            tags: Vec::new(),
+            identity: None,
         }
     }
 
@@ -554,8 +581,8 @@ mod tests {
         let second = file(second_source.clone(), group.clone(), "2.jpg");
         let mover = mover(0, 0);
 
-        mover.batch_move(&SourceItem::default(), &[&first]).await.unwrap();
-        mover.batch_move(&SourceItem::default(), &[&second]).await.unwrap();
+        mover.batch_move(&source_item(), &[&first]).await.unwrap();
+        mover.batch_move(&source_item(), &[&second]).await.unwrap();
 
         let archive = archive_destination(&group, 0).unwrap().archive_path;
         assert_eq!(
@@ -583,7 +610,7 @@ mod tests {
         let second = file(second_source, second_group, "1.jpg");
         let mover = mover(1, 0);
 
-        mover.batch_move(&SourceItem::default(), &[&first, &second]).await.unwrap();
+        mover.batch_move(&source_item(), &[&first, &second]).await.unwrap();
 
         let archive = archive_destination(&first_group, 1).unwrap().archive_path;
         assert_eq!(
@@ -608,8 +635,8 @@ mod tests {
         let stored = file(stored_source, stored_group.clone(), "content.txt");
         let deflated = file(deflated_source, deflated_group.clone(), "content.txt");
 
-        mover(0, 0).batch_move(&SourceItem::default(), &[&stored]).await.unwrap();
-        mover(0, 6).batch_move(&SourceItem::default(), &[&deflated]).await.unwrap();
+        mover(0, 0).batch_move(&source_item(), &[&stored]).await.unwrap();
+        mover(0, 6).batch_move(&source_item(), &[&deflated]).await.unwrap();
 
         let mut stored_archive = ZipArchive::new(
             File::open(archive_destination(&stored_group, 0).unwrap().archive_path)
@@ -643,7 +670,7 @@ mod tests {
         let file = file(source, group.clone(), "1.jpg");
         let missing = group.join("2.jpg");
         let mover = mover(1, 0);
-        mover.batch_move(&SourceItem::default(), &[&file]).await.unwrap();
+        mover.batch_move(&source_item(), &[&file]).await.unwrap();
 
         assert_eq!(
             mover.exists(&[file.target_path(), &missing]).await,
