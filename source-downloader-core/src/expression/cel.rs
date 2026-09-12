@@ -7,12 +7,14 @@ use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 pub struct CelCompiledExpressionFactory {}
 pub const FACTORY: CelCompiledExpressionFactory = CelCompiledExpressionFactory {};
 
-static REGEX_CACHE: LazyLock<Cache<String, Arc<regex::Regex>>> =
-    LazyLock::new(|| Cache::new(256));
+static REGEX_CACHE: LazyLock<Cache<String, Arc<regex::Regex>>> = LazyLock::new(|| {
+    Cache::builder().max_capacity(256).time_to_idle(Duration::from_secs(30 * 60)).build()
+});
 
 const TIMESTAMP_MARKER: &str = "$__source_downloader_cel_timestamp";
 

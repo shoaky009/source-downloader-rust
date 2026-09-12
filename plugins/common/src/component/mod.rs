@@ -7,6 +7,7 @@ pub mod anime_variable_provider;
 pub mod anitom_variable_provider;
 pub mod bgmitv_variable_provider;
 pub mod bilibili_source;
+mod cache;
 pub mod chii_variable_provider;
 pub mod dlsite_variable_provider;
 pub mod doujin_title_trimmer;

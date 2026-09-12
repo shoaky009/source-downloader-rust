@@ -1,5 +1,6 @@
+use super::cache::new_cache;
 use crate::http;
-use parking_lot::Mutex;
+use moka::sync::Cache;
 use serde::Deserialize;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
@@ -44,7 +45,7 @@ impl ComponentSupplier for TmdbVariableProviderSupplier {
             base,
             key,
             language,
-            cache: Mutex::new(HashMap::new()),
+            cache: new_cache(),
         }))
     }
     fn is_support_no_props(&self) -> bool {
@@ -78,7 +79,7 @@ struct TmdbVariableProvider {
     base: String,
     key: String,
     language: String,
-    cache: Mutex<HashMap<String, PatternVariables>>,
+    cache: Cache<String, PatternVariables>,
 }
 
 impl Display for TmdbVariableProvider {
@@ -100,7 +101,7 @@ struct ResultItem {
 }
 impl TmdbVariableProvider {
     async fn search(&self, q: &str) -> Result<PatternVariables, ProcessingError> {
-        if let Some(v) = self.cache.lock().get(q).cloned() {
+        if let Some(v) = self.cache.get(q) {
             return Ok(v);
         }
         let req = self.client.get(format!("{}/3/search/tv", self.base)).query(&[
@@ -124,7 +125,7 @@ impl TmdbVariableProvider {
                 ])
             })
             .unwrap_or_default();
-        self.cache.lock().insert(q.into(), vars.clone());
+        self.cache.insert(q.into(), vars.clone());
         Ok(vars)
     }
 }

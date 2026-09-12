@@ -1,6 +1,7 @@
+use super::cache::new_cache;
 use crate::api::bangumi::BangumiClient;
 use crate::http::HttpClient;
-use parking_lot::Mutex;
+use moka::sync::Cache;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
@@ -8,7 +9,7 @@ use source_downloader_sdk::component::{
     SdComponent, SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
@@ -42,7 +43,7 @@ impl ComponentSupplier for BgmTvVariableProviderSupplier {
         let http = HttpClient::new()?;
         Ok(Arc::new(BgmTvVariableProvider {
             client: BangumiClient::new(http, base_url, token),
-            cache: Mutex::new(Cache::default()),
+            cache: new_cache(),
         }))
     }
     fn is_support_no_props(&self) -> bool {
@@ -66,16 +67,11 @@ impl ComponentSupplier for BgmTvVariableProviderSupplier {
         }))
     }
 }
-#[derive(Debug, Default)]
-struct Cache {
-    values: HashMap<String, PatternVariables>,
-    order: VecDeque<String>,
-}
 #[derive(Debug, source_downloader_sdk::SdComponent)]
 #[component(VariableProvider)]
 struct BgmTvVariableProvider {
     client: BangumiClient,
-    cache: Mutex<Cache>,
+    cache: Cache<String, PatternVariables>,
 }
 
 impl Display for BgmTvVariableProvider {
@@ -89,21 +85,14 @@ impl BgmTvVariableProvider {
         if title.trim().is_empty() {
             return Ok(HashMap::new());
         }
-        if let Some(value) = self.cache.lock().values.get(title).cloned() {
+        if let Some(value) = self.cache.get(title) {
             return Ok(value);
         }
         let variables = match self.client.search_legacy_subject(title).await? {
             Some(name) => HashMap::from([("nativeName".to_string(), name)]),
             None => HashMap::new(),
         };
-        let mut cache = self.cache.lock();
-        if cache.values.len() == 500
-            && let Some(oldest) = cache.order.pop_front()
-        {
-            cache.values.remove(&oldest);
-        }
-        cache.order.push_back(title.to_string());
-        cache.values.insert(title.to_string(), variables.clone());
+        self.cache.insert(title.to_string(), variables.clone());
         Ok(variables)
     }
 }

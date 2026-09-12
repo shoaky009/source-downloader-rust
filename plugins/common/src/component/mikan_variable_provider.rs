@@ -1,6 +1,7 @@
+use super::cache::new_cache;
 use crate::api::bangumi::BangumiClient;
 use crate::http::HttpClient;
-use parking_lot::Mutex;
+use moka::sync::Cache;
 use regex::Regex;
 use scraper::{Html, Selector};
 use source_downloader_sdk::SourceItem;
@@ -10,7 +11,7 @@ use source_downloader_sdk::component::{
     SdComponent, SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, LazyLock};
 
@@ -41,7 +42,7 @@ impl ComponentSupplier for MikanVariableProviderSupplier {
             http,
             mikan_base,
             token,
-            cache: Mutex::new(Cache::default()),
+            cache: new_cache(),
         }))
     }
     fn is_support_no_props(&self) -> bool {
@@ -92,12 +93,6 @@ fn prop(
         .unwrap_or_else(|| default.to_string()))
 }
 
-#[derive(Debug, Default)]
-struct Cache {
-    values: HashMap<String, PatternVariables>,
-    order: VecDeque<String>,
-}
-
 #[derive(Debug, source_downloader_sdk::SdComponent)]
 #[component(VariableProvider)]
 struct MikanVariableProvider {
@@ -105,7 +100,7 @@ struct MikanVariableProvider {
     bangumi: BangumiClient,
     mikan_base: String,
     token: Option<String>,
-    cache: Mutex<Cache>,
+    cache: Cache<String, PatternVariables>,
 }
 
 impl Display for MikanVariableProvider {
@@ -131,18 +126,11 @@ impl MikanVariableProvider {
 
     async fn load(&self, item: &SourceItem) -> Result<PatternVariables, ProcessingError> {
         let key = item.link.to_string();
-        if let Some(value) = self.cache.lock().values.get(&key).cloned() {
+        if let Some(value) = self.cache.get(&key) {
             return Ok(value);
         }
         let variables = self.fetch_variables(item).await?;
-        let mut cache = self.cache.lock();
-        if cache.values.len() == 500
-            && let Some(oldest) = cache.order.pop_front()
-        {
-            cache.values.remove(&oldest);
-        }
-        cache.order.push_back(key.clone());
-        cache.values.insert(key, variables.clone());
+        self.cache.insert(key, variables.clone());
         Ok(variables)
     }
 
@@ -343,7 +331,7 @@ mod tests {
             http,
             mikan_base: "http://unused".into(),
             token: None,
-            cache: Mutex::new(Cache::default()),
+            cache: new_cache(),
         }
     }
 

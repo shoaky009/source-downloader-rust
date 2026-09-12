@@ -1,7 +1,8 @@
+use super::cache::new_cache;
 use crate::http;
 use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
 use encoding_rs::Encoding;
-use parking_lot::Mutex;
+use moka::sync::Cache;
 use regex::Regex;
 use scraper::{Html, Selector};
 use source_downloader_sdk::SourceItem;
@@ -33,11 +34,7 @@ impl ComponentSupplier for GetchuVariableProviderSupplier {
             .trim_end_matches('/')
             .to_string();
         let client = http::build_client()?;
-        Ok(Arc::new(GetchuVariableProvider {
-            client,
-            base,
-            cache: Mutex::new(HashMap::new()),
-        }))
+        Ok(Arc::new(GetchuVariableProvider { client, base, cache: new_cache() }))
     }
     fn is_support_no_props(&self) -> bool {
         true
@@ -64,7 +61,7 @@ impl ComponentSupplier for GetchuVariableProviderSupplier {
 struct GetchuVariableProvider {
     client: reqwest::Client,
     base: String,
-    cache: Mutex<HashMap<String, PatternVariables>>,
+    cache: Cache<String, PatternVariables>,
 }
 
 impl Display for GetchuVariableProvider {
@@ -77,18 +74,12 @@ static ISBN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[a-zA-Z]+-[a-zA-Z0-9]+").unwrap());
 impl GetchuVariableProvider {
     async fn resolve(&self, text: &str) -> Result<PatternVariables, ProcessingError> {
-        if let Some(v) = self.cache.lock().get(text).cloned() {
+        if let Some(v) = self.cache.get(text) {
             return Ok(v);
         }
         let query = ISBN.find(text).map(|m| m.as_str()).unwrap_or(text);
         let vars = self.search(query).await?.unwrap_or_default();
-        let mut c = self.cache.lock();
-        if c.len() >= 500
-            && let Some(k) = c.keys().next().cloned()
-        {
-            c.remove(&k);
-        }
-        c.insert(text.into(), vars.clone());
+        self.cache.insert(text.into(), vars.clone());
         Ok(vars)
     }
     async fn search(&self, q: &str) -> Result<Option<PatternVariables>, ProcessingError> {

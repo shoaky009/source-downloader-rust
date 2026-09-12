@@ -1,6 +1,7 @@
+use super::cache::new_cache;
 use crate::api::dlsite::DlsiteClient;
 use crate::http::HttpClient;
-use parking_lot::Mutex;
+use moka::sync::Cache;
 use regex::Regex;
 use scraper::{Html, Selector};
 use source_downloader_sdk::SourceItem;
@@ -60,7 +61,7 @@ impl ComponentSupplier for DlsiteVariableProviderSupplier {
             client: DlsiteClient::new(http, base, &locale),
             only,
             prefer,
-            cache: Mutex::new(HashMap::new()),
+            cache: new_cache(),
         }))
     }
     fn is_support_no_props(&self) -> bool {
@@ -92,7 +93,7 @@ struct DlsiteVariableProvider {
     client: DlsiteClient,
     only: bool,
     prefer: bool,
-    cache: Mutex<HashMap<String, PatternVariables>>,
+    cache: Cache<String, PatternVariables>,
 }
 
 impl Display for DlsiteVariableProvider {
@@ -105,7 +106,7 @@ static ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:RJ|VJ)\d+").unwrap
 impl DlsiteVariableProvider {
     async fn resolve(&self, text: &str) -> Result<PatternVariables, ProcessingError> {
         let key = text.to_string();
-        if let Some(v) = self.cache.lock().get(&key).cloned() {
+        if let Some(v) = self.cache.get(&key) {
             return Ok(v);
         }
         let id = ID.find(text).map(|m| m.as_str().to_string());
@@ -120,13 +121,7 @@ impl DlsiteVariableProvider {
             Some(id) => self.detail(&id).await?,
             None => HashMap::new(),
         };
-        let mut c = self.cache.lock();
-        if c.len() >= 500
-            && let Some(k) = c.keys().next().cloned()
-        {
-            c.remove(&k);
-        }
-        c.insert(key, vars.clone());
+        self.cache.insert(key, vars.clone());
         Ok(vars)
     }
     async fn keyword(&self, text: &str) -> Result<Option<String>, ProcessingError> {

@@ -4,15 +4,18 @@ use scraper::{Html, Selector};
 use source_downloader_sdk::component::format_error_chain;
 use source_downloader_sdk::http::header;
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 // 常量定义
 const TOKEN_COOKIE: &str = ".AspNetCore.Identity.Application";
 
 #[allow(dead_code)]
-static BANGUMI_CACHE: LazyLock<Cache<UrlKey, BangumiPageInfo>> =
-    LazyLock::new(|| Cache::builder().max_capacity(500).build());
-static EPISODE_CACHE: LazyLock<Cache<UrlKey, EpisodePageInfo>> =
-    LazyLock::new(|| Cache::builder().max_capacity(500).build());
+static BANGUMI_CACHE: LazyLock<Cache<UrlKey, BangumiPageInfo>> = LazyLock::new(|| {
+    Cache::builder().max_capacity(500).time_to_idle(Duration::from_secs(30 * 60)).build()
+});
+static EPISODE_CACHE: LazyLock<Cache<UrlKey, EpisodePageInfo>> = LazyLock::new(|| {
+    Cache::builder().max_capacity(500).time_to_idle(Duration::from_secs(30 * 60)).build()
+});
 
 #[derive(Clone)]
 pub struct MikanClient {

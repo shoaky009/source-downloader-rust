@@ -1,5 +1,6 @@
+use super::cache::new_cache;
 use crate::http;
-use parking_lot::Mutex;
+use moka::sync::Cache;
 use serde::{Deserialize, Serialize};
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
@@ -9,7 +10,7 @@ use source_downloader_sdk::component::{
     deserialize_component_config,
 };
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -71,7 +72,7 @@ impl ComponentSupplier for AiVariableProviderSupplier {
             temperature: config.temperature,
             primary: config.primary,
             next_key: AtomicUsize::new(0),
-            cache: Mutex::new(Cache::default()),
+            cache: new_cache(),
         }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
@@ -108,11 +109,6 @@ impl ComponentSupplier for AiVariableProviderSupplier {
     }
 }
 
-#[derive(Debug, Default)]
-struct Cache {
-    values: HashMap<String, PatternVariables>,
-    order: VecDeque<String>,
-}
 #[derive(Debug, source_downloader_sdk::SdComponent)]
 #[component(VariableProvider)]
 struct AiVariableProvider {
@@ -124,7 +120,7 @@ struct AiVariableProvider {
     temperature: f64,
     primary: Option<String>,
     next_key: AtomicUsize,
-    cache: Mutex<Cache>,
+    cache: Cache<String, PatternVariables>,
 }
 
 impl Display for AiVariableProvider {
@@ -165,7 +161,7 @@ struct ResponseMessage {
 
 impl AiVariableProvider {
     async fn resolve(&self, content: &str) -> Result<PatternVariables, ProcessingError> {
-        if let Some(value) = self.cache.lock().values.get(content).cloned() {
+        if let Some(value) = self.cache.get(content) {
             return Ok(value);
         }
         let key_index =
@@ -203,14 +199,7 @@ impl AiVariableProvider {
                     "Invalid AI variable JSON content: {error}"
                 ))
             })?;
-        let mut cache = self.cache.lock();
-        if cache.values.len() == 500
-            && let Some(oldest) = cache.order.pop_front()
-        {
-            cache.values.remove(&oldest);
-        }
-        cache.order.push_back(content.to_string());
-        cache.values.insert(content.to_string(), variables.clone());
+        self.cache.insert(content.to_string(), variables.clone());
         Ok(variables)
     }
 }

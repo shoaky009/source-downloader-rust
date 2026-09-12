@@ -1,7 +1,8 @@
+use super::cache::new_cache;
 use crate::api::anilist::{AniListClient, AniListTitle};
 use crate::api::bangumi::{BangumiClient, BangumiSubject};
 use crate::http::HttpClient;
-use parking_lot::Mutex;
+use moka::sync::Cache;
 use regex::Regex;
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
@@ -10,7 +11,7 @@ use source_downloader_sdk::component::{
     SdComponent, SdComponentMetadata, SourceFile, VariableProvider,
 };
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::{Arc, LazyLock};
 
@@ -73,7 +74,7 @@ impl ComponentSupplier for AnimeVariableProviderSupplier {
             anilist: AniListClient::new(http.clone(), anilist_url),
             bangumi: BangumiClient::new(http, bangumi_url, token),
             prefer_bangumi,
-            cache: Mutex::new(Cache::default()),
+            cache: new_cache(),
         }))
     }
     fn is_support_no_props(&self) -> bool {
@@ -122,19 +123,13 @@ fn string_prop(
         .map(|value| value.unwrap_or_else(|| default.to_string()))
 }
 
-#[derive(Debug, Default)]
-struct Cache {
-    values: HashMap<String, PatternVariables>,
-    order: VecDeque<String>,
-}
-
 #[derive(Debug, source_downloader_sdk::SdComponent)]
 #[component(VariableProvider)]
 struct AnimeVariableProvider {
     anilist: AniListClient,
     bangumi: BangumiClient,
     prefer_bangumi: bool,
-    cache: Mutex<Cache>,
+    cache: Cache<String, PatternVariables>,
 }
 
 impl Display for AnimeVariableProvider {
@@ -152,18 +147,11 @@ impl AnimeVariableProvider {
         if title.is_empty() {
             return Ok(HashMap::new());
         }
-        if let Some(value) = self.cache.lock().values.get(&title).cloned() {
+        if let Some(value) = self.cache.get(&title) {
             return Ok(value);
         }
         let variables = self.search(&title).await?;
-        let mut cache = self.cache.lock();
-        if cache.values.len() == 500
-            && let Some(oldest) = cache.order.pop_front()
-        {
-            cache.values.remove(&oldest);
-        }
-        cache.order.push_back(title.clone());
-        cache.values.insert(title, variables.clone());
+        self.cache.insert(title, variables.clone());
         Ok(variables)
     }
 
@@ -411,7 +399,7 @@ mod tests {
             ),
             bangumi: BangumiClient::new(http, server.uri(), None),
             prefer_bangumi: false,
-            cache: Mutex::new(Cache::default()),
+            cache: new_cache(),
         };
         let raw_title = format!("[Nekomoe kissaten&VCB-Studio] {TITLE} [Ma10p_1080p]");
 
