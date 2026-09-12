@@ -1,7 +1,7 @@
 use crate::compatibility::{
     CompositionComponent, ProcessorCompatibilityReport, evaluate_compatibility,
 };
-use crate::component_manager::ComponentManager;
+use crate::component_manager::{ComponentManager, ComponentWrapper};
 use crate::components::expression_file_content_filter::ExpressionFileContentFilter;
 use crate::components::expression_item_content_filter::ExpressionItemContentFilter;
 use crate::components::expression_item_filter::ExpressionItemFilter;
@@ -24,7 +24,7 @@ use parking_lot::RwLock;
 use source_downloader_sdk::component::{
     ComponentError, ComponentId, ComponentRootType, FileContentFilter, FileTagger,
     ItemContentFilter, ProcessListener, ProcessTask, SdComponent, SourceFileFilter,
-    SourceItemFilter, Trimmer, VariableProvider, VariableReplacer,
+    SourceItemFilter, Trigger, Trimmer, VariableProvider, VariableReplacer,
 };
 use source_downloader_sdk::storage::ProcessingStorage;
 use std::collections::{HashMap, HashSet};
@@ -45,17 +45,7 @@ fn parse_duration(value: &str) -> Result<std::time::Duration, String> {
 pub struct PreparedProcessor {
     config: ProcessorConfig,
     wrapper: Arc<ProcessorWrapper>,
-    component_manager: Arc<ComponentManager>,
-    cleanup_refs_on_drop: bool,
-    activated: bool,
-}
-
-impl Drop for PreparedProcessor {
-    fn drop(&mut self) {
-        if !self.activated && self.cleanup_refs_on_drop {
-            self.component_manager.remove_processor_refs(&self.config.name);
-        }
-    }
+    triggers: Vec<(String, Arc<dyn Trigger>)>,
 }
 
 pub struct ProcessorManager {
@@ -106,25 +96,32 @@ impl ProcessorManager {
     fn get_component_for_processor(
         &self,
         component_id: &ComponentId,
-        processor_name: &str,
+        component_refs: &mut Vec<Arc<ComponentWrapper>>,
     ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        self.component_manager
+        let wrapper = self
+            .component_manager
             .get_component(component_id)
-            .and_then(|component| component.require_and_mark_ref(processor_name))
-            .map_err(|error| Self::component_resolution_error(component_id, error))
+            .map_err(|error| Self::component_resolution_error(component_id, error))?;
+        let component = wrapper
+            .require_component()
+            .map_err(|error| Self::component_resolution_error(component_id, error))?;
+        if !component_refs.iter().any(|known| Arc::ptr_eq(known, &wrapper)) {
+            component_refs.push(wrapper);
+        }
+        Ok(component)
     }
 
     fn get_typed_component<T: ?Sized, F>(
         &self,
         component_id: &ComponentId,
-        processor_name: &str,
+        component_refs: &mut Vec<Arc<ComponentWrapper>>,
         role: &str,
         cast: F,
     ) -> Result<Arc<T>, ComponentError>
     where
         F: FnOnce(Arc<dyn SdComponent>) -> Result<Arc<T>, ComponentError>,
     {
-        let component = self.get_component_for_processor(component_id, processor_name)?;
+        let component = self.get_component_for_processor(component_id, component_refs)?;
         cast(component).map_err(|error| {
             ComponentError::new(format!(
                 "'{}': expected {role}: {error}",
@@ -182,50 +179,60 @@ impl ProcessorManager {
         &self,
         config: &ProcessorConfig,
     ) -> Result<PreparedProcessor, ComponentError> {
-        let cleanup_refs_on_drop = !self.processor_exists(&config.name);
-        let result = if config.enabled {
+        let mut component_refs = Vec::new();
+        let mut wrapper = if config.enabled {
             let compatibility = self.validate_compatibility(config);
-            if compatibility.valid {
-                self.create_internal(config)
-            } else {
-                Err(ComponentError::new(
+            if !compatibility.valid {
+                return Err(ComponentError::new(
                     compatibility
                         .violations
                         .iter()
                         .map(|v| format!("{}: {}", v.rule_code, v.message))
                         .collect::<Vec<_>>()
                         .join("; "),
-                ))
+                ));
             }
+            self.create_internal(config, &mut component_refs)?
         } else {
-            Ok(Arc::new(ProcessorWrapper {
+            ProcessorWrapper {
                 name: config.name.clone(),
                 processor: None,
                 error_message: None,
-            }))
+                component_refs: Vec::new(),
+            }
         };
-        match result {
-            Ok(wrapper) => Ok(PreparedProcessor {
-                config: config.clone(),
-                wrapper,
-                component_manager: self.component_manager.clone(),
-                cleanup_refs_on_drop,
-                activated: false,
-            }),
-            Err(error) => {
-                if cleanup_refs_on_drop {
-                    self.component_manager.remove_processor_refs(&config.name);
+        let mut triggers = Vec::with_capacity(config.triggers.len());
+        if config.enabled {
+            for component_ref in &config.triggers {
+                let id = ComponentRootType::Trigger.parse_component_id(component_ref);
+                let original_len = component_refs.len();
+                match self
+                    .get_component_for_processor(&id, &mut component_refs)
+                    .and_then(|component| component.as_trigger())
+                {
+                    Ok(trigger) => triggers.push((component_ref.clone(), trigger)),
+                    Err(error) => {
+                        component_refs.truncate(original_len);
+                        warn!(
+                            "Processor[invalid-trigger] {} -> {}: {}",
+                            config.name, component_ref, error
+                        );
+                    }
                 }
-                Err(error)
             }
         }
+        wrapper.component_refs = component_refs;
+        Ok(PreparedProcessor {
+            config: config.clone(),
+            wrapper: Arc::new(wrapper),
+            triggers,
+        })
     }
 
     pub fn activate_processor(
         &self,
-        mut prepared: PreparedProcessor,
+        prepared: PreparedProcessor,
     ) -> Option<Arc<ProcessorWrapper>> {
-        prepared.activated = true;
         let name = prepared.config.name.clone();
         let old = self
             .processor_wrappers
@@ -233,14 +240,18 @@ impl ProcessorManager {
             .insert(name.clone(), prepared.wrapper.clone());
         if let Some(old_wrapper) = old.as_ref() {
             self.detach_and_close(old_wrapper);
+            for component in &old_wrapper.component_refs {
+                component.remove_ref(&name);
+            }
+        }
+        for component in &prepared.wrapper.component_refs {
+            component.add_ref(&name);
         }
         if let Some(processor) = &prepared.wrapper.processor {
             let task = self.run_manager.managed_task(processor.clone());
-            self.register_task(&prepared.config, task.clone());
+            self.register_task(&prepared.config, &prepared.triggers, task.clone());
             self.managed_tasks.write().insert(name.clone(), task);
             self.run_manager.start_auto_rename(processor.clone());
-        } else {
-            self.component_manager.remove_processor_refs(&name);
         }
         old
     }
@@ -257,6 +268,7 @@ impl ProcessorManager {
                             name: config.name.to_owned(),
                             processor: None,
                             error_message: Some(error.message),
+                            component_refs: Vec::new(),
                         }),
                     );
                 }
@@ -265,29 +277,15 @@ impl ProcessorManager {
         };
         self.activate_processor(prepared);
     }
-    fn register_task(&self, config: &ProcessorConfig, task: Arc<dyn ProcessTask>) {
-        for component_ref in &config.triggers {
-            let id = ComponentRootType::Trigger.parse_component_id(component_ref);
-            let component = match self.get_component_for_processor(&id, &config.name) {
-                Ok(c) => c,
-                Err(error) => {
-                    warn!(
-                        "Processor[invalid-trigger] {} -> {}: {}",
-                        config.name, component_ref, error
-                    );
-                    continue;
-                }
-            };
-            match component.as_trigger() {
-                Ok(trigger) => {
-                    trigger.add_task(task.clone());
-                    info!("Processor[task-added] {} {}", config.name, component_ref);
-                }
-                Err(error) => error!(
-                    "Processor[trigger-type-error] {} -> {}: {}",
-                    config.name, component_ref, error
-                ),
-            }
+    fn register_task(
+        &self,
+        config: &ProcessorConfig,
+        triggers: &[(String, Arc<dyn Trigger>)],
+        task: Arc<dyn ProcessTask>,
+    ) {
+        for (component_ref, trigger) in triggers {
+            trigger.add_task(task.clone());
+            info!("Processor[task-added] {} {}", config.name, component_ref);
         }
     }
     fn detach_and_close(&self, wrapper: &ProcessorWrapper) {
@@ -304,12 +302,13 @@ impl ProcessorManager {
     fn create_internal(
         &self,
         config: &ProcessorConfig,
-    ) -> Result<Arc<ProcessorWrapper>, ComponentError> {
+        component_refs: &mut Vec<Arc<ComponentWrapper>>,
+    ) -> Result<ProcessorWrapper, ComponentError> {
         let source_id = ComponentRootType::Source.parse_component_id(&config.source);
         let source = self
             .get_typed_component(
                 &source_id,
-                &config.name,
+                component_refs,
                 "source",
                 SdComponent::as_source,
             )
@@ -320,7 +319,7 @@ impl ProcessorManager {
         let item_file_resolver = self
             .get_typed_component(
                 &item_file_resolver_id,
-                &config.name,
+                component_refs,
                 "item file resolver",
                 SdComponent::as_item_file_resolver,
             )
@@ -330,7 +329,7 @@ impl ProcessorManager {
         let downloader = self
             .get_typed_component(
                 &downloader_id,
-                &config.name,
+                component_refs,
                 "downloader",
                 SdComponent::as_downloader,
             )
@@ -341,7 +340,7 @@ impl ProcessorManager {
         let file_mover = self
             .get_typed_component(
                 &file_mover_id,
-                &config.name,
+                component_refs,
                 "file mover",
                 SdComponent::as_file_mover,
             )
@@ -363,17 +362,18 @@ impl ProcessorManager {
             self.processing_storage.to_owned(),
             config.category.to_owned(),
             config.tags.to_owned(),
-            self.create_renamer(config)
+            self.create_renamer(config, component_refs)
                 .map_err(|error| Self::creation_error("renamer", error))?,
-            self.create_options(config, task_group)
+            self.create_options(config, task_group, component_refs)
                 .map_err(|error| Self::creation_error("options", error))?,
         ));
 
-        let wrapper = Arc::new(ProcessorWrapper {
+        let wrapper = ProcessorWrapper {
             name: config.name.to_owned(),
             processor: Some(processor),
             error_message: None,
-        });
+            component_refs: Vec::new(),
+        };
         info!("Processor[prepared] {}", config.name);
         Ok(wrapper)
     }
@@ -381,6 +381,7 @@ impl ProcessorManager {
     fn create_renamer(
         &self,
         config: &ProcessorConfig,
+        component_refs: &mut Vec<Arc<ComponentWrapper>>,
     ) -> Result<Renamer, ComponentError> {
         let mut variable_replacers: Vec<Arc<dyn VariableReplacer>> =
             Vec::with_capacity(config.options.variable_replacers.len());
@@ -388,7 +389,7 @@ impl ProcessorManager {
             let component_id = ComponentRootType::VariableReplacer
                 .parse_component_id(&replacer_config.id);
             let replacer = Self::component_stage(
-                self.get_component_for_processor(&component_id, &config.name)
+                self.get_component_for_processor(&component_id, component_refs)
                     .and_then(|component| component.as_variable_replacer()),
                 "renamer.variable-replacer",
             )?;
@@ -406,7 +407,7 @@ impl ProcessorManager {
                 let component_id =
                     ComponentRootType::Trimmer.parse_component_id(trimmer_id);
                 trimmers.push(Self::component_stage(
-                    self.get_component_for_processor(&component_id, &config.name)
+                    self.get_component_for_processor(&component_id, component_refs)
                         .and_then(|component| component.as_trimmer()),
                     "renamer.trimmer",
                 )?);
@@ -421,7 +422,7 @@ impl ProcessorManager {
                 let component_id =
                     ComponentRootType::VariableProvider.parse_component_id(provider_id);
                 chain.push(Self::component_stage(
-                    self.get_component_for_processor(&component_id, &config.name)
+                    self.get_component_for_processor(&component_id, component_refs)
                         .and_then(|component| component.as_variable_provider()),
                     "renamer.variable-process",
                 )?);
@@ -467,6 +468,7 @@ impl ProcessorManager {
         &self,
         config: &ProcessorConfig,
         group: String,
+        component_refs: &mut Vec<Arc<ComponentWrapper>>,
     ) -> Result<ProcessorOptions, ComponentError> {
         let opt = &config.options;
         let mut item_filters: Vec<Arc<dyn SourceItemFilter>> = vec![];
@@ -483,7 +485,7 @@ impl ProcessorManager {
         for x in &opt.item_filters {
             let component_id = ComponentRootType::SourceItemFilter.parse_component_id(x);
             item_filters.push(
-                self.get_component_for_processor(&component_id, &config.name)?
+                self.get_component_for_processor(&component_id, component_refs)?
                     .as_source_item_filter()?,
             );
         }
@@ -493,7 +495,7 @@ impl ProcessorManager {
         for x in &opt.source_file_filters {
             let component_id = ComponentRootType::SourceFileFilter.parse_component_id(x);
             source_file_filters.push(
-                self.get_component_for_processor(&component_id, &config.name)?
+                self.get_component_for_processor(&component_id, component_refs)?
                     .as_source_file_filter()?,
             );
         }
@@ -503,7 +505,7 @@ impl ProcessorManager {
         for x in &opt.variable_providers {
             let component_id = ComponentRootType::VariableProvider.parse_component_id(x);
             variable_providers.push(
-                self.get_component_for_processor(&component_id, &config.name)?
+                self.get_component_for_processor(&component_id, component_refs)?
                     .as_variable_provider()?,
             );
         }
@@ -521,7 +523,7 @@ impl ProcessorManager {
         for x in &opt.file_taggers {
             let component_id = ComponentRootType::FileTagger.parse_component_id(x);
             file_taggers.push(
-                self.get_component_for_processor(&component_id, &config.name)?
+                self.get_component_for_processor(&component_id, component_refs)?
                     .as_file_tagger()?,
             );
         }
@@ -541,7 +543,7 @@ impl ProcessorManager {
         for x in &opt.file_content_filters {
             let component_id = ComponentRootType::FileContentFilter.parse_component_id(x);
             file_content_filters.push(
-                self.get_component_for_processor(&component_id, &config.name)?
+                self.get_component_for_processor(&component_id, component_refs)?
                     .as_file_content_filter()?,
             );
         }
@@ -561,7 +563,7 @@ impl ProcessorManager {
         for x in &opt.item_content_filters {
             let component_id = ComponentRootType::ItemContentFilter.parse_component_id(x);
             item_content_filters.push(
-                self.get_component_for_processor(&component_id, &config.name)?
+                self.get_component_for_processor(&component_id, component_refs)?
                     .as_item_content_filter()?,
             );
         }
@@ -572,7 +574,7 @@ impl ProcessorManager {
             let component_id = ComponentRootType::ProcessListener
                 .parse_component_id(&listener_config.id);
             let listener = self
-                .get_component_for_processor(&component_id, &config.name)?
+                .get_component_for_processor(&component_id, component_refs)?
                 .as_process_listener()?;
             process_listeners.entry(listener_config.mode).or_default().push(listener);
         }
@@ -581,14 +583,14 @@ impl ProcessorManager {
         let file_exists_detector_id = ComponentRootType::FileExistsDetector
             .parse_component_id(opt.file_exists_detector.as_deref().unwrap_or("simple"));
         let file_exists_detector = self
-            .get_component_for_processor(&file_exists_detector_id, &config.name)?
+            .get_component_for_processor(&file_exists_detector_id, component_refs)?
             .as_file_exists_detector()?;
         let file_replacement_decider_id = ComponentRootType::FileReplacementDecider
             .parse_component_id(
                 opt.file_replacement_decider.as_deref().unwrap_or("never"),
             );
         let file_replacement_decider = self
-            .get_component_for_processor(&file_replacement_decider_id, &config.name)?
+            .get_component_for_processor(&file_replacement_decider_id, component_refs)?
             .as_file_replacement_decider()?;
 
         Ok(ProcessorOptions {
@@ -641,8 +643,8 @@ impl ProcessorManager {
             fetch_limit: config.options.fetch_limit,
             item_error_continue: config.options.item_error_continue,
             pointer_batch_mode: config.options.pointer_batch_mode,
-            item_rules: self.apply_item_grouping(config, opt, identity_filter)?,
-            file_rules: self.apply_file_grouping(config, opt)?,
+            item_rules: self.apply_item_grouping(opt, identity_filter, component_refs)?,
+            file_rules: self.apply_file_grouping(opt, component_refs)?,
             download_options: config.options.download_options.clone().into(),
         })
     }
@@ -660,7 +662,9 @@ impl ProcessorManager {
         info!("Processor[destroying] {}", name);
         let Some(wrapper) = removed else { return };
         debug!("ProcessorWp[on-destroy-arc] {}", Arc::strong_count(&wrapper));
-        self.component_manager.remove_processor_refs(name);
+        for component in &wrapper.component_refs {
+            component.remove_ref(name);
+        }
         self.detach_and_close(&wrapper);
         if let Some(processor) = &wrapper.processor {
             debug!("Processor[on-destroy-arc] {}", Arc::strong_count(processor));
@@ -724,9 +728,9 @@ impl ProcessorManager {
 
     fn apply_item_grouping(
         &self,
-        cfg: &ProcessorConfig,
         opt: &ProcessorOptionConfig,
         identity_filter: Arc<SourceItemIdentityFilter>,
+        component_refs: &mut Vec<Arc<ComponentWrapper>>,
     ) -> Result<Vec<ItemRule>, ComponentError> {
         let mut result = vec![];
         for item_opt_cfg in opt.item_grouping.iter() {
@@ -756,7 +760,7 @@ impl ProcessorManager {
                         let cid =
                             ComponentRootType::SourceItemFilter.parse_component_id(name);
                         let filter = self
-                            .get_component_for_processor(&cid, &cfg.name)?
+                            .get_component_for_processor(&cid, component_refs)?
                             .as_source_item_filter()?;
                         filters.push(filter);
                     }
@@ -783,7 +787,7 @@ impl ProcessorManager {
                         let cid =
                             ComponentRootType::VariableProvider.parse_component_id(name);
                         let provider = self
-                            .get_component_for_processor(&cid, &cfg.name)?
+                            .get_component_for_processor(&cid, component_refs)?
                             .as_variable_provider()?;
                         providers.push(provider);
                     }
@@ -827,8 +831,8 @@ impl ProcessorManager {
 
     fn apply_file_grouping(
         &self,
-        cfg: &ProcessorConfig,
         opt: &ProcessorOptionConfig,
+        component_refs: &mut Vec<Arc<ComponentWrapper>>,
     ) -> Result<Vec<FileRule>, ComponentError> {
         let mut result = vec![];
         for file_opt_cfg in opt.file_grouping.iter() {
@@ -866,7 +870,7 @@ impl ProcessorManager {
                         let cid =
                             ComponentRootType::FileContentFilter.parse_component_id(name);
                         let filter = self
-                            .get_component_for_processor(&cid, &cfg.name)?
+                            .get_component_for_processor(&cid, component_refs)?
                             .as_file_content_filter()?;
                         filters.push(filter);
                     }
@@ -990,10 +994,12 @@ fn processor_component_ids(config: &ProcessorConfig) -> Vec<ComponentId> {
     ids
 }
 
+#[derive(Default)]
 pub struct ProcessorWrapper {
     pub name: String,
     pub processor: Option<Arc<SourceProcessor>>,
     pub error_message: Option<String>,
+    component_refs: Vec<Arc<ComponentWrapper>>,
 }
 
 impl Drop for ProcessorWrapper {
@@ -1004,6 +1010,71 @@ impl Drop for ProcessorWrapper {
 
 #[cfg(test)]
 mod test {
+    #[tokio::test]
+    async fn replacement_commits_only_actual_instance_refs() {
+        use crate::config::ConfigOperator;
+
+        let config_operator =
+            Arc::new(YamlConfigOperator::new("./tests/resources/config.yaml"));
+        let component_manager = Arc::new(ComponentManager::new(config_operator.clone()));
+        component_manager
+            .register_suppliers(get_build_in_component_supplier(&component_manager))
+            .unwrap();
+        let manager = ProcessorManager::new(
+            component_manager.clone(),
+            Arc::new(MemoryProcessingStorage::new()),
+            Arc::new(ProcessorRunManager::default()),
+        );
+        let mut config = config_operator.get_processor_config("normal-case").unwrap();
+        manager.create_processor(&config);
+        let old = manager.get_processor(&config.name).unwrap();
+        let source_a = component_manager
+            .get_component(
+                &ComponentRootType::Source.parse_component_id("system-file:test"),
+            )
+            .unwrap();
+        let source_b = component_manager
+            .get_component(
+                &ComponentRootType::Source
+                    .parse_component_id("system-file:metadata-smoke"),
+            )
+            .unwrap();
+        source_a.add_ref("another-processor");
+        config.source = "system-file:metadata-smoke".to_owned();
+        let prepared = manager.prepare_processor(&config).unwrap();
+        assert!(source_a.get_refs().contains(&config.name));
+        assert!(!source_b.get_refs().contains(&config.name));
+        drop(prepared);
+        assert!(source_a.get_refs().contains(&config.name));
+        assert!(!source_b.get_refs().contains(&config.name));
+
+        let mut invalid = config.clone();
+        invalid.downloader = "missing".to_owned();
+        assert!(manager.prepare_processor(&invalid).is_err());
+        assert!(Arc::ptr_eq(&old, &manager.get_processor(&config.name).unwrap()));
+        assert!(source_a.get_refs().contains(&config.name));
+        assert!(!source_b.get_refs().contains(&config.name));
+
+        manager.activate_processor(manager.prepare_processor(&config).unwrap());
+        assert!(!source_a.get_refs().contains(&config.name));
+        assert!(source_a.get_refs().contains("another-processor"));
+        assert!(source_b.get_refs().contains(&config.name));
+        let resolver = component_manager
+            .get_component(
+                &ComponentRootType::ItemFileResolver
+                    .parse_component_id("system-file:test"),
+            )
+            .unwrap();
+        assert!(resolver.get_refs().contains(&config.name));
+
+        // Removing the cache entry must not lose the instance's cleanup target.
+        component_manager.destroy(&source_b.id);
+        manager.destroy_processor(&config.name);
+        assert!(!source_b.get_refs().contains(&config.name));
+        assert!(!resolver.get_refs().contains(&config.name));
+        drop(old);
+    }
+
     use crate::component_manager::ComponentManager;
     use crate::components::get_build_in_component_supplier;
     use crate::config::{
@@ -1177,8 +1248,9 @@ mod test {
             tags: HashSet::new(),
         };
 
-        let options =
-            manager.create_options(&config, "filter-options".to_owned()).unwrap();
+        let options = manager
+            .create_options(&config, "filter-options".to_owned(), &mut Vec::new())
+            .unwrap();
 
         assert_eq!(options.file_content_filters.len(), 1);
         assert_eq!(options.item_content_filters.len(), 1);
@@ -1217,21 +1289,8 @@ mod test {
             }],
             ..Default::default()
         };
-        let config = ProcessorConfig {
-            name: "file-group-patterns".to_owned(),
-            enabled: true,
-            save_path: String::new(),
-            triggers: Vec::new(),
-            source: String::new(),
-            item_file_resolver: String::new(),
-            downloader: String::new(),
-            file_mover: String::new(),
-            options: options.clone(),
-            category: None,
-            tags: HashSet::new(),
-        };
 
-        let rules = manager.apply_file_grouping(&config, &options).unwrap();
+        let rules = manager.apply_file_grouping(&options, &mut Vec::new()).unwrap();
         let strategy = &rules[0].strategy;
 
         assert_eq!(
@@ -1286,7 +1345,14 @@ mod test {
             tags: HashSet::new(),
         };
 
-        let renamer = manager.create_renamer(&config).unwrap();
+        manager.create_processor(&ProcessorConfig {
+            source: "system-file:test".to_owned(),
+            item_file_resolver: "system-file:test".to_owned(),
+            downloader: "http".to_owned(),
+            file_mover: "system-file".to_owned(),
+            ..config.clone()
+        });
+        let renamer = manager.create_renamer(&config, &mut Vec::new()).unwrap();
         let item = SourceItem {
             title: "series:01".to_owned(),
             content_type: "video/mp4".to_owned(),

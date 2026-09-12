@@ -288,12 +288,6 @@ impl ComponentManager {
         self.component_wrappers.read().values().cloned().collect()
     }
 
-    pub fn remove_processor_refs(&self, processor_name: &str) {
-        for wrapper in self.component_wrappers.read().values() {
-            wrapper.remove_ref(processor_name);
-        }
-    }
-
     pub fn for_each_trigger<F>(&self, mut f: F)
     where
         F: FnMut(&ComponentWrapper, Arc<dyn Trigger>),
@@ -343,13 +337,8 @@ impl ComponentWrapper {
         ))
     }
 
-    pub fn require_and_mark_ref(
-        &self,
-        processor_name: &str,
-    ) -> Result<Arc<dyn SdComponent>, ComponentError> {
-        let component = self.require_component()?;
+    pub fn add_ref(&self, processor_name: &str) {
         self.processor_refs.write().insert(processor_name.to_owned());
-        Ok(component)
     }
 
     pub fn remove_ref(&self, processor_name: &str) {

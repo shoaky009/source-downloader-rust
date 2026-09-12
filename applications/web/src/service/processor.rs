@@ -619,11 +619,9 @@ mod tests {
     #[test]
     fn processor_info_exposes_failed_wrapper_state() {
         let config = processor_config("broken");
-        let wrapper = ProcessorWrapper {
-            name: config.name.clone(),
-            processor: None,
-            error_message: Some("component failed".to_owned()),
-        };
+        let mut wrapper = ProcessorWrapper::default();
+        wrapper.name = config.name.clone();
+        wrapper.error_message = Some("component failed".to_owned());
 
         let value = source_downloader_sdk::serde_json::to_value(
             ProcessorInfo::from_config(&config, Some(&wrapper)),
