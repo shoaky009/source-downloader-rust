@@ -95,6 +95,11 @@ impl<'a, T: Send + 'a, U: Send + 'a> AsyncExpandIterator<'a, T, U> {
 
             self.current_expanded = result.items;
 
+            // 单个条目没有展开结果，不代表后续主 RSS 条目也已耗尽。
+            if self.current_expanded.is_empty() {
+                continue;
+            }
+
             // 如果展开器返回 false，停止继续展开
             if !result.has_next {
                 return Ok(self.current_expanded.pop());
@@ -211,4 +216,38 @@ pub fn parse_rfc2822_datetime(
     // RSS 的 pub_date 格式: "Wed, 16 Dec 2025 12:30:45 +0800"
     let dt: OffsetDateTime = OffsetDateTime::parse(date_str, &well_known::Rfc2822)?;
     Ok(dt)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct MikanStyleExpander;
+
+    #[async_trait]
+    impl ExpandHandler<Vec<u32>, u32> for MikanStyleExpander {
+        async fn expand(
+            &self,
+            items: Vec<u32>,
+        ) -> Result<IterationResult<u32>, ProcessingError> {
+            Ok(IterationResult { items, has_next: false })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_async_expand_continues_after_empty_results() {
+        for items in [
+            vec![vec![], vec![], vec![1], vec![]],
+            vec![vec![1], vec![], vec![], vec![2], vec![]],
+            vec![vec![], vec![]],
+        ] {
+            let expected: Vec<u32> = items.iter().flatten().copied().collect();
+            let result =
+                AsyncExpandIterator::new(items, 100, Box::new(MikanStyleExpander))
+                    .collect_all()
+                    .await
+                    .unwrap();
+            assert_eq!(result, expected);
+        }
+    }
 }
