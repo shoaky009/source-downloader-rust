@@ -178,7 +178,8 @@ impl MikanVariableProvider {
         }
         if let Some(date) = subject.date {
             variables.insert("date".to_string(), date.clone());
-            if let Some((year, month)) = date.split_once('-') {
+            let mut parts = date.split('-');
+            if let (Some(year), Some(month)) = (parts.next(), parts.next()) {
                 variables.insert("year".to_string(), year.to_string());
                 variables.insert("month".to_string(), month.to_string());
             }
@@ -362,6 +363,56 @@ mod tests {
     fn parses_season() {
         assert_eq!(Some(2), parse_season("Show S02"));
         assert_eq!(Some(3), parse_season("动画 第三季"));
+    }
+
+    #[tokio::test]
+    async fn provides_air_date_variables() {
+        use source_downloader_sdk::{http::Uri, time::OffsetDateTime};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        for (route, body) in [
+            (
+                "/Home/Episode/test",
+                r#"<a class="bangumi-title" href="/Home/Bangumi/42">Show</a>"#,
+            ),
+            (
+                "/Home/Bangumi/42",
+                r#"<p class="bangumi-info"><a href="https://bgm.tv/subject/42">Bangumi</a></p>"#,
+            ),
+        ] {
+            Mock::given(method("GET"))
+                .and(path(route))
+                .respond_with(ResponseTemplate::new(200).set_body_string(body))
+                .mount(&server)
+                .await;
+        }
+        Mock::given(method("GET"))
+            .and(path("/v0/subjects/42"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "name": "Show", "name_cn": "", "date": "2023-09-29"
+            })))
+            .mount(&server)
+            .await;
+        let mut provider = provider();
+        provider.mikan_base = server.uri();
+        provider.bangumi = BangumiClient::new(provider.http.clone(), server.uri(), None);
+        let item = SourceItem {
+            title: "Show".into(),
+            link: format!("{}/Home/Episode/test", server.uri()).parse().unwrap(),
+            datetime: OffsetDateTime::UNIX_EPOCH,
+            content_type: String::new(),
+            download_uri: Uri::from_static("https://example.com/file"),
+            attrs: Map::new(),
+            tags: vec![],
+            identity: None,
+        };
+
+        let variables = provider.item_variables(&item).await.unwrap();
+        assert_eq!(variables.get("year").map(String::as_str), Some("2023"));
+        assert_eq!(variables.get("month").map(String::as_str), Some("09"));
+        assert_eq!(variables.get("date").map(String::as_str), Some("2023-09-29"));
     }
 
     #[test]
