@@ -240,6 +240,17 @@ impl ExpandHandler<SourceItem, PointedItem> for MikanItemExpandHandler<'_> {
         &self,
         item: SourceItem,
     ) -> Result<IterationResult<PointedItem>, ProcessingError> {
+        // latest controls history expansion, not whether the RSS item is returned.
+        if item.datetime <= self.pointer.latest {
+            return Ok(IterationResult {
+                items: vec![PointedItem {
+                    source_item: item,
+                    item_pointer: EMPTY_POINTER.clone(),
+                }],
+                has_next: false,
+            });
+        }
+
         let fansub_rss = self
             .client
             .get_episode_page_info(&item.link.to_string())
@@ -277,11 +288,11 @@ impl ExpandHandler<SourceItem, PointedItem> for MikanItemExpandHandler<'_> {
             .map_err(|e| ProcessingError::non_retryable(e.to_string()))?;
         let mut fansub_items: Vec<SourceItem> =
             channel.items.iter().filter_map(MikanSource::convert_item).collect();
-        fansub_items.sort_by_key(|a| a.datetime);
         if !fansub_items.contains(&item) {
             tracing::debug!("Item不在RSS列表中: {:?}", item);
             fansub_items.push(item);
         }
+        fansub_items.sort_by_key(|a| a.datetime);
 
         let key = format!("{}-{}", bangumi_id, subgroup_id);
         let result: Vec<PointedItem> = fansub_items
@@ -289,7 +300,7 @@ impl ExpandHandler<SourceItem, PointedItem> for MikanItemExpandHandler<'_> {
             .filter(|x| {
                 match self.pointer.shows.get(&key) {
                     None => true,                     // 没有记录，保留
-                    Some(date) => *date > x.datetime, // 必须比记录的时间晚
+                    Some(date) => x.datetime > *date, // 必须比记录的时间晚
                 }
             })
             .map(|it| {
@@ -302,7 +313,7 @@ impl ExpandHandler<SourceItem, PointedItem> for MikanItemExpandHandler<'_> {
             })
             .collect();
 
-        Ok(IterationResult { items: result, has_next: false })
+        Ok(IterationResult { items: result, has_next: true })
     }
 }
 
@@ -360,6 +371,137 @@ impl SourcePointer for MikanSourcePointer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures_util::TryStreamExt;
+    use wiremock::matchers::path;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn rss_item(base_url: &str, day: u8) -> String {
+        format!(
+            r#"<item>
+                <title>Episode {day}</title>
+                <link>{base_url}/episode/{day}</link>
+                <torrent xmlns="https://mikanani.me/0.1/">
+                    <pubDate>2026-08-{day:02}T12:00:00</pubDate>
+                </torrent>
+                <enclosure type="application/x-bittorrent" length="1"
+                    url="{base_url}/download/{day}.torrent"/>
+            </item>"#
+        )
+    }
+
+    fn rss(items: &str) -> String {
+        format!(
+            r#"<rss version="2.0" xmlns:torrent="https://mikanani.me/0.1/">
+                <channel><title>Mikan</title><link>https://example.com</link>
+                <description>Mikan</description>{items}</channel></rss>"#
+        )
+    }
+
+    fn date(day: u8) -> OffsetDateTime {
+        PrimitiveDateTime::parse(&format!("2026-08-{day:02}T12:00:00"), DATETIME_FORMAT)
+            .unwrap()
+            .assume_offset(TIME_OFFSET)
+    }
+
+    async fn mock_source(server: &MockServer) -> MikanSource {
+        Mock::given(path("/rss"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(rss(&rss_item(&server.uri(), 3))),
+            )
+            .mount(server)
+            .await;
+        let http_client = reqwest::Client::builder().no_proxy().build().unwrap();
+        MikanSource {
+            url: format!("{}/rss", server.uri()),
+            all_episode: true,
+            mikan_client: Arc::new(MikanClient::new(None, http_client.clone())),
+            http_client,
+        }
+    }
+
+    async fn mock_history(server: &MockServer) {
+        Mock::given(path("/episode/3"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"<a class="mikan-rss" href="/fansub?bangumiId=1&amp;subgroupid=2"></a>"#,
+            ))
+            .expect(1)
+            .mount(server)
+            .await;
+        // The main RSS item is absent from the history feed and must be appended.
+        Mock::given(path("/fansub"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(rss(&format!(
+                "{}{}",
+                rss_item(&server.uri(), 2),
+                rss_item(&server.uri(), 1),
+            ))))
+            .expect(1)
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_all_episode_skips_history_at_or_before_latest() {
+        let server = MockServer::start().await;
+        let source = mock_source(&server).await;
+        Mock::given(path("/episode/3"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        for latest in [date(3), date(4)] {
+            let pointer = MikanSourcePointer { latest, shows: HashMap::new() };
+            let items: Vec<_> =
+                source.fetch(&pointer, 10).await.unwrap().try_collect().await.unwrap();
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].source_item.datetime, date(3));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_all_episode_does_not_return_processed_history() {
+        let server = MockServer::start().await;
+        let source = mock_source(&server).await;
+        mock_history(&server).await;
+        let mut pointer = MikanSourcePointer {
+            latest: date(2),
+            shows: HashMap::from([("1-2".to_string(), date(2))]),
+        };
+        let items: Vec<_> =
+            source.fetch(&pointer, 10).await.unwrap().try_collect().await.unwrap();
+        assert_eq!(
+            items.iter().map(|item| item.source_item.datetime).collect::<Vec<_>>(),
+            vec![date(3)],
+        );
+        for item in items {
+            pointer.update(&item.source_item, item.item_pointer.as_ref());
+        }
+        let pointer = source.parse_raw_pointer(pointer.dump());
+        let items: Vec<_> = source
+            .fetch(pointer.as_ref(), 10)
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].source_item.datetime, date(3));
+    }
+
+    #[tokio::test]
+    async fn test_all_episode_returns_oldest_history_first_with_limit() {
+        let server = MockServer::start().await;
+        let source = mock_source(&server).await;
+        mock_history(&server).await;
+        let pointer = MikanSourcePointer { latest: date(2), shows: HashMap::new() };
+        let items: Vec<_> =
+            source.fetch(&pointer, 2).await.unwrap().try_collect().await.unwrap();
+        assert_eq!(
+            items.iter().map(|item| item.source_item.datetime).collect::<Vec<_>>(),
+            vec![date(1), date(2)],
+        );
+    }
 
     #[test]
     fn converts_mikan_rss_item() {
