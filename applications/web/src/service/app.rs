@@ -35,5 +35,17 @@ async fn reload_core_application(
 
 #[axum::debug_handler]
 async fn get_info() -> Json<Value> {
-    Json(json!({ "buildInfo": format!("{:#?}", build_info()) }))
+    Json(json!({ "buildInfo": build_info() }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_info;
+
+    #[tokio::test]
+    async fn application_info_returns_structured_build_info() {
+        let response = get_info().await;
+
+        assert!(response.0["buildInfo"].is_object());
+    }
 }
