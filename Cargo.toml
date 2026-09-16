@@ -4,7 +4,7 @@ members = ["source-downloader-core", "source-downloader-sdk", "applications/web"
 
 [profile.release]
 opt-level = "z"
-lto = true
+lto = "thin"
 codegen-units = 1
 panic = "abort"
 strip = true
