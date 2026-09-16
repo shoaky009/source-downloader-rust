@@ -108,8 +108,9 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn client(server: &MockServer) -> BangumiClient {
-        let http =
-            HttpClient::from_reqwest(http::client_builder().no_proxy().build().unwrap());
+        let http = HttpClient::from_reqwest(
+            http::client_builder().unwrap().no_proxy().build().unwrap(),
+        );
         BangumiClient::new(http, server.uri(), Some("token".to_string()))
     }
 

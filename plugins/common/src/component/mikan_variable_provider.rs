@@ -326,7 +326,9 @@ mod tests {
     }
 
     fn provider() -> MikanVariableProvider {
-        let http = HttpClient::from_reqwest(client_builder().no_proxy().build().unwrap());
+        let http = HttpClient::from_reqwest(
+            client_builder().unwrap().no_proxy().build().unwrap(),
+        );
         MikanVariableProvider {
             bangumi: BangumiClient::new(http.clone(), "http://unused".into(), None),
             http,

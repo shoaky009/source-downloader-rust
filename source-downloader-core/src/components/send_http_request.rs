@@ -57,7 +57,15 @@ impl ComponentSupplier for SendHttpRequestSupplier {
                 "Invalid configuration at 'url': Invalid HTTP request URL: {error}"
             ))
         })?;
-        Ok(Arc::new(SendHttpRequest { config, client: reqwest::Client::new() }))
+        let client = source_downloader_sdk::http_client::client_builder()?
+            .build()
+            .map_err(|error| {
+                ComponentError::new(format!(
+                    "Failed to build HTTP client: {}",
+                    format_error_chain(&error)
+                ))
+            })?;
+        Ok(Arc::new(SendHttpRequest { config, client }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {

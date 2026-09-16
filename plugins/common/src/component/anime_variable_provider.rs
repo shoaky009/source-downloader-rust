@@ -390,8 +390,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let http =
-            HttpClient::from_reqwest(http::client_builder().no_proxy().build().unwrap());
+        let http = HttpClient::from_reqwest(
+            http::client_builder().unwrap().no_proxy().build().unwrap(),
+        );
         let provider = AnimeVariableProvider {
             anilist: AniListClient::new(
                 http.clone(),

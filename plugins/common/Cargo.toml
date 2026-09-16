@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-source-downloader-sdk = { path = "../../source-downloader-sdk" }
+source-downloader-sdk = { path = "../../source-downloader-sdk", features = ["http-client"] }
 serde = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
 rss-for-mikan = { workspace = true }

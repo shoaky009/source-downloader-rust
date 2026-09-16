@@ -48,12 +48,14 @@ impl ComponentSupplier for HttpDownloaderSupplier {
                 "Invalid configuration at 'parallelism': HTTP downloader parallelism must be greater than zero",
             ));
         }
-        let client = reqwest::Client::builder().build().map_err(|error| {
-            ComponentError::new(format!(
-                "Failed to build HTTP client: {}",
-                format_error_chain(&error)
-            ))
-        })?;
+        let client = source_downloader_sdk::http_client::client_builder()?
+            .build()
+            .map_err(|error| {
+                ComponentError::new(format!(
+                    "Failed to build HTTP client: {}",
+                    format_error_chain(&error)
+                ))
+            })?;
         Ok(Arc::new(HttpDownloader {
             path: config.download_path,
             client,

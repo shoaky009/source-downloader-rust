@@ -60,7 +60,7 @@ impl ComponentSupplier for HtmlFileResolverSupplier {
             .unwrap_or(false);
         let no_proxy = p.get("no-proxy").and_then(Value::as_bool).unwrap_or(false);
         let client = if no_proxy {
-            http::client_builder().no_proxy().build().map_err(|error| {
+            http::client_builder()?.no_proxy().build().map_err(|error| {
                 ComponentError::new(format!(
                     "Failed to build HTML client: {}",
                     format_error_chain(&error)

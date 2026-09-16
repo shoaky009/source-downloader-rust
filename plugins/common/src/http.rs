@@ -14,7 +14,7 @@ pub(crate) struct HttpClient {
 
 impl HttpClient {
     pub(crate) fn new() -> Result<Self, ComponentError> {
-        client_builder().build().map(Self::from_reqwest).map_err(|error| {
+        client_builder()?.build().map(Self::from_reqwest).map_err(|error| {
             ComponentError::new(format!(
                 "Failed to build common HTTP client: {}",
                 format_error_chain(&error)
@@ -79,8 +79,10 @@ impl HttpClient {
     }
 }
 
-pub(crate) fn client_builder() -> ClientBuilder {
-    Client::builder().timeout(DEFAULT_TIMEOUT).cookie_store(true)
+pub(crate) fn client_builder() -> Result<ClientBuilder, ComponentError> {
+    Ok(source_downloader_sdk::http_client::client_builder()?
+        .timeout(DEFAULT_TIMEOUT)
+        .cookie_store(true))
 }
 
 pub(crate) fn build_client() -> Result<Client, ComponentError> {
@@ -127,6 +129,32 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
+    async fn clients_keep_cookies_isolated() {
+        let server = MockServer::start().await;
+        Mock::given(path("/login"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("Set-Cookie", "session=one; Path=/"),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(path("/check"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let first = client_builder().unwrap().no_proxy().build().unwrap();
+        let second = client_builder().unwrap().no_proxy().build().unwrap();
+        first.get(format!("{}/login", server.uri())).send().await.unwrap();
+        first.get(format!("{}/check", server.uri())).send().await.unwrap();
+        second.get(format!("{}/check", server.uri())).send().await.unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests[1].headers.get("cookie").unwrap(), "session=one");
+        assert!(!requests[2].headers.contains_key("cookie"));
+    }
+
+    #[tokio::test]
     async fn execute_returns_response_for_successful_request() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -136,7 +164,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_builder().no_proxy().build().unwrap();
+        let client = client_builder().unwrap().no_proxy().build().unwrap();
         let response = execute(
             &client,
             client.get(format!("{}/items", server.uri())),
@@ -157,7 +185,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_builder().no_proxy().build().unwrap();
+        let client = client_builder().unwrap().no_proxy().build().unwrap();
         let error = execute(
             &client,
             client.get(format!("{}/items", server.uri())),
@@ -189,8 +217,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client =
-            HttpClient::from_reqwest(client_builder().no_proxy().build().unwrap());
+        let client = HttpClient::from_reqwest(
+            client_builder().unwrap().no_proxy().build().unwrap(),
+        );
         let value: serde_json::Value = client
             .json(client.get(format!("{}/json", server.uri())), "Fetch JSON")
             .await
@@ -222,7 +251,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_builder().no_proxy().build().unwrap();
+        let client = client_builder().unwrap().no_proxy().build().unwrap();
         let error = execute(
             &client,
             client.get(format!("{}/items", server.uri())),

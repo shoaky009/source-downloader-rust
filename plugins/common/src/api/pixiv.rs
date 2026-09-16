@@ -200,7 +200,9 @@ mod tests {
 
     fn client(server: &MockServer) -> PixivClient {
         PixivClient::new(
-            HttpClient::from_reqwest(http::client_builder().no_proxy().build().unwrap()),
+            HttpClient::from_reqwest(
+                http::client_builder().unwrap().no_proxy().build().unwrap(),
+            ),
             server.uri(),
             "123_token",
         )

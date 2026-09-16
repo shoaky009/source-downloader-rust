@@ -94,7 +94,9 @@ mod tests {
 
     fn client(server: &MockServer) -> PatreonClient {
         PatreonClient::new(
-            HttpClient::from_reqwest(http::client_builder().no_proxy().build().unwrap()),
+            HttpClient::from_reqwest(
+                http::client_builder().unwrap().no_proxy().build().unwrap(),
+            ),
             server.uri(),
             "session_token",
             HashMap::new(),
@@ -139,7 +141,9 @@ mod tests {
             .mount(&server)
             .await;
         let client = PatreonClient::new(
-            HttpClient::from_reqwest(http::client_builder().no_proxy().build().unwrap()),
+            HttpClient::from_reqwest(
+                http::client_builder().unwrap().no_proxy().build().unwrap(),
+            ),
             server.uri(),
             "ignored",
             HashMap::from([

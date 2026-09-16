@@ -5,6 +5,8 @@ pub use serde_json;
 use std::fmt::{Display, Formatter};
 pub use time;
 pub mod component;
+#[cfg(feature = "http-client")]
+pub mod http_client;
 pub mod instance;
 pub mod plugin;
 pub mod storage;

@@ -6,8 +6,12 @@ edition = "2024"
 
 [features]
 test = []
+http-client = ["dep:reqwest", "dep:rustls", "dep:rustls-platform-verifier"]
 
 [dependencies]
+reqwest = { workspace = true, features = ["rustls", "http2"], optional = true }
+rustls = { workspace = true, optional = true }
+rustls-platform-verifier = { workspace = true, optional = true }
 http = { workspace = true }
 http-serde = { workspace = true }
 time = { workspace = true, features = ["serde", "parsing", "formatting", "macros"] }
