@@ -29,4 +29,4 @@ VOLUME ["/app/data", "/app/plugins"]
 
 EXPOSE 8080
 
-ENTRYPOINT ["/app/source-downloader-web"]
+ENTRYPOINT ["heaptrack", "-o", "/tmp/heaptrack", "/app/source-downloader-web"]
