@@ -1,4 +1,5 @@
 use crate::components::holding_task_trigger::HoldingTaskTrigger;
+use chrono::Local;
 use serde::Deserialize;
 use source_downloader_sdk::component::{
     ComponentError, ComponentSupplier, ComponentType, ProcessTask, SdComponent,
@@ -35,7 +36,7 @@ impl ComponentSupplier for CronTriggerSupplier {
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Runs processing tasks according to a cron expression."
+            description: "Runs processing tasks according to a cron expression in the system local timezone."
                 .to_owned(),
             #[rustfmt::skip]
             props_json_schema: Some(json!({
@@ -181,25 +182,27 @@ async fn run_scheduler(
     shutdown_receiver: oneshot::Receiver<()>,
 ) -> Result<(), JobSchedulerError> {
     let mut scheduler = JobScheduler::new().await?;
-    let job = Job::new_async(expression.clone(), move |_uuid, _scheduler| {
-        let task_groups = Arc::clone(&task_groups);
-        Box::pin(async move {
-            for group in task_groups.iter() {
-                for task in group {
-                    if let Err(error) = task.run().await {
-                        tracing::error!(
-                            task = %task.name(),
-                            error = %error,
-                            "Task processing failed"
-                        );
+    let timezone = *Local::now().offset();
+    let job =
+        Job::new_async_tz(expression.clone(), timezone, move |_uuid, _scheduler| {
+            let task_groups = Arc::clone(&task_groups);
+            Box::pin(async move {
+                for group in task_groups.iter() {
+                    for task in group {
+                        if let Err(error) = task.run().await {
+                            tracing::error!(
+                                task = %task.name(),
+                                error = %error,
+                                "Task processing failed"
+                            );
+                        }
                     }
                 }
-            }
-        })
-    })?;
+            })
+        })?;
     scheduler.add(job).await?;
     scheduler.start().await?;
-    tracing::info!(expression = %expression, "Cron trigger started");
+    tracing::info!(expression = %expression, offset = %timezone, "Cron trigger started");
     let _ = shutdown_receiver.await;
     scheduler.shutdown().await
 }

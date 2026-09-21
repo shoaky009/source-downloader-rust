@@ -188,6 +188,7 @@ fn parse_processing_status(value: &str) -> Result<ProcessingStatus, AppError> {
         "NO_FILES" | "NoFiles" => ProcessingStatus::NoFiles,
         "FAILURE" | "Failure" => ProcessingStatus::Failure,
         "CANCELLED" | "Cancelled" => ProcessingStatus::Cancelled,
+        "INIT" | "Init" => ProcessingStatus::Init,
         _ => {
             return Err(AppError::BadRequest(format!(
                 "Unknown processing status: {value}"
@@ -446,6 +447,43 @@ struct UpdateContent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_status_and_processor_query_is_parsed() {
+        let query = serde_qs::from_str::<QueryContents>(concat!(
+            "maxId=0&processorName=mikan-bangumi&processorName=other%2Cprocessor",
+            "&status=FAILURE&status=INIT",
+        ))
+        .unwrap();
+
+        assert_eq!(
+            query.processor_name.unwrap(),
+            vec!["mikan-bangumi", "other,processor"]
+        );
+        assert_eq!(
+            parse_processing_statuses(query.status.as_deref().unwrap()).unwrap(),
+            vec![ProcessingStatus::Failure, ProcessingStatus::Init]
+        );
+    }
+
+    #[test]
+    fn single_init_status_query_is_parsed() {
+        let query = serde_qs::from_str::<QueryContents>("status=INIT").unwrap();
+
+        assert_eq!(
+            parse_processing_statuses(query.status.as_deref().unwrap()).unwrap(),
+            vec![ProcessingStatus::Init]
+        );
+        assert_eq!(parse_processing_status("Init").unwrap(), ProcessingStatus::Init);
+    }
+
+    #[test]
+    fn unknown_processing_status_is_rejected() {
+        assert!(matches!(
+            parse_processing_status("UNKNOWN"),
+            Err(AppError::BadRequest(_))
+        ));
+    }
 
     fn processing_content() -> ProcessingContent {
         ProcessingContent {
