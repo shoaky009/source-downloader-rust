@@ -860,6 +860,100 @@ fn pointer_test_processor_with_settings(
 }
 
 #[tokio::test]
+async fn sync_process_moves_existing_source_files_without_downloading() {
+    for save_processing_content in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let download_path = root.path().join("download");
+        let save_path = root.path().join("anime");
+        fs::create_dir_all(&download_path).unwrap();
+        let source_file = download_path.join("episode.mkv");
+        fs::write(&source_file, b"episode contents").unwrap();
+        let submit_count = Arc::new(AtomicUsize::new(0));
+        let (mut processor, storage) = pointer_test_processor_with_settings(
+            false,
+            1,
+            false,
+            PointerTestSettings {
+                resolved_file: Some(source_file.clone()),
+                download_path: download_path.to_string_lossy().into_owned(),
+                save_path: save_path.clone(),
+                submit_count: Some(submit_count.clone()),
+                ..Default::default()
+            },
+        );
+        processor.async_downloader = None;
+        processor.file_mover = Arc::new(ReplacementFileMover);
+        processor.options.save_processing_content = save_processing_content;
+
+        let preview = dry_run_results(processor.dry_run(DryRunOptions::default()).await);
+        assert_eq!(preview.len(), 1);
+        assert!(source_file.exists());
+        assert!(!save_path.exists());
+
+        processor.run().await.unwrap();
+
+        assert_eq!(fs::read(save_path.join("episode.mkv")).unwrap(), b"episode contents");
+        assert!(!source_file.exists());
+        assert_eq!(submit_count.load(AtomicOrdering::Relaxed), 0);
+        if save_processing_content {
+            let contents = storage.saved_contents.lock();
+            assert_eq!(contents[0].status, ProcessingStatus::Renamed);
+            assert_eq!(contents[0].rename_times, 1);
+        }
+    }
+}
+
+#[tokio::test]
+async fn existing_source_files_preserve_async_and_existing_target_behavior() {
+    for target_exists in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let download_path = root.path().join("download");
+        let save_path = root.path().join("anime");
+        fs::create_dir_all(&download_path).unwrap();
+        fs::create_dir_all(&save_path).unwrap();
+        let source_file = download_path.join("episode.mkv");
+        let target_file = save_path.join("episode.mkv");
+        fs::write(&source_file, b"source").unwrap();
+        if target_exists {
+            fs::write(&target_file, b"existing target").unwrap();
+        }
+        let submit_count = Arc::new(AtomicUsize::new(0));
+        let (mut processor, storage) = pointer_test_processor_with_settings(
+            false,
+            1,
+            false,
+            PointerTestSettings {
+                resolved_file: Some(source_file.clone()),
+                download_path: download_path.to_string_lossy().into_owned(),
+                save_path,
+                submit_count: Some(submit_count.clone()),
+                ..Default::default()
+            },
+        );
+        if target_exists {
+            processor.async_downloader = None;
+        }
+        processor.file_mover = Arc::new(ReplacementFileMover);
+        processor.options.save_processing_content = true;
+
+        processor.run().await.unwrap();
+
+        assert_eq!(fs::read(source_file).unwrap(), b"source");
+        let contents = storage.saved_contents.lock();
+        assert_eq!(contents[0].rename_times, 0);
+        if target_exists {
+            assert_eq!(fs::read(target_file).unwrap(), b"existing target");
+            assert_eq!(contents[0].status, ProcessingStatus::TargetAlreadyExists);
+            assert_eq!(submit_count.load(AtomicOrdering::Relaxed), 0);
+        } else {
+            assert!(!target_file.exists());
+            assert_eq!(contents[0].status, ProcessingStatus::WaitingToRename);
+            assert_eq!(submit_count.load(AtomicOrdering::Relaxed), 1);
+        }
+    }
+}
+
+#[tokio::test]
 async fn async_file_compression_matches_sync_encoding() {
     let file = FileContent {
         download_path: PathBuf::new(),

@@ -2546,7 +2546,6 @@ trait Process {
                 &file_contents,
             );
             self.probe_content_status(
-                p,
                 rt,
                 source_item,
                 item_hash,
@@ -2680,7 +2679,18 @@ trait Process {
             }
         }
 
-        if !download_files.is_empty() {
+        let files_ready = if p.async_downloader.is_none() && !download_files.is_empty() {
+            let paths = downloadable_files
+                .iter()
+                .filter(|file| file.data.is_none())
+                .map(|file| &file.file_download_path)
+                .collect_vec();
+            p.file_mover.exists(&paths).await.into_iter().all(|exists| exists)
+        } else {
+            false
+        };
+        // Existing local files still need the movement step after download preparation.
+        if !download_files.is_empty() && !files_ready {
             let source_headers = p.source.headers(source_item);
             let options = &p.options.download_options;
             let headers: Option<HashMap<&String, &String>> =
@@ -2843,7 +2853,6 @@ trait Process {
 
     async fn probe_content_status(
         &self,
-        p: &SourceProcessor,
         rt: &ItemProcessRuntime,
         source_item: &SourceItem,
         item_hash: &str,
@@ -2872,14 +2881,6 @@ trait Process {
             return (false, ProcessingStatus::TargetAlreadyExists);
         }
 
-        let file_download_paths =
-            files.iter().map(|f| &f.file_download_path).collect_vec();
-        let all_exists =
-            p.file_mover.exists(&file_download_paths).await.into_iter().all(|x| x);
-        if all_exists {
-            let is_async = p.async_downloader.is_some();
-            return (is_async, ProcessingStatus::WaitingToRename);
-        }
         (true, ProcessingStatus::WaitingToRename)
     }
 
