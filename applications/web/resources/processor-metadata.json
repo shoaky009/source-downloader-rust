@@ -104,6 +104,15 @@
       "level": "basic"
     },
     {
+      "path": "options.support-windows-platform-path",
+      "title": "兼容 Windows 路径",
+      "description": "将路径变量中 Windows 不允许的字符替换为对应的全角字符",
+      "type": "boolean",
+      "defaultValue": true,
+      "askMode": "auto",
+      "level": "basic"
+    },
+    {
       "path": "options.variable-providers",
       "title": "变量提供器",
       "type": "component-ref-array",

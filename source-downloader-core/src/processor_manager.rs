@@ -6,6 +6,7 @@ use crate::components::expression_file_content_filter::ExpressionFileContentFilt
 use crate::components::expression_item_content_filter::ExpressionItemContentFilter;
 use crate::components::expression_item_filter::ExpressionItemFilter;
 use crate::components::source_item_identity_filter::SourceItemIdentityFilter;
+use crate::components::windows_path_replacer::WindowsPathReplacer;
 use crate::config::{ListenerMode, ProcessorConfig, ProcessorOptionConfig};
 use crate::expression::CompiledExpressionFactory;
 use crate::expression::cel::FACTORY;
@@ -397,6 +398,10 @@ impl ProcessorManager {
                 replacer,
                 keys: replacer_config.keys.clone(),
             }));
+        }
+
+        if config.options.support_windows_platform_path {
+            variable_replacers.push(Arc::new(WindowsPathReplacer));
         }
 
         let mut trimming = HashMap::with_capacity(config.options.trimming.len());
@@ -1304,6 +1309,47 @@ mod test {
     }
 
     #[tokio::test]
+    async fn windows_platform_path_option_controls_automatic_replacement() {
+        use std::collections::HashMap;
+
+        let manager = ProcessorManager::new(
+            Arc::new(ComponentManager::new(Arc::new(YamlConfigOperator::new(
+                "./tests/resources/config.yaml",
+            )))),
+            Arc::new(MemoryProcessingStorage::new()),
+            Arc::new(ProcessorRunManager::default()),
+        );
+        for (options, expected) in [
+            ("{}", "a＜＞：＂／＼｜？＊"),
+            (r#"{"support-windows-platform-path":true}"#, "a＜＞：＂／＼｜？＊"),
+            (r#"{"support-windows-platform-path":false}"#, "a<>:\"/\\|?*"),
+        ] {
+            let config = ProcessorConfig {
+                name: "windows-path-option".to_owned(),
+                enabled: true,
+                save_path: String::new(),
+                triggers: Vec::new(),
+                source: String::new(),
+                item_file_resolver: String::new(),
+                downloader: String::new(),
+                file_mover: String::new(),
+                options: source_downloader_sdk::serde_json::from_str(options).unwrap(),
+                category: None,
+                tags: HashSet::new(),
+            };
+            let renamer = manager.create_renamer(&config, &mut Vec::new()).unwrap();
+            let item = source_downloader_sdk::SourceItem {
+                title: "a<>:\"/\\|?*".to_owned(),
+                ..Default::default()
+            };
+            let variables =
+                renamer.item_rename_variables(&item, &HashMap::new()).await.unwrap();
+
+            assert_eq!(variables.variables["item"]["title"], expected);
+        }
+    }
+
+    #[tokio::test]
     async fn variable_replacer_components_are_resolved_and_key_filtered() {
         use source_downloader_sdk::SourceItem;
         use std::collections::HashMap;
@@ -1334,6 +1380,7 @@ mod test {
                     id: "windows-path".to_owned(),
                     keys: Some(HashSet::from(["item.title".to_owned()])),
                 }],
+                support_windows_platform_path: false,
                 trimming: vec![TrimmingConfig {
                     variable_name: "title".to_owned(),
                     trimmers: vec!["force".to_owned()],

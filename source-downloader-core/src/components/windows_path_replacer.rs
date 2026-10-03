@@ -41,7 +41,7 @@ impl ComponentSupplier for WindowsPathReplacerSupplier {
 
 #[derive(Debug, source_downloader_sdk::SdComponent)]
 #[component(VariableReplacer)]
-struct WindowsPathReplacer;
+pub(crate) struct WindowsPathReplacer;
 
 impl VariableReplacer for WindowsPathReplacer {
     fn replace(&self, _: &str, value: String) -> String {

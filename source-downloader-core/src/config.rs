@@ -71,6 +71,8 @@ pub struct ProcessorOptionConfig {
     pub variable_providers: Vec<String>,
     #[serde(skip_serializing_if = "is_default")]
     pub variable_replacers: Vec<VariableReplacerConfig>,
+    #[serde(skip_serializing_if = "Clone::clone")]
+    pub support_windows_platform_path: bool,
     #[serde(skip_serializing_if = "is_default")]
     pub variable_process: Vec<VariableProcessConfig>,
     #[serde(skip_serializing_if = "is_default")]
@@ -342,6 +344,7 @@ impl Default for ProcessorOptionConfig {
             filename_pattern: "".to_string(),
             variable_providers: vec![],
             variable_replacers: vec![],
+            support_windows_platform_path: true,
             variable_process: vec![],
             trimming: vec![],
             path_name_length_limit: 255,
@@ -901,6 +904,24 @@ mod test {
         let s = serde_json::to_string(&c).unwrap();
         assert!(!s.contains("\"rename-task-interval\":\"PT5M\""));
         assert!(s.contains("\"fetch-limit\":51"));
+    }
+
+    #[test]
+    fn windows_platform_path_defaults_and_disabled_round_trip() {
+        let defaults = serde_json::from_str::<ProcessorOptionConfig>("{}").unwrap();
+        assert!(defaults.support_windows_platform_path);
+        let serialized = serde_json::to_value(&defaults).unwrap();
+        assert!(serialized.get("support-windows-platform-path").is_none());
+
+        let disabled = serde_json::from_str::<ProcessorOptionConfig>(
+            r#"{"support-windows-platform-path": false}"#,
+        )
+        .unwrap();
+        assert!(!disabled.support_windows_platform_path);
+        let serialized = serde_json::to_value(&disabled).unwrap();
+        assert_eq!(serialized["support-windows-platform-path"], false);
+        let restored: ProcessorOptionConfig = serde_json::from_value(serialized).unwrap();
+        assert!(!restored.support_windows_platform_path);
     }
 
     #[test]
