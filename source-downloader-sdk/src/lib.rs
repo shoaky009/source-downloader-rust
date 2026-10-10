@@ -9,6 +9,8 @@ pub mod component;
 pub mod http_client;
 pub mod instance;
 pub mod plugin;
+#[cfg(feature = "plugin-runtime")]
+pub mod plugin_runtime;
 pub mod storage;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
