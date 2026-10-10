@@ -2574,18 +2574,21 @@ trait Process {
                         (movement, replacement)
                     })
                     .await;
-                let has_replacements =
-                    file_contents.iter().any(|file| file.status == ReadyReplace);
-                let postprocessing_succeeded = if has_replacements {
-                    movement_res.is_ok() && replacement_res.is_ok()
-                } else {
-                    movement_res.is_ok() || replacement_res.is_ok()
-                };
-                if postprocessing_succeeded {
-                    content_status = ProcessingStatus::Renamed;
-                    rename_times = 1;
-                } else {
-                    content_status = ProcessingStatus::Failure;
+                match movement_res.and(replacement_res) {
+                    Ok(()) => {
+                        content_status = ProcessingStatus::Renamed;
+                        rename_times = 1;
+                    }
+                    Err(error) => {
+                        warn!(
+                            "Processor[item-move-error] {} item={} {}",
+                            p.name,
+                            source_item,
+                            error.message()
+                        );
+                        content_status = ProcessingStatus::Failure;
+                        failure_reason = Some(error.message().to_owned());
+                    }
                 }
             }
         }
@@ -3148,6 +3151,16 @@ impl Process for NormalProcess {
         files: Vec<FileContent>,
     ) -> Result<(), ProcessingError> {
         let item_hash = content.item_hash.to_owned();
+        let postprocessing_error =
+            (content.status == ProcessingStatus::Failure).then(|| {
+                ProcessingError::non_retryable(
+                    content
+                        .failure_reason
+                        .clone()
+                        .unwrap_or_else(|| "File postprocessing failed".to_owned()),
+                )
+            });
+        ctx.listener_context.has_error |= postprocessing_error.is_some();
         ctx.listener_context.add(content, files);
         let completed = ctx
             .listener_context
@@ -3161,9 +3174,27 @@ impl Process for NormalProcess {
             status: *completed.status,
         };
         if p.async_downloader.is_none() {
-            p.notify_process_listeners(ListenerMode::Each, "item-success", |listener| {
-                listener.on_item_success(&ctx.listener_context, &item_content)
-            });
+            if let Some(error) = postprocessing_error {
+                p.notify_process_listeners(
+                    ListenerMode::Each,
+                    "item-error",
+                    |listener| {
+                        listener.on_item_error(
+                            &ctx.listener_context,
+                            &source_item,
+                            &error,
+                        )
+                    },
+                );
+            } else {
+                p.notify_process_listeners(
+                    ListenerMode::Each,
+                    "item-success",
+                    |listener| {
+                        listener.on_item_success(&ctx.listener_context, &item_content)
+                    },
+                );
+            }
         }
         if advance_pointer
             && let Err(error) =

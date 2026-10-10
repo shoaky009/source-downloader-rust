@@ -488,7 +488,7 @@ pub trait FileMover: SdComponent {
 
     async fn replace(
         &self,
-        _source_item: &SourceItem,
+        source_item: &SourceItem,
         files: &[&FileContent],
     ) -> Result<(), ProcessingError> {
         for file in files {
@@ -503,11 +503,11 @@ pub trait FileMover: SdComponent {
                 fs::rename(existing_path, &backup_path)?;
             }
 
-            if let Err(error) = fs::rename(&file.file_download_path, file.target_path()) {
+            if let Err(error) = self.move_file(source_item, file).await {
                 if backup_path.exists() {
                     fs::rename(&backup_path, existing_path)?;
                 }
-                return Err(error.into());
+                return Err(error);
             }
             if backup_path.exists() {
                 fs::remove_file(&backup_path)?;

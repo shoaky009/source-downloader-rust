@@ -860,6 +860,112 @@ fn pointer_test_processor_with_settings(
 }
 
 #[tokio::test]
+async fn sync_process_records_movement_failure_without_success_notification() {
+    let root = tempfile::tempdir().unwrap();
+    let download_path = root.path().join("download");
+    let save_path = root.path().join("target");
+    let source_file = download_path.join("file.zip");
+    let (mut processor, storage) = pointer_test_processor_with_settings(
+        false,
+        1,
+        false,
+        PointerTestSettings {
+            resolved_file: Some(source_file.clone()),
+            inline_data: Some(Arc::from(b"payload".as_slice())),
+            download_path: download_path.to_string_lossy().into_owned(),
+            save_path: save_path.clone(),
+            ..Default::default()
+        },
+    );
+    processor.async_downloader = None;
+    processor.file_mover = Arc::new(FailingFileMover);
+    processor.options.save_processing_content = true;
+    let listener = Arc::new(RecordingListener::default());
+    processor
+        .options
+        .process_listeners
+        .insert(ListenerMode::Each, vec![listener.clone()]);
+    processor
+        .options
+        .process_listeners
+        .insert(ListenerMode::Batch, vec![listener.clone()]);
+
+    processor.run().await.unwrap();
+
+    let contents = storage.saved_contents.lock();
+    assert_eq!(contents.len(), 1);
+    assert_eq!(contents[0].status, ProcessingStatus::Failure);
+    assert_eq!(contents[0].rename_times, 0);
+    assert_eq!(contents[0].failure_reason.as_deref(), Some("rename test failure"));
+    assert_eq!(fs::read(source_file).unwrap(), b"payload");
+    assert!(!save_path.join("file.zip").exists());
+    assert_eq!(listener.successes.load(AtomicOrdering::Relaxed), 0);
+    assert_eq!(*listener.error_messages.lock(), vec!["rename test failure".to_owned()]);
+    assert!(listener.batch_has_error.load(AtomicOrdering::Relaxed));
+}
+
+#[tokio::test]
+async fn sync_process_moves_http_download_with_general_mover() {
+    use crate::components::http_downloader::tests::{create_downloader, serve_once};
+    use source_downloader_sdk::component::{
+        ComponentSupplier, EMPTY_COMPONENT_CREATE_CONTEXT,
+    };
+
+    let root = tempfile::tempdir().unwrap();
+    let download_path = root.path().join("download");
+    let save_path = root.path().join("target");
+    fs::create_dir_all(&download_path).unwrap();
+    let (uri, request) =
+        serve_once(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\npayload").await;
+    let source_item = SourceItem {
+        title: "item-1".to_owned(),
+        download_uri: uri.clone(),
+        ..Default::default()
+    };
+    let source = crate::components::fixed_source::SUPPLIER
+        .apply(
+            &EMPTY_COMPONENT_CREATE_CONTEXT,
+            json!({
+                "content": [{
+                    "item": source_item,
+                    "files": [{"path": "file.zip", "downloadUri": uri.to_string()}],
+                }],
+            })
+            .as_object()
+            .unwrap(),
+        )
+        .unwrap();
+    let downloader = create_downloader(&download_path);
+    let (mut processor, storage) = pointer_test_processor_with_settings(
+        false,
+        0,
+        false,
+        PointerTestSettings {
+            download_path: download_path.to_string_lossy().into_owned(),
+            save_path: save_path.clone(),
+            ..Default::default()
+        },
+    );
+    processor.source = source.clone().as_source().unwrap();
+    processor.item_file_resolver = source.as_item_file_resolver().unwrap();
+    processor.async_downloader = downloader.clone().as_async_downloader().ok();
+    processor.downloader = downloader;
+    processor.file_mover =
+        Arc::new(crate::components::general_file_mover::GeneralFileMover);
+    processor.options.save_processing_content = true;
+
+    tokio::time::timeout(Duration::from_secs(5), processor.run()).await.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(5), request).await.unwrap().unwrap();
+
+    assert_eq!(fs::read(save_path.join("file.zip")).unwrap(), b"payload");
+    assert!(!download_path.join("file.zip").exists());
+    let contents = storage.saved_contents.lock();
+    assert_eq!(contents[0].status, ProcessingStatus::Renamed);
+    assert_eq!(contents[0].rename_times, 1);
+    assert!(contents[0].failure_reason.is_none());
+}
+
+#[tokio::test]
 async fn sync_process_moves_existing_source_files_without_downloading() {
     for save_processing_content in [false, true] {
         let root = tempfile::tempdir().unwrap();
@@ -1602,13 +1708,24 @@ async fn dry_run_can_ignore_processed_item_filter() {
 
 #[tokio::test]
 async fn item_group_provider_is_used_for_file_variables() {
+    let root = tempfile::tempdir().unwrap();
+    let download_path = root.path().join("download");
+    fs::create_dir_all(&download_path).unwrap();
+    let source_file = download_path.join("1.txt");
+    fs::write(&source_file, b"payload").unwrap();
     let (mut processor, _) = pointer_test_processor_with_settings(
         false,
         1,
         false,
-        PointerTestSettings { unique_files: true, ..Default::default() },
+        PointerTestSettings {
+            resolved_file: Some(source_file),
+            download_path: download_path.to_string_lossy().into_owned(),
+            save_path: root.path().join("target"),
+            ..Default::default()
+        },
     );
     processor.async_downloader = None;
+    processor.file_mover = Arc::new(ReplacementFileMover);
     processor.options.filename_pattern =
         PathPattern::new_cel("{fileProvider}.txt".to_owned());
     processor.options.variable_providers =
@@ -2424,6 +2541,7 @@ struct RecordingListener {
     completed_items: ParkingMutex<Vec<String>>,
     error_messages: ParkingMutex<Vec<String>>,
     successful_statuses: ParkingMutex<Vec<ProcessingStatus>>,
+    batch_has_error: AtomicBool,
 }
 #[derive(Debug, Default)]
 struct TargetFilenameListener(ParkingMutex<Vec<String>>);
@@ -2573,6 +2691,7 @@ impl ProcessListener for RecordingListener {
         &self,
         ctx: &dyn ProcessContext,
     ) -> Result<(), ProcessingError> {
+        self.batch_has_error.store(ctx.has_error(), AtomicOrdering::Relaxed);
         self.completed_items
             .lock()
             .extend(ctx.processed_items().map(|item| item.title.to_owned()));

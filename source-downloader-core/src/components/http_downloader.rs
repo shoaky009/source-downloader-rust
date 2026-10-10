@@ -303,7 +303,7 @@ fn readable_rate(rate: u64) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use source_downloader_sdk::component::SourceFileRef;
     use source_downloader_sdk::http::Uri;
@@ -312,7 +312,7 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    async fn serve_once(
+    pub(crate) async fn serve_once(
         response: &'static [u8],
     ) -> (Uri, tokio::sync::oneshot::Receiver<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -346,7 +346,7 @@ mod tests {
         (format!("http://{address}/slow").parse().unwrap(), started_rx)
     }
 
-    fn create_downloader(path: &Path) -> Arc<dyn Downloader> {
+    pub(crate) fn create_downloader(path: &Path) -> Arc<dyn Downloader> {
         Arc::new(HttpDownloader {
             path: path.to_string_lossy().into_owned(),
             client: reqwest::Client::builder().no_proxy().build().unwrap(),

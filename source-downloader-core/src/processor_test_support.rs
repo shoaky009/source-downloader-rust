@@ -515,6 +515,18 @@ pub mod test_support {
 
     #[async_trait]
     impl FileMover for MockComponent {
+        async fn move_file(
+            &self,
+            _: &SourceItem,
+            _: &FileContent,
+        ) -> Result<(), ProcessingError> {
+            Ok(())
+        }
+
+        async fn create_directories(&self, _: &Path) -> Result<(), ProcessingError> {
+            Ok(())
+        }
+
         async fn exists(&self, paths: &[&PathBuf]) -> Vec<bool> {
             vec![false; paths.len()]
         }
