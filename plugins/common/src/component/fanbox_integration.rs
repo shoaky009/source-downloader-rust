@@ -543,12 +543,20 @@ impl Source for FanboxIntegration {
 }
 
 #[derive(Deserialize)]
+#[serde(untagged)]
+enum PostInfo {
+    Wrapped { post: PostDetail },
+    Direct(PostDetail),
+}
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PostDetail {
     #[serde(deserialize_with = "deserialize_detail_id")]
     id: String,
+    #[serde(default)]
+    is_restricted: bool,
     cover_image_url: Option<String>,
-    body: Media,
+    body: Option<Media>,
 }
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -608,12 +616,27 @@ impl ItemFileResolver for FanboxIntegration {
             item.link.path().rsplit('/').next().filter(|id| !id.is_empty()).ok_or_else(
                 || ProcessingError::non_retryable("Invalid Fanbox post URL"),
             )?;
-        let post: PostDetail = self
+        let post = self
             .json(
                 self.request("/post.info").query(&[("postId", post_id)]),
                 "Fetch Fanbox post",
             )
             .await?;
+        let post = match post {
+            PostInfo::Wrapped { post } | PostInfo::Direct(post) => post,
+        };
+        if post.is_restricted {
+            return Err(ProcessingError::skip(format!(
+                "Fanbox post {} is restricted",
+                post.id
+            )));
+        }
+        let body = post.body.ok_or_else(|| {
+            ProcessingError::non_retryable(format!(
+                "Fanbox post {} has no media body",
+                post.id
+            ))
+        })?;
         let mut files = Vec::new();
         if let Some(url) = post.cover_image_url {
             files.push(remote_file(
@@ -626,21 +649,21 @@ impl ItemFileResolver for FanboxIntegration {
         let mut ordered_files = Vec::new();
         let mut text = Vec::new();
         let mut embeds = Vec::new();
-        for block in &post.body.blocks {
+        for block in &body.blocks {
             if let Some(value) = &block.text {
                 text.push(value.as_str());
             }
             match block.kind.as_str() {
                 "image" => {
                     if let Some(image) =
-                        block.image_id.as_ref().and_then(|id| post.body.image_map.get(id))
+                        block.image_id.as_ref().and_then(|id| body.image_map.get(id))
                     {
                         ordered_images.push(image.clone());
                     }
                 }
                 "file" => {
                     if let Some(file) =
-                        block.file_id.as_ref().and_then(|id| post.body.file_map.get(id))
+                        block.file_id.as_ref().and_then(|id| body.file_map.get(id))
                     {
                         ordered_files.push(file.clone());
                     }
@@ -649,7 +672,7 @@ impl ItemFileResolver for FanboxIntegration {
                     if let Some(embed) = block
                         .url_embed_id
                         .as_ref()
-                        .and_then(|id| post.body.url_embed_map.get(id))
+                        .and_then(|id| body.url_embed_map.get(id))
                     {
                         embeds.push(embed);
                     }
@@ -657,7 +680,7 @@ impl ItemFileResolver for FanboxIntegration {
                 _ => {}
             }
         }
-        ordered_images.extend(post.body.images);
+        ordered_images.extend(body.images);
         for image in ordered_images {
             files.push(remote_file(
                 format!("{}.{}", image.id, image.extension),
@@ -669,7 +692,7 @@ impl ItemFileResolver for FanboxIntegration {
                 ]),
             )?);
         }
-        ordered_files.extend(post.body.files);
+        ordered_files.extend(body.files);
         for file in ordered_files {
             files.push(remote_file(
                 format!("{}.{}", file.name, file.extension),
@@ -766,6 +789,16 @@ mod tests {
                 "body": {"plans": creators}
             })))
             .expect(requests)
+            .mount(server)
+            .await;
+    }
+
+    async fn post_info(server: &MockServer, body: Value) {
+        Mock::given(method("GET"))
+            .and(path("/post.info"))
+            .and(query_param("postId", "10"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"body": body})))
+            .expect(1)
             .mount(server)
             .await;
     }
@@ -1250,6 +1283,69 @@ mod tests {
             .await
             .unwrap();
         assert!(second.is_empty());
+    }
+
+    #[tokio::test]
+    async fn resolves_wrapped_post_details() {
+        let server = MockServer::start().await;
+        post_info(
+            &server,
+            json!({"post": {
+                "id": "10", "isRestricted": false,
+                "coverImageUrl": "https://cdn/cover",
+                "body": {"images": [{
+                    "id": "i1", "extension": "png", "height": 2, "width": 3,
+                    "originalUrl": "https://cdn/i1"
+                }]}
+            }}),
+        )
+        .await;
+        let resolver = component(&server).as_item_file_resolver().unwrap();
+        let files = resolver.resolve_files(&item(&server)).await.unwrap();
+        assert_eq!(
+            files.iter().map(|file| file.path.to_str().unwrap()).collect::<Vec<_>>(),
+            ["cover_10.jpeg", "i1.png"]
+        );
+        assert_eq!(
+            files
+                .iter()
+                .map(|file| file.download_uri.as_ref().unwrap().to_string())
+                .collect::<Vec<_>>(),
+            ["https://cdn/cover", "https://cdn/i1"]
+        );
+    }
+
+    #[tokio::test]
+    async fn skips_restricted_posts_with_null_media() {
+        let server = MockServer::start().await;
+        post_info(
+            &server,
+            json!({"post": {
+                "id": "10", "isRestricted": true,
+                "coverImageUrl": "https://cdn/cover", "body": null
+            }}),
+        )
+        .await;
+        let resolver = component(&server).as_item_file_resolver().unwrap();
+        let result = resolver.resolve_files(&item(&server)).await;
+        assert!(matches!(result, Err(ProcessingError::NonRetryable { skip: true, .. })));
+    }
+
+    #[tokio::test]
+    async fn rejects_unrestricted_posts_with_null_media() {
+        let server = MockServer::start().await;
+        post_info(
+            &server,
+            json!({"post": {"id": "10", "isRestricted": false, "body": null}}),
+        )
+        .await;
+        let resolver = component(&server).as_item_file_resolver().unwrap();
+        let result = resolver.resolve_files(&item(&server)).await;
+        assert!(matches!(
+            result,
+            Err(ProcessingError::NonRetryable { skip: false, message })
+                if message.contains("has no media body")
+        ));
     }
 
     #[tokio::test]
