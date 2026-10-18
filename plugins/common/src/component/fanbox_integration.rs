@@ -42,6 +42,7 @@ pub const SUPPLIER: FanboxIntegrationSupplier = FanboxIntegrationSupplier;
 struct FanboxRequestConfig {
     headers: Option<HashMap<String, String>>,
     request_interval_ms: Option<u32>,
+    post_info_interval_ms: Option<u32>,
 }
 
 impl ComponentSupplier for FanboxIntegrationSupplier {
@@ -80,6 +81,7 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
             .trim_end_matches('/')
             .to_string();
         let client = http::build_client()?;
+        let now = Instant::now();
         Ok(Arc::new(FanboxIntegration {
             client,
             base,
@@ -88,7 +90,13 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
             request_interval: Duration::from_millis(u64::from(
                 config.request_interval_ms.unwrap_or(3000),
             )),
-            request_not_before: Mutex::new(Instant::now()),
+            post_info_interval: Duration::from_millis(u64::from(
+                config.post_info_interval_ms.unwrap_or(5000),
+            )),
+            request_state: Mutex::new(FanboxRequestState {
+                request_not_before: now,
+                post_info_not_before: now,
+            }),
         }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
@@ -114,6 +122,12 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
                         "minimum":0,
                         "default":3000,
                         "description":"Minimum interval between Fanbox API requests in milliseconds. HTTP 429 cooldowns always apply."
+                    },
+                    "post-info-interval-ms":{
+                        "type":"integer",
+                        "minimum":0,
+                        "default":5000,
+                        "description":"Minimum interval between post.info requests on this client in milliseconds. Set to 0 to disable this additional interval. API request intervals and HTTP 429 cooldowns still apply."
                     },
                     "base-url":{"type":"string","default":"https://api.fanbox.cc"}
                 },
@@ -195,7 +209,14 @@ struct FanboxIntegration {
     headers: HashMap<String, String>,
     latest_only: bool,
     request_interval: Duration,
-    request_not_before: Mutex<Instant>,
+    post_info_interval: Duration,
+    request_state: Mutex<FanboxRequestState>,
+}
+
+#[derive(Debug)]
+struct FanboxRequestState {
+    request_not_before: Instant,
+    post_info_not_before: Instant,
 }
 
 impl Display for FanboxIntegration {
@@ -383,14 +404,24 @@ impl FanboxIntegration {
             request.build().map_err(|error| http::map_error(error, operation))?;
         let method = request.method().clone();
         let context = format!("{operation}: {method} {}", request.url());
+        let is_post_info = request.url().path().ends_with("/post.info");
         // Fetching pages and resolving posts share pacing and rate-limit cooldowns.
-        let mut request_not_before = self.request_not_before.lock().await;
-        let wait = request_not_before.saturating_duration_since(Instant::now());
+        let mut request_state = self.request_state.lock().await;
+        let deadline = if is_post_info {
+            request_state.request_not_before.max(request_state.post_info_not_before)
+        } else {
+            request_state.request_not_before
+        };
+        let wait = deadline.saturating_duration_since(Instant::now());
         if !wait.is_zero() {
             debug!(operation, wait_seconds = wait.as_secs_f64(), "Fanbox[request-wait]");
-            sleep_until(*request_not_before).await;
+            sleep_until(deadline).await;
         }
-        *request_not_before = Instant::now() + self.request_interval;
+        let now = Instant::now();
+        request_state.request_not_before = now + self.request_interval;
+        if is_post_info {
+            request_state.post_info_not_before = now + self.post_info_interval;
+        }
         let response = self
             .client
             .execute(request)
@@ -404,11 +435,12 @@ impl FanboxIntegration {
                 let deadline = now
                     .checked_add(retry_after_delay(response.headers()))
                     .unwrap_or(now + DEFAULT_RATE_LIMIT_DELAY);
-                *request_not_before = (*request_not_before).max(deadline);
+                request_state.request_not_before =
+                    request_state.request_not_before.max(deadline);
                 warn!(
                     operation,
                     %url,
-                    cooldown_seconds = request_not_before
+                    cooldown_seconds = request_state.request_not_before
                         .saturating_duration_since(now)
                         .as_secs_f64(),
                     "Fanbox[rate-limited] API requests paused until cooldown ends"
@@ -851,6 +883,7 @@ mod tests {
             ("cookie".into(), Value::String("FANBOXSESSID=x".into())),
             ("base-url".into(), Value::String(server.uri())),
             ("request-interval-ms".into(), json!(0)),
+            ("post-info-interval-ms".into(), json!(0)),
         ])
     }
 
