@@ -3,20 +3,31 @@ use serde::{Deserialize, Serialize};
 use source_downloader_sdk::SourceItem;
 use source_downloader_sdk::async_trait::async_trait;
 use source_downloader_sdk::component::{
-    ComponentError, ComponentSupplier, ComponentType, ItemFileResolver, ItemPointer,
-    PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source, SourceFile,
-    SourceItemStream, SourcePointer, deserialize_component_config, format_error_chain,
-    source_item_stream,
+    ComponentError, ComponentSupplier, ComponentType, EMPTY_POINTER, ItemFileResolver,
+    ItemPointer, PointedItem, ProcessingError, SdComponent, SdComponentMetadata, Source,
+    SourceFile, SourceItemStream, SourcePointer, deserialize_component_config,
+    format_error_chain, source_item_stream,
 };
 use source_downloader_sdk::http::Uri;
 use source_downloader_sdk::serde_json::{self, Map, Value, json};
 use source_downloader_sdk::time::OffsetDateTime;
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use time::PrimitiveDateTime;
+use time::format_description::well_known::Iso8601;
+use tracing::{debug, warn};
+
+const CREATOR_PAGE_SIZE: usize = 25;
+const LOCAL_DATETIME_FORMAT: &[time::format_description::BorrowedFormatItem<'static>] =
+    time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]");
+const USER_AGENT: &str = concat!(
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ",
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+);
 
 pub struct FanboxIntegrationSupplier;
 pub const SUPPLIER: FanboxIntegrationSupplier = FanboxIntegrationSupplier;
@@ -24,7 +35,7 @@ pub const SUPPLIER: FanboxIntegrationSupplier = FanboxIntegrationSupplier;
 #[derive(Default, Deserialize)]
 #[serde(default)]
 struct FanboxHeadersConfig {
-    headers: HashMap<String, String>,
+    headers: Option<HashMap<String, String>>,
 }
 
 impl ComponentSupplier for FanboxIntegrationSupplier {
@@ -54,12 +65,9 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
                 "Invalid configuration at 'mode': expected either `all` or `latestOnly`",
             ));
         }
-        let mut headers =
-            deserialize_component_config::<FanboxHeadersConfig>(props)?.headers;
-        headers.entry("Cookie".into()).or_insert(cookie);
-        headers.entry("Origin".into()).or_insert("https://www.fanbox.cc".into());
-        headers.entry("Referer".into()).or_insert("https://www.fanbox.cc/".into());
-        headers.entry("Accept".into()).or_insert("application/json".into());
+        let headers = deserialize_component_config::<FanboxHeadersConfig>(props)?
+            .headers
+            .unwrap_or_else(|| default_headers(cookie));
         let base = props
             .get("base-url")
             .and_then(Value::as_str)
@@ -89,6 +97,7 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
                     },
                     "headers":{
                         "type":"object",
+                        "description":"Replaces the default Fanbox API and download headers.",
                         "additionalProperties":{"type":"string"}
                     },
                     "base-url":{"type":"string","default":"https://api.fanbox.cc"}
@@ -102,33 +111,50 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
             source_pointer_json_schema: Some(json!({
                 "type":"object",
                 "properties":{
-                    "creators":{
+                    "creatorPointers":{
                         "type":"object",
                         "additionalProperties":{
                             "type":"object",
                             "properties":{
-                                "creator_id":{"type":"string"},
-                                "next_max_id":{
+                                "creatorId":{"type":"string"},
+                                "nextMaxId":{
                                     "type":["integer","null"]
                                 },
-                                "next_max_date":{
+                                "nextMaxDate":{
                                     "type":["string","null"]
                                 },
-                                "top_id":{
+                                "topId":{
                                     "type":["integer","null"]
                                 },
-                                "top_date":{
+                                "topDate":{
                                     "type":["string","null"]
                                 },
-                                "touch_bottom":{"type":"boolean"}
+                                "touchBottom":{"type":"boolean"}
                             },
-                            "required":["creator_id","touch_bottom"]
+                            "required":["creatorId","touchBottom"]
                         }
                     }
                 }
             })),
         }))
     }
+}
+
+fn default_headers(cookie: String) -> HashMap<String, String> {
+    HashMap::from_iter([
+        ("Cookie".into(), cookie),
+        ("Origin".into(), "https://www.fanbox.cc".into()),
+        ("Referer".into(), "https://www.fanbox.cc/".into()),
+        ("sec-ch-ua-mobile".into(), "?0".into()),
+        ("sec-ch-ua-platform".into(), "\"Windows\"".into()),
+        ("sec-fetch-site".into(), "same-site".into()),
+        ("sec-fetch-mode".into(), "cors".into()),
+        ("sec-fetch-dest".into(), "empty".into()),
+        ("accept".into(), "application/json".into()),
+        ("accept-language".into(), "en,zh-CN;q=0.9,zh;q=0.8".into()),
+        ("priority".into(), "u=1, i".into()),
+        ("User-Agent".into(), USER_AGENT.into()),
+    ])
 }
 
 #[derive(Debug, source_downloader_sdk::SdComponent)]
@@ -148,16 +174,23 @@ impl Display for FanboxIntegration {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct FanboxPointer {
-    #[serde(default)]
+    #[serde(default, rename = "creatorPointers", alias = "creators")]
     creators: HashMap<String, CreatorPointer>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CreatorPointer {
+    #[serde(alias = "creator_id")]
     creator_id: String,
+    #[serde(alias = "next_max_id")]
     next_max_id: Option<i64>,
+    #[serde(alias = "next_max_date")]
     next_max_date: Option<String>,
+    #[serde(alias = "top_id")]
     top_id: Option<i64>,
+    #[serde(alias = "top_date")]
     top_date: Option<String>,
+    #[serde(default, alias = "touch_bottom")]
     touch_bottom: bool,
 }
 impl CreatorPointer {
@@ -171,19 +204,24 @@ impl CreatorPointer {
             touch_bottom: false,
         }
     }
-    fn update(&self, post: &Post, bottom: bool) -> Self {
+    fn update(&self, post: &Post, bottom: bool) -> Result<Self, ProcessingError> {
         let newer = post.id > self.top_id.unwrap_or(0);
-        Self {
+        let date = format_pointer_date(parse_pointer_date(&post.published_datetime)?)?;
+        let touch_bottom = self.touch_bottom || bottom;
+        Ok(Self {
             creator_id: self.creator_id.clone(),
-            next_max_id: Some(post.id),
-            next_max_date: Some(post.published_datetime.clone()),
+            next_max_id: (!touch_bottom).then_some(post.id),
+            next_max_date: (!touch_bottom).then(|| date.clone()),
             top_id: if newer { Some(post.id) } else { self.top_id },
-            top_date: if newer {
-                Some(post.published_datetime.clone())
-            } else {
-                self.top_date.clone()
-            },
-            touch_bottom: self.touch_bottom || bottom,
+            top_date: if newer { Some(date) } else { self.top_date.clone() },
+            touch_bottom,
+        })
+    }
+
+    fn reset_completed_cursor(&mut self) {
+        if self.touch_bottom {
+            self.next_max_id = None;
+            self.next_max_date = None;
         }
     }
 }
@@ -216,6 +254,18 @@ struct Supporting {
     creator_id: String,
 }
 #[derive(Deserialize)]
+#[serde(untagged)]
+enum SupportingPlans {
+    Wrapped { plans: Vec<Supporting> },
+    List(Vec<Supporting>),
+}
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum CreatorPosts {
+    Wrapped { posts: Vec<Post> },
+    List(Vec<Post>),
+}
+#[derive(Deserialize)]
 struct Posts {
     #[serde(default)]
     items: Vec<Post>,
@@ -223,6 +273,7 @@ struct Posts {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Post {
+    #[serde(deserialize_with = "deserialize_post_id")]
     id: i64,
     title: String,
     creator_id: String,
@@ -243,6 +294,44 @@ struct Post {
 #[derive(Deserialize)]
 struct User {
     name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum FanboxId {
+    Number(i64),
+    String(String),
+}
+
+fn deserialize_post_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<i64, D::Error> {
+    match FanboxId::deserialize(deserializer)? {
+        FanboxId::Number(id) => Ok(id),
+        FanboxId::String(id) => id.parse().map_err(serde::de::Error::custom),
+    }
+}
+
+fn deserialize_detail_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<String, D::Error> {
+    Ok(match FanboxId::deserialize(deserializer)? {
+        FanboxId::Number(id) => id.to_string(),
+        FanboxId::String(id) => id,
+    })
+}
+
+fn parse_pointer_date(value: &str) -> Result<PrimitiveDateTime, ProcessingError> {
+    // Legacy pointers have local dates; existing Rust pointers include an offset.
+    PrimitiveDateTime::parse(value, &Iso8601::DEFAULT).map_err(|error| {
+        ProcessingError::non_retryable(format!("Invalid Fanbox cursor date: {error}"))
+    })
+}
+
+fn format_pointer_date(date: PrimitiveDateTime) -> Result<String, ProcessingError> {
+    date.format(LOCAL_DATETIME_FORMAT).map_err(|error| {
+        ProcessingError::non_retryable(format!("Invalid Fanbox cursor date: {error}"))
+    })
 }
 
 impl FanboxIntegration {
@@ -273,21 +362,31 @@ impl FanboxIntegration {
 
     async fn creator_posts(
         &self,
-        creator: &str,
         pointer: &CreatorPointer,
     ) -> Result<Vec<Post>, ProcessingError> {
         let mut request = self
             .request("/post.listCreator")
-            .query(&[("creatorId", creator), ("limit", "25")]);
-        if let Some(id) = pointer.next_max_id.filter(|_| !pointer.touch_bottom) {
+            .query(&[("creatorId", pointer.creator_id.as_str()), ("limit", "25")]);
+        if let Some(id) = pointer.next_max_id {
             request = request.query(&[("firstId", id.to_string())]);
         }
-        if let Some(date) =
-            pointer.next_max_date.as_deref().filter(|_| !pointer.touch_bottom)
-        {
-            request = request.query(&[("firstPublishedDatetime", date)]);
+        if let Some(date) = pointer.next_max_date.as_deref() {
+            let date = parse_pointer_date(date)?
+                .checked_sub(time::Duration::SECOND)
+                .ok_or_else(|| {
+                    ProcessingError::non_retryable("Fanbox cursor date is out of range")
+                })?;
+            let mut date_string = format_pointer_date(date)?;
+            // LocalDateTime.toString() omits zero seconds in the legacy request.
+            if date.second() == 0 && date.nanosecond() == 0 {
+                date_string.truncate(date_string.len() - 3);
+            }
+            request = request.query(&[("firstPublishedDatetime", date_string)]);
         }
-        self.json(request, "Fetch Fanbox creator posts").await
+        let posts = self.json(request, "Fetch Fanbox creator posts").await?;
+        Ok(match posts {
+            CreatorPosts::Wrapped { posts } | CreatorPosts::List(posts) => posts,
+        })
     }
 
     fn source_item(&self, post: &Post) -> Result<SourceItem, ProcessingError> {
@@ -309,6 +408,7 @@ impl FanboxIntegration {
             ("username".into(), Value::String(post.user.name.clone())),
             ("creatorId".into(), Value::String(post.creator_id.clone())),
         ]);
+        let mut seen_tags = HashSet::new();
         Ok(SourceItem {
             title: post.title.clone(),
             link: uri.clone(),
@@ -316,7 +416,12 @@ impl FanboxIntegration {
             content_type: "fanbox".into(),
             download_uri: uri,
             attrs,
-            tags: post.tags.clone(),
+            tags: post
+                .tags
+                .iter()
+                .filter(|tag| seen_tags.insert(*tag))
+                .cloned()
+                .collect(),
             identity: None,
         })
     }
@@ -340,11 +445,10 @@ impl Source for FanboxIntegration {
                 .items
                 .into_iter()
                 .filter(|post| !post.is_restricted)
-                .take(limit as usize)
                 .map(|post| {
                     Ok(PointedItem {
                         source_item: self.source_item(&post)?,
-                        item_pointer: Arc::new(CreatorPointer::new(post.creator_id)),
+                        item_pointer: EMPTY_POINTER.clone(),
                     })
                 })
                 .collect::<Result<Vec<_>, ProcessingError>>()?;
@@ -354,29 +458,67 @@ impl Source for FanboxIntegration {
             pointer.as_any().downcast_ref::<FanboxPointer>().ok_or_else(|| {
                 ProcessingError::non_retryable("Invalid Fanbox source pointer")
             })?;
-        let supportings: Vec<Supporting> = self
+        let supportings = self
             .json(self.request("/plan.listSupporting"), "Fetch Fanbox supportings")
             .await?;
+        let supportings = match supportings {
+            SupportingPlans::Wrapped { plans } | SupportingPlans::List(plans) => plans,
+        };
         let mut output = Vec::new();
         for supporting in supportings {
-            let state =
+            let mut state =
                 pointer.creators.get(&supporting.creator_id).cloned().unwrap_or_else(
                     || CreatorPointer::new(supporting.creator_id.clone()),
                 );
-            let posts = self.creator_posts(&supporting.creator_id, &state).await?;
-            let bottom = posts.len() < 25;
-            for post in posts.into_iter().filter(|post| !post.is_restricted) {
-                if state.touch_bottom && post.id <= state.top_id.unwrap_or(0) {
-                    continue;
+            state.reset_completed_cursor();
+            if let Some(date) = &mut state.next_max_date {
+                *date = format_pointer_date(parse_pointer_date(date)?)?;
+            }
+            let touch_bottom = state.touch_bottom;
+            let last_top_id = state.top_id.unwrap_or(0);
+            loop {
+                let posts = self.creator_posts(&state).await?;
+                let Some(last_post) = posts.last() else {
+                    break;
+                };
+                let last_id = last_post.id;
+                let last_date = format_pointer_date(parse_pointer_date(
+                    &last_post.published_datetime,
+                )?)?;
+                if state.next_max_id == Some(last_id)
+                    && state.next_max_date.as_deref() == Some(last_date.as_str())
+                {
+                    warn!(
+                        "Fanbox[pagination-stalled] creator_id={}",
+                        supporting.creator_id
+                    );
+                    break;
                 }
-                let next = state.update(&post, bottom);
-                output.push(PointedItem {
-                    source_item: self.source_item(&post)?,
-                    item_pointer: Arc::new(next),
-                });
-                if output.len() >= limit as usize {
-                    return Ok(source_item_stream(output));
+                let bottom = posts.len() < CREATOR_PAGE_SIZE;
+                let previous_len = output.len();
+                for post in posts.iter().filter(|post| !post.is_restricted) {
+                    state = state.update(post, bottom)?;
+                    if touch_bottom && post.id <= last_top_id {
+                        continue;
+                    }
+                    output.push(PointedItem {
+                        source_item: self.source_item(post)?,
+                        item_pointer: Arc::new(state.clone()),
+                    });
                 }
+                debug!(
+                    "Fanbox[creator-page] creator_id={} items={} touch_bottom={}",
+                    supporting.creator_id,
+                    output.len() - previous_len,
+                    state.touch_bottom
+                );
+                // Keep pages intact and still visit every supported creator.
+                if output.len() >= limit as usize || bottom || touch_bottom {
+                    break;
+                }
+                // Restricted posts still advance pagination, but emit no item pointer.
+                state.next_max_id = Some(last_id);
+                state.next_max_date = Some(last_date);
             }
         }
         Ok(source_item_stream(output))
@@ -387,7 +529,12 @@ impl Source for FanboxIntegration {
     }
 
     fn parse_raw_pointer(&self, value: Value) -> Box<dyn SourcePointer> {
-        Box::new(serde_json::from_value::<FanboxPointer>(value).unwrap_or_default())
+        let mut pointer =
+            serde_json::from_value::<FanboxPointer>(value).unwrap_or_default();
+        for creator in pointer.creators.values_mut() {
+            creator.reset_completed_cursor();
+        }
+        Box::new(pointer)
     }
 
     fn headers(&self, _: &SourceItem) -> Option<HashMap<String, String>> {
@@ -398,6 +545,7 @@ impl Source for FanboxIntegration {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PostDetail {
+    #[serde(deserialize_with = "deserialize_detail_id")]
     id: String,
     cover_image_url: Option<String>,
     body: Media,
@@ -479,6 +627,9 @@ impl ItemFileResolver for FanboxIntegration {
         let mut text = Vec::new();
         let mut embeds = Vec::new();
         for block in &post.body.blocks {
+            if let Some(value) = &block.text {
+                text.push(value.as_str());
+            }
             match block.kind.as_str() {
                 "image" => {
                     if let Some(image) =
@@ -503,11 +654,7 @@ impl ItemFileResolver for FanboxIntegration {
                         embeds.push(embed);
                     }
                 }
-                _ => {
-                    if let Some(value) = &block.text {
-                        text.push(value.as_str());
-                    }
-                }
+                _ => {}
             }
         }
         ordered_images.extend(post.body.images);
@@ -591,6 +738,469 @@ mod tests {
         ])
     }
 
+    fn post(id: i64, creator: &str, restricted: bool) -> Value {
+        json!({
+            "id": id.to_string(), "title": format!("Post {id}"),
+            "creatorId": creator, "isRestricted": restricted,
+            "likeCount": 1, "commentCount": 2, "user": {"name": "Alice"},
+            "feeRequired": 0, "publishedDatetime": "2026-08-07T12:00:00+09:00",
+            "hasAdultContent": false, "tags": ["tag", "tag", "other"]
+        })
+    }
+
+    fn component(server: &MockServer) -> Arc<dyn SdComponent> {
+        SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &props(server),
+            )
+            .unwrap()
+    }
+
+    async fn supportings(server: &MockServer, creators: &[&str], requests: u64) {
+        let creators =
+            creators.iter().map(|id| json!({"creatorId": id})).collect::<Vec<_>>();
+        Mock::given(method("GET"))
+            .and(path("/plan.listSupporting"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "body": {"plans": creators}
+            })))
+            .expect(requests)
+            .mount(server)
+            .await;
+    }
+
+    fn no_creator_cursor(request: &wiremock::Request) -> bool {
+        !request
+            .url
+            .query_pairs()
+            .any(|(key, _)| key == "firstId" || key == "firstPublishedDatetime")
+    }
+
+    fn item(server: &MockServer) -> SourceItem {
+        SourceItem {
+            title: "Post".into(),
+            link: format!("{}/posts/10", server.uri()).parse().unwrap(),
+            datetime: OffsetDateTime::UNIX_EPOCH,
+            content_type: "fanbox".into(),
+            download_uri: format!("{}/posts/10", server.uri()).parse().unwrap(),
+            attrs: Map::new(),
+            tags: Vec::new(),
+            identity: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_supporting_response_without_plans() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/plan.listSupporting"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "body": {"error": "authentication_required"}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let source = component(&server).as_source().unwrap();
+        let result = source.fetch(source.default_pointer().as_ref(), 1).await;
+        assert!(matches!(result, Err(ProcessingError::NonRetryable { skip: false, .. })));
+    }
+
+    #[tokio::test]
+    async fn rejects_creator_response_without_posts() {
+        let server = MockServer::start().await;
+        supportings(&server, &["alice"], 1).await;
+        Mock::given(method("GET"))
+            .and(path("/post.listCreator"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"body": {}})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let source = component(&server).as_source().unwrap();
+        let result = source.fetch(source.default_pointer().as_ref(), 1).await;
+        assert!(matches!(result, Err(ProcessingError::NonRetryable { skip: false, .. })));
+    }
+
+    #[tokio::test]
+    async fn fetches_full_pages_and_visits_every_creator() {
+        let server = MockServer::start().await;
+        supportings(&server, &["alice", "bob"], 1).await;
+        let first_page =
+            (36..=60).rev().map(|id| post(id, "alice", false)).collect::<Vec<_>>();
+        let last_page =
+            (21..=35).rev().map(|id| post(id, "alice", false)).collect::<Vec<_>>();
+        Mock::given(path("/post.listCreator"))
+            .and(query_param("creatorId", "alice"))
+            .and(query_param("limit", "25"))
+            .and(no_creator_cursor)
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "body": {"posts": first_page}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(path("/post.listCreator"))
+            .and(query_param("creatorId", "alice"))
+            .and(query_param("firstId", "36"))
+            .and(query_param("firstPublishedDatetime", "2026-08-07T11:59:59"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "body": {"posts": last_page}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(path("/post.listCreator"))
+            .and(query_param("creatorId", "bob"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "body": {"posts": [post(200, "bob", false), post(199, "bob", true)]}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let source = component(&server).as_source().unwrap();
+        let mut pointer = source.default_pointer();
+        let items = source
+            .fetch(pointer.as_ref(), 30)
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        let ids = items
+            .iter()
+            .map(|item| item.source_item.attrs["postId"].as_i64().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, (21..=60).rev().chain([200]).collect::<Vec<_>>());
+        for item in &items {
+            pointer.update(&item.source_item, item.item_pointer.as_ref());
+        }
+        let state = pointer.dump();
+        assert_eq!(state["creatorPointers"]["alice"]["topId"], 60);
+        assert_eq!(state["creatorPointers"]["alice"]["topDate"], "2026-08-07T12:00:00");
+        assert_eq!(state["creatorPointers"]["alice"]["touchBottom"], true);
+        assert!(state["creatorPointers"]["alice"]["nextMaxId"].is_null());
+        assert_eq!(state["creatorPointers"]["bob"]["topId"], 200);
+        let first_state =
+            items[24].item_pointer.as_any().downcast_ref::<CreatorPointer>().unwrap();
+        assert_eq!(first_state.next_max_id, Some(36));
+        assert_eq!(first_state.top_id, Some(60));
+        assert!(!first_state.touch_bottom);
+    }
+
+    #[tokio::test]
+    async fn keeps_an_entire_creator_page_when_limit_is_one() {
+        let server = MockServer::start().await;
+        supportings(&server, &["alice", "bob"], 1).await;
+        Mock::given(path("/post.listCreator"))
+            .and(query_param("creatorId", "alice"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "body": [post(10, "alice", false), post(9, "alice", false)]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(path("/post.listCreator"))
+            .and(query_param("creatorId", "bob"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "body": [post(20, "bob", false), post(19, "bob", false)]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let source = component(&server).as_source().unwrap();
+        let items = source
+            .fetch(source.default_pointer().as_ref(), 1)
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        assert_eq!(items.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn resumes_legacy_and_existing_rust_pointers() {
+        let server = MockServer::start().await;
+        supportings(&server, &["alice"], 2).await;
+        Mock::given(path("/post.listCreator"))
+            .and(query_param("creatorId", "alice"))
+            .and(query_param("firstId", "95"))
+            .and(query_param("firstPublishedDatetime", "2026-08-07T12:00"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "body": [post(94, "alice", false)]
+            })))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let source = component(&server).as_source().unwrap();
+        for raw in [
+            json!({"creatorPointers": {"alice": {
+                "creatorId": "alice", "nextMaxId": 95,
+                "nextMaxDate": "2026-08-07T12:00:01", "topId": 100,
+                "topDate": "2026-08-08T12:00:00", "touchBottom": false
+            }}}),
+            json!({"creators": {"alice": {
+                "creator_id": "alice", "next_max_id": 95,
+                "next_max_date": "2026-08-07T12:00:01+09:00", "top_id": 100,
+                "top_date": "2026-08-08T12:00:00+09:00", "touch_bottom": false
+            }}}),
+        ] {
+            let mut pointer = source.parse_raw_pointer(raw);
+            let items = source
+                .fetch(pointer.as_ref(), 1)
+                .await
+                .unwrap()
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap();
+            assert_eq!(items[0].source_item.attrs["postId"], 94);
+            pointer.update(&items[0].source_item, items[0].item_pointer.as_ref());
+            assert_eq!(pointer.dump()["creatorPointers"]["alice"]["topId"], 100);
+            assert_eq!(pointer.dump()["creatorPointers"]["alice"]["touchBottom"], true);
+        }
+    }
+
+    #[tokio::test]
+    async fn completed_creator_fetches_latest_posts_and_preserves_top_id() {
+        let server = MockServer::start().await;
+        supportings(&server, &["alice"], 2).await;
+        Mock::given(path("/post.listCreator"))
+            .and(no_creator_cursor)
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "body": [post(12, "alice", false), post(11, "alice", true),
+                    post(10, "alice", false), post(9, "alice", false)]
+            })))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let source = component(&server).as_source().unwrap();
+        let mut pointer = source.parse_raw_pointer(json!({"creators": {"alice": {
+            "creator_id": "alice", "next_max_id": 3,
+            "next_max_date": "2026-08-01T12:00:00+09:00",
+            "top_id": 10, "touch_bottom": true
+        }}}));
+        assert!(pointer.dump()["creatorPointers"]["alice"]["nextMaxId"].is_null());
+        let items = source
+            .fetch(pointer.as_ref(), 10)
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].source_item.attrs["postId"], 12);
+        pointer.update(&items[0].source_item, items[0].item_pointer.as_ref());
+        assert_eq!(pointer.dump()["creatorPointers"]["alice"]["topId"], 12);
+        let next = source
+            .fetch(pointer.as_ref(), 10)
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        assert!(next.is_empty());
+    }
+
+    #[tokio::test]
+    async fn latest_only_returns_the_available_page_without_updating_pointer() {
+        let server = MockServer::start().await;
+        Mock::given(path("/post.listSupporting"))
+            .and(query_param("limit", "30"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"body": {
+                "items": [post(12, "alice", false), post(11, "alice", true),
+                    post(10, "alice", false)]
+            }})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut config = props(&server);
+        config.insert("mode".into(), json!("latestOnly"));
+        let source = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &config,
+            )
+            .unwrap()
+            .as_source()
+            .unwrap();
+        let mut pointer = source.parse_raw_pointer(json!({"creatorPointers": {"alice": {
+            "creatorId": "alice", "topId": 1, "touchBottom": true
+        }}}));
+        let before = pointer.dump();
+        let items = source
+            .fetch(pointer.as_ref(), 1)
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].source_item.tags, ["tag", "other"]);
+        assert_eq!(
+            items[0].source_item.link.to_string(),
+            format!("{}/posts/12", server.uri())
+        );
+        assert_eq!(
+            items[0].source_item.attrs,
+            json!({
+                "likes": 1, "comments": 2, "adult": false, "fee": 0,
+                "postId": 12, "username": "Alice", "creatorId": "alice"
+            })
+            .as_object()
+            .unwrap()
+            .clone()
+        );
+        for item in &items {
+            pointer.update(&item.source_item, item.item_pointer.as_ref());
+        }
+        assert_eq!(pointer.dump(), before);
+    }
+
+    #[tokio::test]
+    async fn restricted_pages_still_advance_pagination() {
+        let server = MockServer::start().await;
+        supportings(&server, &["alice"], 1).await;
+        let restricted =
+            (6..=30).rev().map(|id| post(id, "alice", true)).collect::<Vec<_>>();
+        Mock::given(path("/post.listCreator"))
+            .and(no_creator_cursor)
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"body": restricted})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(path("/post.listCreator"))
+            .and(query_param("firstId", "6"))
+            .and(query_param("firstPublishedDatetime", "2026-08-07T11:59:59"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "body": [post(5, "alice", false)]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let source = component(&server).as_source().unwrap();
+        let items = source
+            .fetch(source.default_pointer().as_ref(), 10)
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].source_item.attrs["postId"], 5);
+    }
+
+    #[tokio::test]
+    async fn stops_on_an_empty_creator_page() {
+        let server = MockServer::start().await;
+        supportings(&server, &["alice"], 1).await;
+        Mock::given(path("/post.listCreator"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "body": {"posts": []}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let source = component(&server).as_source().unwrap();
+        let items = source
+            .fetch(source.default_pointer().as_ref(), 10)
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        assert!(items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stops_on_a_repeated_creator_page() {
+        let server = MockServer::start().await;
+        supportings(&server, &["alice"], 1).await;
+        let posts =
+            (36..=60).rev().map(|id| post(id, "alice", false)).collect::<Vec<_>>();
+        Mock::given(path("/post.listCreator"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"body": posts})),
+            )
+            .expect(2)
+            .mount(&server)
+            .await;
+        let source = component(&server).as_source().unwrap();
+        let items = source
+            .fetch(source.default_pointer().as_ref(), 50)
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        assert_eq!(items.len(), 25);
+    }
+
+    #[tokio::test]
+    async fn sends_and_exposes_legacy_default_headers() {
+        let server = MockServer::start().await;
+        supportings(&server, &[], 1).await;
+        let source = component(&server).as_source().unwrap();
+        let items = source
+            .fetch(source.default_pointer().as_ref(), 1)
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        assert!(items.is_empty());
+        let headers = source.headers(&item(&server)).unwrap();
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(headers.len(), 12);
+        for (name, value) in &headers {
+            assert_eq!(requests[0].headers.get(name).unwrap().to_str().unwrap(), value);
+        }
+        assert_eq!(headers["Cookie"], "FANBOXSESSID=x");
+        assert_eq!(headers["User-Agent"], USER_AGENT);
+        assert_eq!(headers["sec-fetch-site"], "same-site");
+        assert_eq!(headers["accept-language"], "en,zh-CN;q=0.9,zh;q=0.8");
+    }
+
+    #[tokio::test]
+    async fn custom_headers_replace_the_defaults() {
+        let server = MockServer::start().await;
+        supportings(&server, &[], 1).await;
+        let mut config = props(&server);
+        config.insert(
+            "headers".into(),
+            json!({"cookie": "custom", "user-agent": "browser"}),
+        );
+        let source = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &config,
+            )
+            .unwrap()
+            .as_source()
+            .unwrap();
+        let items = source
+            .fetch(source.default_pointer().as_ref(), 1)
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        assert!(items.is_empty());
+        assert_eq!(
+            source.headers(&item(&server)).unwrap(),
+            HashMap::from_iter([
+                ("cookie".into(), "custom".into()),
+                ("user-agent".into(), "browser".into()),
+            ])
+        );
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests[0].headers.get("cookie").unwrap(), "custom");
+        assert_eq!(requests[0].headers.get("user-agent").unwrap(), "browser");
+        assert!(!requests[0].headers.contains_key("origin"));
+        assert!(!requests[0].headers.contains_key("referer"));
+    }
+
     #[tokio::test]
     async fn fetches_creator_and_resumes_from_pointer() {
         let server = MockServer::start().await;
@@ -648,35 +1258,82 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/post.info"))
             .and(query_param("postId", "10"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "body":{"id":"10","coverImageUrl":"https://cdn/cover","body":{
-                    "blocks":[{"type":"text","text":"hello"},{"type":"image","imageId":"i"},{"type":"url_embed","urlEmbedId":"u"}],
-                    "imageMap":{"i":{"id":"i","extension":"png","height":2,"width":3,"originalUrl":"https://cdn/i","thumbnailUrl":"https://cdn/t"}},
-                    "urlEmbedMap":{"u":{"id":"u","html":"<b>x</b>"}}
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "body": {"id": 10, "coverImageUrl": "https://cdn/cover", "body": {
+                    "blocks": [
+                        {"type": "text", "text": "hello"},
+                        {"type": "image", "imageId": "i2", "text": "caption"},
+                        {"type": "file", "fileId": "f", "text": "attachment"},
+                        {"type": "url_embed", "urlEmbedId": "u2", "text": "embed"},
+                        {"type": "image", "imageId": "i1"},
+                        {"type": "url_embed", "urlEmbedId": "u1"},
+                        {"type": "url_embed", "urlEmbedId": "u3"},
+                        {"type": "image", "imageId": "missing"},
+                        {"type": "text", "text": "end"}
+                    ],
+                    "imageMap": {
+                        "i1": {"id": "i1", "extension": "png", "height": 2, "width": 3,
+                            "originalUrl": "https://cdn/i1"},
+                        "i2": {"id": "i2", "extension": "jpg", "height": 4, "width": 5,
+                            "originalUrl": "https://cdn/i2"}
+                    },
+                    "images": [{"id": "i3", "extension": "webp", "height": 6, "width": 7,
+                        "originalUrl": "https://cdn/i3"}],
+                    "fileMap": {"f": {"id": "f", "name": "archive", "extension": "zip",
+                        "size": 42, "url": "https://cdn/archive"}},
+                    "files": [{"id": "f2", "name": "notes", "extension": "pdf",
+                        "size": 50, "url": "https://cdn/notes"}],
+                    "urlEmbedMap": {
+                        "u1": {"id": "u1", "html": null},
+                        "u2": {"id": "u2", "html": "<b>x</b>"},
+                        "u3": {"id": "u3", "html": "<b>y</b>"}
+                    }
                 }}
             })))
+            .expect(1)
             .mount(&server)
             .await;
-        let component = SUPPLIER
-            .apply(
-                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
-                &props(&server),
-            )
-            .unwrap();
-        let resolver = component.as_item_file_resolver().unwrap();
-        let item = SourceItem {
-            title: "Post".into(),
-            link: format!("{}/posts/10", server.uri()).parse().unwrap(),
-            datetime: OffsetDateTime::UNIX_EPOCH,
-            content_type: "fanbox".into(),
-            download_uri: format!("{}/posts/10", server.uri()).parse().unwrap(),
-            attrs: Map::new(),
-            tags: Vec::new(),
-            identity: None,
-        };
-        let files = resolver.resolve_files(&item).await.unwrap();
-        assert_eq!(4, files.len());
-        assert!(files.iter().any(|file| file.path == *"i.png"));
-        assert!(files.iter().any(|file| file.path == *"text_10.txt"));
+        let resolver = component(&server).as_item_file_resolver().unwrap();
+        let files = resolver.resolve_files(&item(&server)).await.unwrap();
+        assert_eq!(
+            files.iter().map(|file| file.path.clone()).collect::<Vec<_>>(),
+            [
+                "cover_10.jpeg",
+                "i2.jpg",
+                "i1.png",
+                "i3.webp",
+                "archive.zip",
+                "notes.pdf",
+                "text_10.txt",
+                "u2.html",
+                "u3.html",
+            ]
+            .map(PathBuf::from)
+        );
+        assert_eq!(files[0].attrs["type"], "cover");
+        assert_eq!(
+            files[1].attrs,
+            json!({"type": "image", "height": 4, "width": 5})
+                .as_object()
+                .unwrap()
+                .clone()
+        );
+        assert_eq!(
+            files[4].attrs,
+            json!({"type": "file", "size": 42}).as_object().unwrap().clone()
+        );
+        assert_eq!(
+            files[4].download_uri.as_ref().unwrap().to_string(),
+            "https://cdn/archive"
+        );
+        assert_eq!(files[6].attrs["type"], "text");
+        assert_eq!(
+            files[6].data.as_deref().unwrap(),
+            b"hello\ncaption\nattachment\nembed\nend"
+        );
+        assert!(files[6].download_uri.is_none());
+        assert_eq!(files[7].attrs["type"], "html");
+        assert_eq!(files[7].data.as_deref().unwrap(), b"<b>x</b>");
+        assert_eq!(files[8].data.as_deref().unwrap(), b"<b>y</b>");
     }
 }
