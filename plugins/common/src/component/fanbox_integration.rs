@@ -395,6 +395,19 @@ impl FanboxIntegration {
         )
     }
 
+    async fn image_status(
+        &self,
+        url: &str,
+    ) -> Result<reqwest::StatusCode, ProcessingError> {
+        let request =
+            self.headers.iter().fold(self.client.head(url), |request, (name, value)| {
+                request.header(name, value)
+            });
+        request.send().await.map(|response| response.status()).map_err(|error| {
+            http::map_error(error, &format!("Check Fanbox image: HEAD {url}"))
+        })
+    }
+
     async fn json<T: for<'de> Deserialize<'de>>(
         &self,
         request: reqwest::RequestBuilder,
@@ -716,6 +729,7 @@ struct Image {
     height: i64,
     width: i64,
     original_url: String,
+    thumbnail_url: Option<String>,
 }
 #[derive(Clone, Deserialize)]
 struct FanboxFile {
@@ -806,9 +820,41 @@ impl ItemFileResolver for FanboxIntegration {
         }
         ordered_images.extend(body.images);
         for image in ordered_images {
+            let mut url = image.original_url;
+            if self.image_status(&url).await? == reqwest::StatusCode::BAD_REQUEST {
+                let Some(thumbnail_url) = image.thumbnail_url else {
+                    warn!(
+                        post_id = %post.id,
+                        image_id = %image.id,
+                        original_url = %url,
+                        "Fanbox[image-skipped] originalUrl returned HTTP 400 and thumbnailUrl is missing"
+                    );
+                    continue;
+                };
+                if self.image_status(&thumbnail_url).await?
+                    == reqwest::StatusCode::BAD_REQUEST
+                {
+                    warn!(
+                        post_id = %post.id,
+                        image_id = %image.id,
+                        original_url = %url,
+                        %thumbnail_url,
+                        "Fanbox[image-skipped] originalUrl and thumbnailUrl both returned HTTP 400"
+                    );
+                    continue;
+                }
+                debug!(
+                    post_id = %post.id,
+                    image_id = %image.id,
+                    original_url = %url,
+                    %thumbnail_url,
+                    "Fanbox[image-thumbnail-fallback] originalUrl returned HTTP 400; using thumbnailUrl"
+                );
+                url = thumbnail_url;
+            }
             files.push(remote_file(
                 format!("{}.{}", image.id, image.extension),
-                image.original_url,
+                url,
                 Map::from_iter([
                     ("height".into(), Value::from(image.height)),
                     ("width".into(), Value::from(image.width)),
@@ -875,7 +921,7 @@ fn remote_file(
 mod tests {
     use super::*;
     use futures_util::TryStreamExt;
-    use wiremock::matchers::{method, path, query_param};
+    use wiremock::matchers::{header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn props(server: &MockServer) -> Map<String, Value> {
@@ -1414,6 +1460,12 @@ mod tests {
     #[tokio::test]
     async fn resolves_wrapped_post_details() {
         let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/i1"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
         post_info(
             &server,
             json!({"post": {
@@ -1421,7 +1473,7 @@ mod tests {
                 "coverImageUrl": "https://cdn/cover",
                 "body": {"images": [{
                     "id": "i1", "extension": "png", "height": 2, "width": 3,
-                    "originalUrl": "https://cdn/i1"
+                    "originalUrl": format!("{}/i1", server.uri())
                 }]}
             }}),
         )
@@ -1437,7 +1489,59 @@ mod tests {
                 .iter()
                 .map(|file| file.download_uri.as_ref().unwrap().to_string())
                 .collect::<Vec<_>>(),
-            ["https://cdn/cover", "https://cdn/i1"]
+            ["https://cdn/cover".to_string(), format!("{}/i1", server.uri())]
+        );
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_thumbnails_and_skips_images_with_both_urls_unavailable() {
+        let server = MockServer::start().await;
+        let cases = [
+            ("normal", 200, None),
+            ("fallback", 400, Some(200)),
+            ("unavailable", 400, Some(400)),
+            ("after", 200, None),
+        ];
+        let mut images = Vec::new();
+        for (id, original_status, thumbnail_status) in cases {
+            Mock::given(method("HEAD"))
+                .and(path(format!("/original/{id}")))
+                .and(header("Cookie", "FANBOXSESSID=x"))
+                .and(header("Referer", "https://www.fanbox.cc/"))
+                .respond_with(ResponseTemplate::new(original_status))
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("HEAD"))
+                .and(path(format!("/thumbnail/{id}")))
+                .and(header("Cookie", "FANBOXSESSID=x"))
+                .and(header("Referer", "https://www.fanbox.cc/"))
+                .respond_with(ResponseTemplate::new(thumbnail_status.unwrap_or(200)))
+                .expect(u64::from(thumbnail_status.is_some()))
+                .mount(&server)
+                .await;
+            images.push(json!({
+                "id": id, "extension": "png", "height": 2, "width": 3,
+                "originalUrl": format!("{}/original/{id}", server.uri()),
+                "thumbnailUrl": format!("{}/thumbnail/{id}", server.uri())
+            }));
+        }
+        post_info(&server, json!({"id": "10", "body": {"images": images}})).await;
+        let resolver = component(&server).as_item_file_resolver().unwrap();
+
+        let files = resolver.resolve_files(&item(&server)).await.unwrap();
+
+        assert_eq!(
+            files.iter().map(|file| file.path.to_str().unwrap()).collect::<Vec<_>>(),
+            ["normal.png", "fallback.png", "after.png"]
+        );
+        assert_eq!(
+            files
+                .iter()
+                .map(|file| file.download_uri.as_ref().unwrap().to_string())
+                .collect::<Vec<_>>(),
+            ["/original/normal", "/thumbnail/fallback", "/original/after"]
+                .map(|path| format!("{}{path}", server.uri()))
         );
     }
 
@@ -1477,6 +1581,14 @@ mod tests {
     #[tokio::test]
     async fn resolves_images_files_text_and_embeds() {
         let server = MockServer::start().await;
+        for image_path in ["/i1", "/i2", "/i3"] {
+            Mock::given(method("HEAD"))
+                .and(path(image_path))
+                .respond_with(ResponseTemplate::new(200))
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
         Mock::given(method("GET"))
             .and(path("/post.info"))
             .and(query_param("postId", "10"))
@@ -1495,12 +1607,12 @@ mod tests {
                     ],
                     "imageMap": {
                         "i1": {"id": "i1", "extension": "png", "height": 2, "width": 3,
-                            "originalUrl": "https://cdn/i1"},
+                            "originalUrl": format!("{}/i1", server.uri())},
                         "i2": {"id": "i2", "extension": "jpg", "height": 4, "width": 5,
-                            "originalUrl": "https://cdn/i2"}
+                            "originalUrl": format!("{}/i2", server.uri())}
                     },
                     "images": [{"id": "i3", "extension": "webp", "height": 6, "width": 7,
-                        "originalUrl": "https://cdn/i3"}],
+                        "originalUrl": format!("{}/i3", server.uri())}],
                     "fileMap": {"f": {"id": "f", "name": "archive", "extension": "zip",
                         "size": 42, "url": "https://cdn/archive"}},
                     "files": [{"id": "f2", "name": "notes", "extension": "pdf",
