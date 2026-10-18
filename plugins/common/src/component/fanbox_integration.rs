@@ -17,12 +17,16 @@ use std::fmt::{Debug, Display, Formatter};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 use time::PrimitiveDateTime;
-use time::format_description::well_known::Iso8601;
+use time::format_description::well_known::{Iso8601, Rfc2822};
+use tokio::sync::Mutex;
+use tokio::time::{Instant, sleep_until};
 use tracing::{debug, warn};
 
 const CREATOR_PAGE_SIZE: usize = 25;
 const ERROR_RESPONSE_BODY_LIMIT: usize = 16 * 1024;
+const DEFAULT_RATE_LIMIT_DELAY: Duration = Duration::from_secs(60);
 const LOCAL_DATETIME_FORMAT: &[time::format_description::BorrowedFormatItem<'static>] =
     time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]");
 const USER_AGENT: &str = concat!(
@@ -34,9 +38,10 @@ pub struct FanboxIntegrationSupplier;
 pub const SUPPLIER: FanboxIntegrationSupplier = FanboxIntegrationSupplier;
 
 #[derive(Default, Deserialize)]
-#[serde(default)]
-struct FanboxHeadersConfig {
+#[serde(default, rename_all = "kebab-case")]
+struct FanboxRequestConfig {
     headers: Option<HashMap<String, String>>,
+    request_interval_ms: Option<u32>,
 }
 
 impl ComponentSupplier for FanboxIntegrationSupplier {
@@ -66,9 +71,8 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
                 "Invalid configuration at 'mode': expected either `all` or `latestOnly`",
             ));
         }
-        let headers = deserialize_component_config::<FanboxHeadersConfig>(props)?
-            .headers
-            .unwrap_or_else(|| default_headers(cookie));
+        let config = deserialize_component_config::<FanboxRequestConfig>(props)?;
+        let headers = config.headers.unwrap_or_else(|| default_headers(cookie));
         let base = props
             .get("base-url")
             .and_then(Value::as_str)
@@ -81,6 +85,10 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
             base,
             headers,
             latest_only: mode == "latestOnly",
+            request_interval: Duration::from_millis(u64::from(
+                config.request_interval_ms.unwrap_or(3000),
+            )),
+            request_not_before: Mutex::new(Instant::now()),
         }))
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
@@ -100,6 +108,12 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
                         "type":"object",
                         "description":"Replaces the default Fanbox API and download headers.",
                         "additionalProperties":{"type":"string"}
+                    },
+                    "request-interval-ms":{
+                        "type":"integer",
+                        "minimum":0,
+                        "default":3000,
+                        "description":"Minimum interval between Fanbox API requests in milliseconds. HTTP 429 cooldowns always apply."
                     },
                     "base-url":{"type":"string","default":"https://api.fanbox.cc"}
                 },
@@ -158,6 +172,21 @@ fn default_headers(cookie: String) -> HashMap<String, String> {
     ])
 }
 
+fn retry_after_delay(headers: &reqwest::header::HeaderMap) -> Duration {
+    let Some(value) =
+        headers.get(reqwest::header::RETRY_AFTER).and_then(|value| value.to_str().ok())
+    else {
+        return DEFAULT_RATE_LIMIT_DELAY;
+    };
+    if let Ok(seconds) = value.trim().parse::<u64>() {
+        return Duration::from_secs(seconds);
+    }
+    let Ok(date) = OffsetDateTime::parse(value.trim(), &Rfc2822) else {
+        return DEFAULT_RATE_LIMIT_DELAY;
+    };
+    Duration::try_from(date - OffsetDateTime::now_utc()).unwrap_or_default()
+}
+
 #[derive(Debug, source_downloader_sdk::SdComponent)]
 #[component(Source, ItemFileResolver)]
 struct FanboxIntegration {
@@ -165,6 +194,8 @@ struct FanboxIntegration {
     base: String,
     headers: HashMap<String, String>,
     latest_only: bool,
+    request_interval: Duration,
+    request_not_before: Mutex<Instant>,
 }
 
 impl Display for FanboxIntegration {
@@ -352,6 +383,14 @@ impl FanboxIntegration {
             request.build().map_err(|error| http::map_error(error, operation))?;
         let method = request.method().clone();
         let context = format!("{operation}: {method} {}", request.url());
+        // Fetching pages and resolving posts share pacing and rate-limit cooldowns.
+        let mut request_not_before = self.request_not_before.lock().await;
+        let wait = request_not_before.saturating_duration_since(Instant::now());
+        if !wait.is_zero() {
+            debug!(operation, wait_seconds = wait.as_secs_f64(), "Fanbox[request-wait]");
+            sleep_until(*request_not_before).await;
+        }
+        *request_not_before = Instant::now() + self.request_interval;
         let response = self
             .client
             .execute(request)
@@ -360,6 +399,21 @@ impl FanboxIntegration {
         if let Err(error) = response.error_for_status_ref() {
             let status = response.status();
             let url = response.url().clone();
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                let now = Instant::now();
+                let deadline = now
+                    .checked_add(retry_after_delay(response.headers()))
+                    .unwrap_or(now + DEFAULT_RATE_LIMIT_DELAY);
+                *request_not_before = (*request_not_before).max(deadline);
+                warn!(
+                    operation,
+                    %url,
+                    cooldown_seconds = request_not_before
+                        .saturating_duration_since(now)
+                        .as_secs_f64(),
+                    "Fanbox[rate-limited] API requests paused until cooldown ends"
+                );
+            }
             let mut headers = response.headers().clone();
             for (name, value) in headers.iter_mut() {
                 if value.is_sensitive()
@@ -796,6 +850,7 @@ mod tests {
         Map::from_iter([
             ("cookie".into(), Value::String("FANBOXSESSID=x".into())),
             ("base-url".into(), Value::String(server.uri())),
+            ("request-interval-ms".into(), json!(0)),
         ])
     }
 
