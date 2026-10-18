@@ -821,7 +821,7 @@ impl ItemFileResolver for FanboxIntegration {
         ordered_images.extend(body.images);
         for image in ordered_images {
             let mut url = image.original_url;
-            let mut used_thumbnail = false;
+            let mut tags = Vec::new();
             if self.image_status(&url).await? == reqwest::StatusCode::BAD_REQUEST {
                 let Some(thumbnail_url) = image.thumbnail_url else {
                     warn!(
@@ -852,7 +852,7 @@ impl ItemFileResolver for FanboxIntegration {
                     "Fanbox[image-thumbnail-fallback] originalUrl returned HTTP 400; using thumbnailUrl"
                 );
                 url = thumbnail_url;
-                used_thumbnail = true;
+                tags.push("thumbnail".into());
             }
             let mut file = remote_file(
                 format!("{}.{}", image.id, image.extension),
@@ -863,9 +863,7 @@ impl ItemFileResolver for FanboxIntegration {
                     ("type".into(), Value::String("image".into())),
                 ]),
             )?;
-            if used_thumbnail {
-                file.tags.push("thumbnail".into());
-            }
+            file.tags = tags;
             files.push(file);
         }
         ordered_files.extend(body.files);
