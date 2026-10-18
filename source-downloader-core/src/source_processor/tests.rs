@@ -1,5 +1,8 @@
 use super::*;
 use crate::config::ConfigOperator;
+use crate::expression::CompiledExpressionFactory;
+use crate::expression::cel::FACTORY;
+use crate::process::rule::{ExpressionAndTagMatcher, FileStrategy};
 use crate::process::variable::SmartStrategy;
 use crate::processor_test_support::test_support::*;
 use futures_util::stream;
@@ -1753,6 +1756,149 @@ async fn item_group_provider_is_used_for_file_variables() {
     processor.run().await.unwrap();
 
     assert_eq!(*listener.0.lock(), vec!["item-group.txt".to_owned()]);
+}
+
+#[tokio::test]
+async fn fanbox_file_grouping_keeps_image_sequence_continuous() {
+    let files = [
+        ("cover.jpg", "cover"),
+        ("image-a.jpg", "image"),
+        ("archive.zip", "file"),
+        ("image-b.jpg", "image"),
+        ("body.txt", "text"),
+        ("image-c.jpg", "image"),
+        ("draft.psd", "file"),
+        ("image-d.jpg", "image"),
+        ("image-e.jpg", "image"),
+        ("image-f.jpg", "image"),
+    ]
+    .into_iter()
+    .map(|(path, kind)| {
+        let mut file = SourceFile::new(path.into());
+        file.attrs.insert("type".to_owned(), json!(kind));
+        file
+    })
+    .collect();
+    let rules = [("file", ""), ("cover", "0"), ("text", "text")]
+        .into_iter()
+        .map(|(kind, pattern)| {
+            expression_file_rule(&format!("file.attrs.type == '{kind}'"), pattern)
+        })
+        .collect();
+
+    let contents = sequence_file_contents(files, rules).await;
+
+    assert_eq!(
+        contents.iter().map(|file| file.target_filename.as_str()).collect::<Vec<_>>(),
+        [
+            "0.jpg",
+            "1.jpg",
+            "archive.zip",
+            "2.jpg",
+            "text.txt",
+            "3.jpg",
+            "draft.psd",
+            "4.jpg",
+            "5.jpg",
+            "6.jpg",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn file_grouping_sequence_uses_first_match_and_total_file_count() {
+    let files = (0..10)
+        .map(|index| {
+            let mut file = SourceFile::new(format!("source-{index}.jpg").into());
+            if index % 2 == 0 {
+                file.tags.push("selected".to_owned());
+            }
+            file
+        })
+        .collect();
+    let rules = vec![
+        expression_file_rule(
+            "fileCount == 10 && 'selected' in file.tags",
+            "selected-{sequence}",
+        ),
+        expression_file_rule("'selected' in file.tags", "unreachable-{sequence}"),
+    ];
+
+    let contents = sequence_file_contents(files, rules).await;
+
+    assert_eq!(
+        contents.iter().map(|file| file.target_filename.as_str()).collect::<Vec<_>>(),
+        [
+            "selected-1.jpg",
+            "1.jpg",
+            "selected-2.jpg",
+            "2.jpg",
+            "selected-3.jpg",
+            "3.jpg",
+            "selected-4.jpg",
+            "4.jpg",
+            "selected-5.jpg",
+            "5.jpg",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn sequence_without_file_grouping_numbers_all_files() {
+    let files = (0..10)
+        .map(|index| SourceFile::new(format!("source-{index}.jpg").into()))
+        .collect();
+
+    let contents = sequence_file_contents(files, Vec::new()).await;
+
+    assert_eq!(
+        contents.iter().map(|file| file.target_filename.as_str()).collect::<Vec<_>>(),
+        [
+            "01.jpg", "02.jpg", "03.jpg", "04.jpg", "05.jpg", "06.jpg", "07.jpg",
+            "08.jpg", "09.jpg", "10.jpg",
+        ]
+    );
+}
+
+fn expression_file_rule(expression: &str, filename_pattern: &str) -> FileRule {
+    FileRule {
+        matcher: Box::new(ExpressionAndTagMatcher::new(
+            Some(FACTORY.create::<bool>(expression).unwrap()),
+            None,
+        )),
+        strategy: FileStrategy {
+            save_path_pattern: None,
+            filename_pattern: Some(PathPattern::new_cel(filename_pattern.to_owned())),
+            file_content_filters: None,
+        },
+    }
+}
+
+async fn sequence_file_contents(
+    files: Vec<SourceFile>,
+    rules: Vec<FileRule>,
+) -> Vec<FileContent> {
+    let (mut processor, _) = pointer_test_processor(false, 0, false);
+    processor.options.filename_pattern = PathPattern::new_cel("{sequence}".to_owned());
+    processor.options.variable_providers = vec![Arc::new(
+        crate::components::sequence_variable_provider::SequenceVariableProvider,
+    )];
+    processor.options.file_rules = rules;
+    let progress =
+        ProcessorRunItemGuard::new("sequence-test", ProcessorItemStage::ResolvingFiles);
+
+    NormalProcess {}
+        .process_source_files(
+            &processor,
+            &SourceItem::default(),
+            &PatternVariables::new(),
+            &processor.options.variable_providers,
+            files,
+            None,
+            &progress,
+        )
+        .await
+        .unwrap()
 }
 
 #[tokio::test]

@@ -14,6 +14,7 @@ use backon::{BackoffBuilder, ConstantBuilder};
 use futures_util::future::{AbortHandle, Abortable, FutureExt};
 use futures_util::stream::{FuturesOrdered, FuturesUnordered, StreamExt};
 use humantime::format_duration;
+use indexmap::IndexMap;
 use itertools::Itertools;
 use parking_lot::{Mutex as SyncMutex, RwLock};
 use serde::Serialize;
@@ -2956,45 +2957,69 @@ trait Process {
             relative_files.push(file);
         }
 
-        let mut file_raw_vars = vec![];
-        for (idx, provider) in variable_providers.iter().enumerate() {
-            let vars = match provider
-                .file_variables(source_item, item_variables, &relative_files)
-                .await
-            {
-                Ok(vars) => vars,
-                Err(error) => match opt.variable_provider_error_strategy {
-                    VariableProviderErrorStrategy::Ignore => {
-                        tracing::warn!(provider = %provider, stage = "file-variables", "variable provider failed: {}", error.message());
-                        continue;
-                    }
-                    VariableProviderErrorStrategy::Error => return Err(error),
-                },
-            };
-            if vars.len() != relative_files.len() {
-                return Err(ProcessingError::non_retryable(format!(
-                    "Resolved files:{} and file variables:{} size not match, variable provider at {} implementation error",
-                    relative_files.len(),
-                    vars.len(),
-                    idx
-                )));
-            }
-            file_raw_vars.push((provider.accuracy(), vars));
+        // Providers such as sequence must see each file group independently.
+        let file_count = relative_files.len();
+        let mut file_groups: IndexMap<_, Vec<_>> = IndexMap::new();
+        for (index, file) in relative_files.into_iter().enumerate() {
+            let rule_index = opt
+                .file_rules
+                .iter()
+                .position(|rule| rule.matcher.matches(&file, file_count));
+            file_groups.entry(rule_index).or_default().push((index, file));
         }
-        let file_vars = opt.variable_aggregation.merge_files(&file_raw_vars);
-        // </editor-fold>
-        let mut result: Vec<FileContent> = vec![];
+        // Empty resolver results still need provider validation and error handling.
+        if file_count == 0 {
+            file_groups.insert(None, Vec::new());
+        }
+
+        let mut prepared_files = Vec::with_capacity(file_count);
+        for (rule_index, group) in file_groups {
+            let (indices, files): (Vec<_>, Vec<_>) = group.into_iter().unzip();
+            let mut file_raw_vars = vec![];
+            for (idx, provider) in variable_providers.iter().enumerate() {
+                let vars = match provider
+                    .file_variables(source_item, item_variables, &files)
+                    .await
+                {
+                    Ok(vars) => vars,
+                    Err(error) => match opt.variable_provider_error_strategy {
+                        VariableProviderErrorStrategy::Ignore => {
+                            tracing::warn!(provider = %provider, stage = "file-variables", "variable provider failed: {}", error.message());
+                            continue;
+                        }
+                        VariableProviderErrorStrategy::Error => return Err(error),
+                    },
+                };
+                if vars.len() != files.len() {
+                    return Err(ProcessingError::non_retryable(format!(
+                        "Resolved files:{} and file variables:{} size not match, variable provider at {} implementation error",
+                        files.len(),
+                        vars.len(),
+                        idx
+                    )));
+                }
+                file_raw_vars.push((provider.accuracy(), vars));
+            }
+            let mut file_vars =
+                opt.variable_aggregation.merge_files(&file_raw_vars).into_iter();
+            for (index, file) in indices.into_iter().zip(files) {
+                prepared_files.push((
+                    index,
+                    rule_index,
+                    file,
+                    file_vars.next().unwrap_or_default(),
+                ));
+            }
+        }
+        // Grouping changes provider inputs, while output retains resolver order.
+        prepared_files.sort_unstable_by_key(|(index, ..)| *index);
+        let mut result = Vec::with_capacity(file_count);
 
         let item_var =
             p.renamer.item_rename_variables(source_item, item_variables).await?;
 
-        let empty_vars = &PatternVariables::new();
-        let file_count = relative_files.len();
-        for (idx, x) in relative_files.into_iter().enumerate() {
-            let var = file_vars.get(idx).unwrap_or(empty_vars);
-            let file_rule =
-                opt.file_rules.iter().find(|rule| rule.matcher.matches(&x, file_count));
-            let file_strategy = file_rule.map(|r| &r.strategy);
+        for (_, rule_index, file, variables) in prepared_files {
+            let file_strategy = rule_index.map(|index| &opt.file_rules[index].strategy);
 
             // Determine save_path_pattern and filename_pattern for this file
             let file_save_path_pattern = file_strategy
@@ -3015,10 +3040,10 @@ trait Process {
             let raw = RawFileContent {
                 save_path: &p.save_path,
                 download_path: &p.download_path,
-                variables: var,
+                variables: &variables,
                 save_path_pattern: file_save_path_pattern,
                 filename_pattern: file_filename_pattern,
-                source_file: x,
+                source_file: file,
             };
             let content =
                 p.renamer.create_file_content(source_item, raw, &item_var).await?;
