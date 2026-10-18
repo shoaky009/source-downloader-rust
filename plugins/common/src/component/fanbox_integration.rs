@@ -22,6 +22,7 @@ use time::format_description::well_known::Iso8601;
 use tracing::{debug, warn};
 
 const CREATOR_PAGE_SIZE: usize = 25;
+const ERROR_RESPONSE_BODY_LIMIT: usize = 16 * 1024;
 const LOCAL_DATETIME_FORMAT: &[time::format_description::BorrowedFormatItem<'static>] =
     time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]");
 const USER_AGENT: &str = concat!(
@@ -347,17 +348,54 @@ impl FanboxIntegration {
         request: reqwest::RequestBuilder,
         operation: &str,
     ) -> Result<T, ProcessingError> {
-        http::execute(&self.client, request, operation)
-            .await?
-            .json::<ApiResponse<T>>()
+        let request =
+            request.build().map_err(|error| http::map_error(error, operation))?;
+        let method = request.method().clone();
+        let context = format!("{operation}: {method} {}", request.url());
+        let response = self
+            .client
+            .execute(request)
             .await
-            .map(|response| response.body)
-            .map_err(|error| {
+            .map_err(|error| http::map_error(error, &context))?;
+        if let Err(error) = response.error_for_status_ref() {
+            let status = response.status();
+            let url = response.url().clone();
+            let mut headers = response.headers().clone();
+            for (name, value) in headers.iter_mut() {
+                if value.is_sensitive()
+                    || matches!(
+                        name.as_str(),
+                        "set-cookie" | "cookie" | "authorization" | "proxy-authorization"
+                    )
+                {
+                    *value = reqwest::header::HeaderValue::from_static("[REDACTED]");
+                }
+            }
+            let body = response.text().await.unwrap_or_else(|error| {
+                format!("<failed to read response body: {}>", format_error_chain(&error))
+            });
+            let truncated = body.len() > ERROR_RESPONSE_BODY_LIMIT;
+            let body = &body[..body.floor_char_boundary(ERROR_RESPONSE_BODY_LIMIT)];
+            warn!(
+                operation,
+                %method,
+                %url,
+                status = status.as_u16(),
+                response_headers = ?headers,
+                response_body = ?body,
+                response_body_truncated = truncated,
+                "Fanbox[http-response-error]"
+            );
+            return Err(http::map_error(error, &context));
+        }
+        response.json::<ApiResponse<T>>().await.map(|response| response.body).map_err(
+            |error| {
                 ProcessingError::non_retryable(format!(
                     "Invalid Fanbox response: {}",
                     format_error_chain(&error)
                 ))
-            })
+            },
+        )
     }
 
     async fn creator_posts(
