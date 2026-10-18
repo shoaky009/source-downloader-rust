@@ -867,9 +867,23 @@ impl ItemFileResolver for FanboxIntegration {
             files.push(file);
         }
         ordered_files.extend(body.files);
+        let original_names = ordered_files
+            .iter()
+            .map(|file| format!("{}.{}", file.name, file.extension))
+            .collect::<HashSet<_>>();
+        let mut used_names = HashSet::new();
         for file in ordered_files {
+            let mut filename = format!("{}.{}", file.name, file.extension);
+            let mut suffix = 0;
+            while used_names.contains(&filename)
+                || (suffix > 0 && original_names.contains(&filename))
+            {
+                suffix += 1;
+                filename = format!("{}_{suffix}.{}", file.name, file.extension);
+            }
+            used_names.insert(filename.clone());
             files.push(remote_file(
-                format!("{}.{}", file.name, file.extension),
+                filename,
                 file.url,
                 Map::from_iter([
                     ("size".into(), Value::from(file.size)),
@@ -1580,6 +1594,62 @@ mod tests {
             Err(ProcessingError::NonRetryable { skip: false, message })
                 if message.contains("has no media body")
         ));
+    }
+
+    #[tokio::test]
+    async fn disambiguates_duplicate_attachment_names() {
+        let server = MockServer::start().await;
+        let attachments = [
+            ("PNG出力まとめ", "zip"),
+            ("PNG出力まとめ", "zip"),
+            ("PNG出力まとめ", "zip"),
+            ("PNG出力まとめ", "pdf"),
+            ("archive", "zip"),
+            ("archive", "zip"),
+        ];
+        let mut blocks = Vec::new();
+        let mut file_map = Map::new();
+        for (index, (name, extension)) in attachments.into_iter().enumerate() {
+            let id = format!("f{index}");
+            blocks.push(json!({"type": "file", "fileId": id}));
+            file_map.insert(
+                id.clone(),
+                json!({
+                    "id": id, "name": name, "extension": extension, "size": 7863522,
+                    "url": format!("https://cdn/f{index}")
+                }),
+            );
+        }
+        post_info(
+            &server,
+            json!({"id": "10", "body": {
+                "blocks": blocks,
+                "fileMap": file_map,
+                "files": [{
+                    "id": "f6", "name": "archive_1", "extension": "zip",
+                    "size": 42, "url": "https://cdn/f6"
+                }]
+            }}),
+        )
+        .await;
+        let resolver = component(&server).as_item_file_resolver().unwrap();
+
+        let files = resolver.resolve_files(&item(&server)).await.unwrap();
+
+        assert_eq!(
+            files.iter().map(|file| file.path.to_str().unwrap()).collect::<Vec<_>>(),
+            [
+                "PNG出力まとめ.zip",
+                "PNG出力まとめ_1.zip",
+                "PNG出力まとめ_2.zip",
+                "PNG出力まとめ.pdf",
+                "archive.zip",
+                "archive_2.zip",
+                "archive_1.zip",
+            ]
+        );
+        assert_eq!(files[1].download_uri.as_ref().unwrap().to_string(), "https://cdn/f1");
+        assert_eq!(files[1].attrs["size"], 7863522);
     }
 
     #[tokio::test]
