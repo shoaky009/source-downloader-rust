@@ -171,6 +171,41 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
                     }
                 }
             })),
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "itemAttrs": {
+                        "type": "object",
+                        "properties": {
+                            "likes": {"type": "integer"},
+                            "comments": {"type": "integer"},
+                            "adult": {"type": "boolean"},
+                            "fee": {"type": "integer"},
+                            "postId": {"type": "integer"},
+                            "username": {"type": "string"},
+                            "creatorId": {"type": "string"}
+                        },
+                        "additionalProperties": false,
+                        "description": "Metadata from each fetched Fanbox post."
+                    },
+                    "itemTags": {"type": "array", "items": {"type": "string"}, "description": "Deduplicated post tags from Fanbox."},
+                    "fileAttrs": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "enum": ["cover", "image", "file", "text", "html"]},
+                            "height": {"type": "integer", "description": "Images only."},
+                            "width": {"type": "integer", "description": "Images only."},
+                            "size": {"type": "integer", "description": "Attached files only; byte size."}
+                        },
+                        "additionalProperties": false,
+                        "description": "Resolver outputs vary by post body: optional cover, images, attachments, generated nonempty text, and embed HTML."
+                    },
+                    "fileTags": {"type": "array", "items": {"type": "string", "enum": ["thumbnail"]}, "description": "thumbnail only when original image returns HTTP 400 and a usable thumbnail fallback is selected. Other resolved files have no initial tags."}
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

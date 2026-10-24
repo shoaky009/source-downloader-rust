@@ -111,6 +111,7 @@ impl ComponentSupplier for PixivIntegrationSupplier {
                 },
                 "required":["last_illustrations","top_bookmark_id","current_bookmark_id","touch_bottom"]
             })),
+            output_schema: None,
         }))
     }
 }

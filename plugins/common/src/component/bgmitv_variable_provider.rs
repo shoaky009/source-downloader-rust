@@ -69,6 +69,30 @@ impl ComponentSupplier for BgmTvVariableProviderSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "itemVariables": {
+                        "type": "object",
+                        "properties": {
+                            "nativeName": {"type": "string", "description": "Bangumi original title when search finds a nonempty name."}
+                        },
+                        "additionalProperties": false,
+                        "description": "Searches item title or variable-process input using network access; no match emits no keys."
+                    },
+                    "extractedVariables": {
+                        "type": "object",
+                        "properties": {
+                            "nativeName": {"type": "string", "description": "Bangumi original title when search finds a nonempty name."}
+                        },
+                        "additionalProperties": false,
+                        "description": "Searches item title or variable-process input using network access; no match emits no keys."
+                    }
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

@@ -41,6 +41,30 @@ impl ComponentSupplier for EpisodeVariableProviderSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "fileVariables": {
+                        "type": "object",
+                        "properties": {
+                            "episode": {"type": "string", "description": "Parsed episode, padded to at least two digits; file group with over 100 matches expands padding. Omitted when unrecognized."}
+                        },
+                        "additionalProperties": false,
+                        "description": "File stage parses cleaned file stem; extraction parses input text directly."
+                    },
+                    "extractedVariables": {
+                        "type": "object",
+                        "properties": {
+                            "episode": {"type": "string", "description": "Parsed episode, padded to at least two digits; file group with over 100 matches expands padding. Omitted when unrecognized."}
+                        },
+                        "additionalProperties": false,
+                        "description": "File stage parses cleaned file stem; extraction parses input text directly."
+                    }
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

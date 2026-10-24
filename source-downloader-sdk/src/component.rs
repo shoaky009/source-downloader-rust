@@ -313,6 +313,13 @@ pub struct SdComponentMetadata {
     pub state_json_schema: Option<Value>,
     pub state_ui_schema: Option<Value>,
     pub source_pointer_json_schema: Option<Value>,
+    /// JSON Schema describing output data, not configuration inputs. Top-level scopes
+    /// are itemVariables, fileVariables, extractedVariables (variable-process),
+    /// itemAttrs, fileAttrs, itemTags and fileTags. Describe conditional availability
+    /// and config-defined keys in schema descriptions/additionalProperties; omitted
+    /// scopes mean undocumented, not unsupported. This does not run the component.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
 }
 
 pub trait SdComponent: Any + Send + Sync + Debug + Display {

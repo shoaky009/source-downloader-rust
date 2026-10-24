@@ -70,6 +70,36 @@ impl ComponentSupplier for MikanVariableProviderSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "itemVariables": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Bangumi original name."},
+                            "nameCn": {"type": "string", "description": "Chinese name; falls back to original name when empty."},
+                            "season": {"type": "string", "description": "Season padded to two digits, default 01."},
+                            "mikanTitle": {"type": "string", "description": "Optional Mikan title."},
+                            "date": {"type": "string", "description": "Optional Bangumi air date."},
+                            "year": {"type": "string", "description": "Year part when date can be split."},
+                            "month": {"type": "string", "description": "Month part when date can be split."}
+                        },
+                        "additionalProperties": false,
+                        "description": "Only matching Mikan links and successful Mikan/Bangumi lookup yield keys."
+                    },
+                    "fileVariables": {
+                        "type": "object",
+                        "properties": {
+                            "season": {"type": "string", "description": "Copied from merged itemVariables.season when present."}
+                        },
+                        "additionalProperties": false,
+                        "description": "Does not perform independent per-file season detection."
+                    }
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

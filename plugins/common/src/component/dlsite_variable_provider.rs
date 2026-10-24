@@ -84,6 +84,48 @@ impl ComponentSupplier for DlsiteVariableProviderSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "itemVariables": {
+                        "type": "object",
+                        "properties": {
+                            "dlsiteId": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."},
+                            "title": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."},
+                            "maker": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."},
+                            "releaseDate": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."},
+                            "year": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."},
+                            "month": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."},
+                            "day": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."},
+                            "seriesName": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."},
+                            "productFormat": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."},
+                            "author": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."}
+                        },
+                        "additionalProperties": false,
+                        "description": "Requires recognized product ID and network lookup; item stage prefers ID in item link, otherwise title. Month/day have leading zeroes removed."
+                    },
+                    "extractedVariables": {
+                        "type": "object",
+                        "properties": {
+                            "dlsiteId": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."},
+                            "title": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."},
+                            "maker": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."},
+                            "releaseDate": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."},
+                            "year": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."},
+                            "month": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."},
+                            "day": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."},
+                            "seriesName": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."},
+                            "productFormat": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."},
+                            "author": {"type": "string", "description": "Parsed DLsite detail field, omitted when unavailable."}
+                        },
+                        "additionalProperties": false,
+                        "description": "Requires recognized product ID and network lookup; item stage prefers ID in item link, otherwise title. Month/day have leading zeroes removed."
+                    }
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

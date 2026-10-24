@@ -100,6 +100,22 @@ impl ComponentSupplier for RssSourceSupplier {
                 },
                 "required":["latest"]
             })),
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "itemAttrs": {
+                        "type": "object",
+                        "properties": {
+                        },
+                        "additionalProperties": {"type": "string"},
+                        "description": "Keys are attrs configuration keys; values are strings from the named RSS extensions. Missing extensions produce no key."
+                    },
+                    "itemTags": {"type": "array", "items": {"type": "string"}, "description": "Values of RSS extensions whose names appear in configured tags; these are extension values, not the configured extension names."}
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

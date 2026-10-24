@@ -44,6 +44,32 @@ impl ComponentSupplier for AnimeTitleVariableProviderSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "itemVariables": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string", "description": "Extracted main title when a parsing chain matches."},
+                            "romajiTitle": {"type": "string", "description": "Optional ASCII title when multiple titles include an ASCII candidate."}
+                        },
+                        "additionalProperties": false,
+                        "description": "Parses item title or variable-process input; ordinary file stage emits no values."
+                    },
+                    "extractedVariables": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string", "description": "Extracted main title when a parsing chain matches."},
+                            "romajiTitle": {"type": "string", "description": "Optional ASCII title when multiple titles include an ASCII candidate."}
+                        },
+                        "additionalProperties": false,
+                        "description": "Parses item title or variable-process input; ordinary file stage emits no values."
+                    }
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

@@ -35,6 +35,15 @@ impl ComponentSupplier for EmbyImageTaggerSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "fileTags": {"type": "array", "items": {"type": "string", "enum": ["thumb", "poster"]}, "description": "At most one tag: filename thumb/poster takes priority; otherwise supported readable image dimensions classify landscape/square as thumb and portrait as poster."}
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

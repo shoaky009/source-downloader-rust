@@ -88,6 +88,22 @@ impl ComponentSupplier for MikanSourceSupplier {
                 },
                 "required":["latest","shows"]
             })),
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "itemAttrs": {
+                        "type": "object",
+                        "properties": {
+                        },
+                        "additionalProperties": false,
+                        "description": "Mikan source currently creates no custom attrs; use the mikan variable provider for name/nameCn/date/season."
+                    },
+                    "itemTags": {"type": "array", "items": {"type": "string"}, "description": "Mikan source creates no custom tags."}
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

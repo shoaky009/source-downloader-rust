@@ -80,6 +80,22 @@ impl ComponentSupplier for SystemFileSourceSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "itemAttrs": {
+                        "type": "object",
+                        "properties": {
+                            "size": {"type": "integer", "description": "Filesystem metadata byte length; directories also use metadata.len()."}
+                        },
+                        "additionalProperties": false,
+                        "description": "Attributes from inspected filesystem entry."
+                    }
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

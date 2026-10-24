@@ -90,6 +90,28 @@ impl ComponentSupplier for RegexVariableProviderSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "itemVariables": {
+                        "type": "object",
+                        "properties": {
+                        },
+                        "additionalProperties": {"type": "string"},
+                        "description": "Names come from regexes[].name. Values are first full matches (not capture groups); unmatched fields/expressions produce no key."
+                    },
+                    "extractedVariables": {
+                        "type": "object",
+                        "properties": {
+                        },
+                        "additionalProperties": {"type": "string"},
+                        "description": "Names come from regexes[].name; each regex searches variable-process input text, ignoring configured field. Full matches are strings; no matches emits no keys."
+                    }
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }
@@ -182,6 +204,53 @@ fn resolve_field<'a>(
         unknown => {
             tracing::error!(field = unknown, "Unknown regex variable provider field");
             None
+        }
+    }
+}
+
+#[cfg(test)]
+mod output_contract_tests {
+    use super::*;
+    use source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT;
+    use source_downloader_sdk::{http::Uri, time::OffsetDateTime};
+
+    #[tokio::test]
+    async fn configured_output_name_contains_full_match_only_when_matched() {
+        let provider = SUPPLIER
+            .apply(
+                &EMPTY_COMPONENT_CREATE_CONTEXT,
+                json!({"regexes": [{"name": "customEpisode", "regex": "E(\\d+)"}]})
+                    .as_object()
+                    .unwrap(),
+            )
+            .unwrap()
+            .as_variable_provider()
+            .unwrap();
+        let item = SourceItem {
+            title: "Show E12".into(),
+            link: Uri::from_static("https://example.com"),
+            datetime: OffsetDateTime::UNIX_EPOCH,
+            content_type: String::new(),
+            download_uri: Uri::from_static("https://example.com/file"),
+            attrs: Map::new(),
+            tags: vec![],
+            identity: None,
+        };
+        assert_eq!(
+            provider.item_variables(&item).await.unwrap(),
+            HashMap::from([("customEpisode".into(), "E12".into())])
+        );
+        assert_eq!(
+            provider.extract_from(&item, "E34").await.unwrap(),
+            Some(HashMap::from([("customEpisode".into(), json!("E34"))]))
+        );
+        assert!(provider.extract_from(&item, "no episode").await.unwrap().is_none());
+        let schema = SUPPLIER.get_metadata().unwrap().output_schema.unwrap();
+        for stage in ["itemVariables", "extractedVariables"] {
+            assert_eq!(
+                schema["properties"][stage]["additionalProperties"]["type"],
+                "string"
+            );
         }
     }
 }

@@ -105,6 +105,28 @@ impl ComponentSupplier for AiVariableProviderSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "itemVariables": {
+                        "type": "object",
+                        "properties": {
+                        },
+                        "additionalProperties": {"type": "string"},
+                        "description": "Dynamic keys are determined by system-role and model response; values must parse as strings. No fixed names are guaranteed."
+                    },
+                    "extractedVariables": {
+                        "type": "object",
+                        "properties": {
+                        },
+                        "additionalProperties": {"type": "string"},
+                        "description": "Dynamic keys are determined by system-role and model response; values must parse as strings. No fixed names are guaranteed."
+                    }
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

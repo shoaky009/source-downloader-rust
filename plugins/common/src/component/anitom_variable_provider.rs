@@ -43,6 +43,72 @@ impl ComponentSupplier for AnitomVariableProviderSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "fileVariables": {
+                        "type": "object",
+                        "properties": {
+                            "audioTerm": {"type": "string"},
+                            "deviceCompatibility": {"type": "string"},
+                            "episodeNumber": {"type": "string"},
+                            "episodeTitle": {"type": "string"},
+                            "episodeNumberAlt": {"type": "string"},
+                            "fileChecksum": {"type": "string"},
+                            "fileExtension": {"type": "string"},
+                            "language": {"type": "string"},
+                            "other": {"type": "string"},
+                            "releaseGroup": {"type": "string"},
+                            "releaseInformation": {"type": "string"},
+                            "releaseVersion": {"type": "string"},
+                            "animeSeason": {"type": "string"},
+                            "source": {"type": "string"},
+                            "subtitles": {"type": "string"},
+                            "animeTitle": {"type": "string"},
+                            "animeType": {"type": "string"},
+                            "videoResolution": {"type": "string"},
+                            "videoTerm": {"type": "string"},
+                            "volumeNumber": {"type": "string"},
+                            "animeYear": {"type": "string"},
+                            "date": {"type": "string"}
+                        },
+                        "additionalProperties": false,
+                        "description": "Parses filename (file stage) or input text (variable-process); item stage emits no variables. All elements are optional strings. Repeated elements with the same key collapse to one value."
+                    },
+                    "extractedVariables": {
+                        "type": "object",
+                        "properties": {
+                            "audioTerm": {"type": "string"},
+                            "deviceCompatibility": {"type": "string"},
+                            "episodeNumber": {"type": "string"},
+                            "episodeTitle": {"type": "string"},
+                            "episodeNumberAlt": {"type": "string"},
+                            "fileChecksum": {"type": "string"},
+                            "fileExtension": {"type": "string"},
+                            "language": {"type": "string"},
+                            "other": {"type": "string"},
+                            "releaseGroup": {"type": "string"},
+                            "releaseInformation": {"type": "string"},
+                            "releaseVersion": {"type": "string"},
+                            "animeSeason": {"type": "string"},
+                            "source": {"type": "string"},
+                            "subtitles": {"type": "string"},
+                            "animeTitle": {"type": "string"},
+                            "animeType": {"type": "string"},
+                            "videoResolution": {"type": "string"},
+                            "videoTerm": {"type": "string"},
+                            "volumeNumber": {"type": "string"},
+                            "animeYear": {"type": "string"},
+                            "date": {"type": "string"}
+                        },
+                        "additionalProperties": false,
+                        "description": "Parses filename (file stage) or input text (variable-process); item stage emits no variables. All elements are optional strings. Repeated elements with the same key collapse to one value."
+                    }
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

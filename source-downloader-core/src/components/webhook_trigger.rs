@@ -78,6 +78,7 @@ impl ComponentSupplier for WebhookTriggerSupplier {
             })),
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            output_schema: None,
         }))
     }
 }

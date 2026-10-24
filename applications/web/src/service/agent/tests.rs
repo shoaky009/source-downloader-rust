@@ -79,6 +79,70 @@ async fn request(
     (status, String::from_utf8(bytes.to_vec()).unwrap())
 }
 
+#[tokio::test]
+async fn inspected_capabilities_expose_component_outputs_and_processing_stages() {
+    let fixture = fixture().await;
+    let mut session = Session::new("metadata-test".into());
+    for (root, name, scope, key) in [
+        ("variable-provider", "mikan", "itemVariables", "nameCn"),
+        ("source", "fanbox", "fileAttrs", "type"),
+    ] {
+        let (value, pause) = tools::execute(
+            &fixture.core,
+            &mut session,
+            "inspect_capability",
+            &json!({"kind":"component", "rootType":root, "typeName":name}).to_string(),
+        )
+        .unwrap();
+        assert!(!pause);
+        assert!(
+            value["metadata"]["outputSchema"]["properties"][scope]["properties"][key]
+                .is_object(),
+            "Missing documented output {name}.{scope}.{key}: {value}"
+        );
+    }
+    let (processor, _) = tools::execute(
+        &fixture.core,
+        &mut session,
+        "inspect_capability",
+        r#"{"kind":"processor"}"#,
+    )
+    .unwrap();
+    assert!(processor["fields"].is_array());
+    assert!(processor["processingGuide"].as_str().unwrap().contains("file-grouping"));
+
+    let scopes = [
+        "itemVariables",
+        "fileVariables",
+        "extractedVariables",
+        "itemAttrs",
+        "fileAttrs",
+        "itemTags",
+        "fileTags",
+    ];
+    let mut described = 0;
+    for supplier in fixture.core.component_manager.get_all_suppliers() {
+        if let Some(schema) = supplier.get_metadata().and_then(|m| m.output_schema) {
+            described += 1;
+            assert_eq!(schema["type"], "object");
+            for scope in schema["properties"].as_object().unwrap().keys() {
+                assert!(scopes.contains(&scope.as_str()), "Unknown scope {scope}");
+            }
+            // Scopes are conditional; an empty output must remain possible.
+            source_downloader_core::config_agent::validate_schema(
+                Some(&schema),
+                &json!({}),
+            )
+            .unwrap_or_else(|error| {
+                panic!("Invalid output schema for {:?}: {error}", supplier.supply_types())
+            });
+        }
+    }
+    assert!(described >= 15, "Missing output descriptions: {described}");
+    assert!(fixture.core.config_operator.get_all_processor_config().is_empty());
+    fixture.core.shutdown();
+}
+
 fn last_session(stream: &str) -> Value {
     stream
         .lines()

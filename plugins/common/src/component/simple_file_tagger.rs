@@ -118,6 +118,15 @@ impl ComponentSupplier for SimpleFileTaggerSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "fileTags": {"type": "array", "items": {"type": "string"}, "description": "At most one tag: MIME top-level type (image, video, audio, text, etc.) for non-application types; application subtype mapping value such as subtitle. external-mapping values may add arbitrary tags. Unrecognized application subtypes yield no tag."}
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

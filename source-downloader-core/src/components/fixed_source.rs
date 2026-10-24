@@ -140,6 +140,24 @@ impl ComponentSupplier for FixedSourceSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "itemAttrs": {
+                        "type": "object",
+                        "properties": {
+                        },
+                        "additionalProperties": true,
+                        "description": "Copied unchanged from each configured content[].item.attrs object; keys and JSON value types are configuration-defined."
+                    },
+                    "itemTags": {"type": "array", "items": {"type": "string"}, "description": "Copied from each configured content[].item.tags string array."},
+                    "fileAttrs": {"type":"object","additionalProperties":true,"description":"Copied unchanged from content[].files[].attrs; configuration defines arbitrary keys and JSON values."},
+                    "fileTags": {"type":"array","items":{"type":"string"},"description":"Copied from content[].files[].tags."}
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

@@ -30,7 +30,11 @@
 
 ## 维护
 
-`source-downloader-core/src/config_agent.rs` 负责方案校验和创建操作；`applications/web/src/service/agent` 负责临时会话、两种模型协议、流式接口及 Review 闸门。组件知识来自真实 supplier 元数据和 `recipes.md`。增加组件时应维护参数 Schema、描述、变量来源、共享接口和兼容规则。
+`source-downloader-core/src/config_agent.rs` 负责方案校验和创建操作；`applications/web/src/service/agent` 负责临时会话、两种模型协议、流式接口及 Review 闸门。组件知识来自真实 supplier 元数据；`recipes.md` 仅提供可选组合示例，`processing-guide.md` 描述通用执行阶段。
+
+`SdComponentMetadata.output_schema`（API 中为 `outputSchema`）是可选 JSON Schema，描述组件产出的数据，不能作为 props 校验规则。顶层作用域为 `itemVariables`、`fileVariables`、`extractedVariables`（仅处理链 extract_from）、`itemAttrs`、`fileAttrs`、`itemTags`、`fileTags`。固定字段写入 properties；配置决定的变量名使用 additionalProperties 并说明对应配置项；外部标签使用开放的字符串数组，不能假设固定枚举。用 description 说明产生阶段、缺失条件、依赖与限制；required 只表示该作用域生成时的必需字段。缺省 schema/作用域表示未描述，不能推断组件没有能力。
+
+增加组件时应同时维护输入 Schema、输出 Schema、共享接口和兼容规则。inspect_capability 直接返回 supplier 元数据，不在 Agent 场景文档中重复维护变量表。输出 Schema 是能力说明，不证明某次实际运行一定能产生这些值。
 
 模型协议参考 [OpenAI Function calling](https://developers.openai.com/api/docs/guides/function-calling)。Responses 保留工具调用返回的 reasoning/output items 并回传 function_call_output；Chat Completions 使用 assistant.tool_calls 与 tool_call_id。两种协议共享业务工具，不依赖额外 Agent 框架。
 

@@ -41,6 +41,30 @@ impl ComponentSupplier for SeasonVariableProviderSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "fileVariables": {
+                        "type": "object",
+                        "properties": {
+                            "season": {"type": "string", "description": "Season number padded to at least two digits; defaults to 01 when unrecognized."}
+                        },
+                        "additionalProperties": false,
+                        "description": "File stage tries full file path then item title; extraction uses only input text."
+                    },
+                    "extractedVariables": {
+                        "type": "object",
+                        "properties": {
+                            "season": {"type": "string", "description": "Season number padded to at least two digits; defaults to 01 when unrecognized."}
+                        },
+                        "additionalProperties": false,
+                        "description": "File stage tries full file path then item title; extraction uses only input text."
+                    }
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

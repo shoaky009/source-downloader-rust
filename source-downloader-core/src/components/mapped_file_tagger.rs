@@ -47,6 +47,15 @@ impl ComponentSupplier for MappedFileTaggerSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "fileTags": {"type": "array", "items": {"type": "string"}, "description": "At most one configured mapping value when the exact file basename matches a mapping key; otherwise no tag."}
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

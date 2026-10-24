@@ -42,6 +42,22 @@ impl ComponentSupplier for SequenceVariableProviderSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "fileVariables": {
+                        "type": "object",
+                        "properties": {
+                            "sequence": {"type": "string", "description": "1-based index in resolver order, padded to the digit count of the current file group size."}
+                        },
+                        "additionalProperties": false,
+                        "description": "Resets per item and first-matching file group; no item variables."
+                    }
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

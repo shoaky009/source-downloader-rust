@@ -125,6 +125,7 @@ impl ComponentSupplier for CompositeDownloaderSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            output_schema: None,
         }))
     }
 }
@@ -194,6 +195,7 @@ impl ComponentSupplier for CompositeItemFileResolverSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            output_schema: None,
         }))
     }
 }
@@ -443,6 +445,7 @@ mod tests {
                 state_json_schema: None,
                 state_ui_schema: None,
                 source_pointer_json_schema: None,
+                output_schema: None,
             }))
         }
     }

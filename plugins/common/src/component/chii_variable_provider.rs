@@ -48,6 +48,34 @@ impl ComponentSupplier for ChiiVariableProviderSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "itemVariables": {
+                        "type": "object",
+                        "properties": {
+                            "bgmtvId": {"type": "string", "description": "Bangumi subject ID as text."},
+                            "subjectName": {"type": "string", "description": "Original subject name."},
+                            "subjectNameCn": {"type": "string", "description": "Chinese name, possibly empty."}
+                        },
+                        "additionalProperties": false,
+                        "description": "Network search from item title or input text; keys only when a subject matches."
+                    },
+                    "extractedVariables": {
+                        "type": "object",
+                        "properties": {
+                            "bgmtvId": {"type": "string", "description": "Bangumi subject ID as text."},
+                            "subjectName": {"type": "string", "description": "Original subject name."},
+                            "subjectNameCn": {"type": "string", "description": "Chinese name, possibly empty."}
+                        },
+                        "additionalProperties": false,
+                        "description": "Network search from item title or input text; keys only when a subject matches."
+                    }
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

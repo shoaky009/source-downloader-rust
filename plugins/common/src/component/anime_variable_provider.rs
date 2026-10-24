@@ -103,6 +103,41 @@ impl ComponentSupplier for AnimeVariableProviderSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "itemVariables": {
+                        "type": "object",
+                        "properties": {
+                            "nativeName": {"type": "string", "description": "Original title from AniList/Bangumi when found."},
+                            "romajiName": {"type": "string", "description": "Romanized AniList title when available."}
+                        },
+                        "additionalProperties": false,
+                        "description": "Network lookup may return no match. File lookup uses selected nested paths, not every basename."
+                    },
+                    "fileVariables": {
+                        "type": "object",
+                        "properties": {
+                            "nativeName": {"type": "string", "description": "Original title from AniList/Bangumi when found."},
+                            "romajiName": {"type": "string", "description": "Romanized AniList title when available."}
+                        },
+                        "additionalProperties": false,
+                        "description": "Network lookup may return no match. File lookup uses selected nested paths, not every basename."
+                    },
+                    "extractedVariables": {
+                        "type": "object",
+                        "properties": {
+                            "nativeName": {"type": "string", "description": "Original title from AniList/Bangumi when found."},
+                            "romajiName": {"type": "string", "description": "Romanized AniList title when available."}
+                        },
+                        "additionalProperties": false,
+                        "description": "Network lookup may return no match. File lookup uses selected nested paths, not every basename."
+                    }
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

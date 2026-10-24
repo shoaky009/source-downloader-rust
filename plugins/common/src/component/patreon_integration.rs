@@ -93,6 +93,7 @@ impl ComponentSupplier for PatreonIntegrationSupplier {
                 },
                 "required":["campaigns"]
             })),
+            output_schema: None,
         }))
     }
 }

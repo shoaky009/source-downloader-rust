@@ -53,6 +53,38 @@ impl ComponentSupplier for GetchuVariableProviderSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "itemVariables": {
+                        "type": "object",
+                        "properties": {
+                            "getchuId": {"type": "string", "description": "Parsed Getchu detail field, omitted when unavailable."},
+                            "title": {"type": "string", "description": "Parsed Getchu detail field, omitted when unavailable."},
+                            "brand": {"type": "string", "description": "Parsed Getchu detail field, omitted when unavailable."},
+                            "releaseDate": {"type": "string", "description": "Parsed Getchu detail field, omitted when unavailable."},
+                            "isbn": {"type": "string", "description": "Parsed Getchu detail field, omitted when unavailable."}
+                        },
+                        "additionalProperties": false,
+                        "description": "Requires product ID in item title or extraction input and network lookup."
+                    },
+                    "extractedVariables": {
+                        "type": "object",
+                        "properties": {
+                            "getchuId": {"type": "string", "description": "Parsed Getchu detail field, omitted when unavailable."},
+                            "title": {"type": "string", "description": "Parsed Getchu detail field, omitted when unavailable."},
+                            "brand": {"type": "string", "description": "Parsed Getchu detail field, omitted when unavailable."},
+                            "releaseDate": {"type": "string", "description": "Parsed Getchu detail field, omitted when unavailable."},
+                            "isbn": {"type": "string", "description": "Parsed Getchu detail field, omitted when unavailable."}
+                        },
+                        "additionalProperties": false,
+                        "description": "Requires product ID in item title or extraction input and network lookup."
+                    }
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

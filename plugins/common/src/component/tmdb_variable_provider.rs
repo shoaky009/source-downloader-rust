@@ -69,6 +69,34 @@ impl ComponentSupplier for TmdbVariableProviderSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "itemVariables": {
+                        "type": "object",
+                        "properties": {
+                            "tmdbId": {"type": "string", "description": "TV result ID as text."},
+                            "tmdbName": {"type": "string", "description": "Localized TV name."},
+                            "originalName": {"type": "string", "description": "Original TV name."}
+                        },
+                        "additionalProperties": false,
+                        "description": "First network TV search result; omitted on no match. Extraction retries first space-delimited word."
+                    },
+                    "extractedVariables": {
+                        "type": "object",
+                        "properties": {
+                            "tmdbId": {"type": "string", "description": "TV result ID as text."},
+                            "tmdbName": {"type": "string", "description": "Localized TV name."},
+                            "originalName": {"type": "string", "description": "Original TV name."}
+                        },
+                        "additionalProperties": false,
+                        "description": "First network TV search result; omitted on no match. Extraction retries first space-delimited word."
+                    }
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

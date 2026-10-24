@@ -59,6 +59,30 @@ impl ComponentSupplier for LanguageVariableProviderSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "fileVariables": {
+                        "type": "object",
+                        "properties": {
+                            "language": {"type": "string", "description": "Detected language label, e.g. zh-CHS, zh-CHT, JP, EN or dot-joined combinations such as zh-CHS.JP; omitted when unknown."}
+                        },
+                        "additionalProperties": false,
+                        "description": "File stage uses filename markers first, optionally subtitle content; extraction detects Chinese text and does not parse filename marker aliases."
+                    },
+                    "extractedVariables": {
+                        "type": "object",
+                        "properties": {
+                            "language": {"type": "string", "description": "Detected language label, e.g. zh-CHS, zh-CHT, JP, EN or dot-joined combinations such as zh-CHS.JP; omitted when unknown."}
+                        },
+                        "additionalProperties": false,
+                        "description": "File stage uses filename markers first, optionally subtitle content; extraction detects Chinese text and does not parse filename marker aliases."
+                    }
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

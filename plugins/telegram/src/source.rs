@@ -144,6 +144,28 @@ impl ComponentSupplier for TelegramSourceSupplier {
                 },
                 "required": ["chatLastMessageIds"]
             })),
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "itemAttrs": {
+                        "type": "object",
+                        "properties": {
+                            "messageId": {"type": "integer"},
+                            "chatId": {"type": "integer"},
+                            "chatName": {"type": "string"},
+                            "fromId": {"type": "integer", "description": "Only when sender ID is available."},
+                            "size": {"type": "integer", "description": "When media byte size is available."},
+                            "site": {"type": "string", "description": "Webpage messages only."},
+                            "mediaType": {"type": "string", "description": "Media messages only: photo, document or webpage."}
+                        },
+                        "additionalProperties": false,
+                        "description": "Per-message metadata; non-media messages are emitted only when configured."
+                    }
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

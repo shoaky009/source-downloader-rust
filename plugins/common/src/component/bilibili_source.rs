@@ -86,6 +86,7 @@ impl ComponentSupplier for BilibiliSourceSupplier {
                     }
                 }
             })),
+            output_schema: None,
         }))
     }
 }

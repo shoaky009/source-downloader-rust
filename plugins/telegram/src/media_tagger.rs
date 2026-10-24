@@ -39,6 +39,15 @@ impl ComponentSupplier for TelegramMediaTaggerSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            output_schema: Some(source_downloader_sdk::serde_json::json!(
+            {
+                "type": "object",
+                "properties": {
+                    "fileTags": {"type": "array", "items": {"type": "string"}, "description": "Copies the mediaType string attribute verbatim as one tag; absent/non-string attribute yields no tag."}
+                },
+                "additionalProperties": false
+            })),
         }))
     }
 }

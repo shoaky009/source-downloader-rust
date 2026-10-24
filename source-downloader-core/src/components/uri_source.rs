@@ -51,6 +51,7 @@ impl ComponentSupplier for UriSourceSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             source_pointer_json_schema: None,
+            output_schema: None,
         }))
     }
 }

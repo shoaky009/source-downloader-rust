@@ -15,7 +15,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         function(
             "inspect_capability",
-            "Get authoritative props schema and compatibility rules. kind is component, instance, processor or recipes. For component pass rootType and typeName; for instance typeName is the exact factory name.",
+            "Get authoritative input props schema, outputSchema (variables/attributes/tags and availability), and compatibility rules. Inspect component outputs before using variables or tags; missing outputSchema means undocumented, never invent outputs. kind=processor includes execution stages and template rules. kind=recipes is optional composition examples, not a component contract. For component pass rootType and typeName; for instance typeName is the exact factory name.",
             json!({"type":"object","properties":{"kind":{"type":"string","enum":["component","instance","processor","recipes"]},"rootType":{"type":"string"},"typeName":{"type":"string"}},"required":["kind"]}),
         ),
         function(
@@ -58,10 +58,15 @@ pub fn execute(
         }
         "inspect_capability" => {
             let value = match args["kind"].as_str() {
-                Some("processor") => serde_json::from_str(include_str!(
-                    "../../../resources/processor-metadata.json"
-                ))
-                .map_err(|e| e.to_string())?,
+                Some("processor") => {
+                    let mut metadata: Value = serde_json::from_str(include_str!(
+                        "../../../resources/processor-metadata.json"
+                    ))
+                    .map_err(|e| e.to_string())?;
+                    metadata["processingGuide"] =
+                        json!(include_str!("processing-guide.md"));
+                    metadata
+                }
                 Some("recipes") => json!({"guide":include_str!("recipes.md")}),
                 Some("component") => {
                     let root = ComponentRootType::parse(
