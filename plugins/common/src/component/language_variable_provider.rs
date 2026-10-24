@@ -42,13 +42,17 @@ impl ComponentSupplier for LanguageVariableProviderSupplier {
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Detects subtitle languages and exposes language variables."
-                .into(),
+            description: concat!(
+                "Provides file variable language from filename markers, such as ",
+                "zh-CHS, zh-CHT, JP or EN; multiple markers are dot-separated. ",
+                "Can read local ASS/SRT text as a fallback when read-content is true.",
+            )
+            .into(),
             #[rustfmt::skip]
             props_json_schema: Some(json!({
                 "type":"object",
                 "properties":{
-                    "read-content":{"type":"boolean","default":true}
+                    "read-content":{"type":"boolean","default":true,"description":"Read available local ASS/SRT text when filename markers do not identify a language. Does not fetch remote subtitle contents."}
                 }
             })),
             props_ui_schema: None,

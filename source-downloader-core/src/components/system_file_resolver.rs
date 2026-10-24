@@ -33,7 +33,11 @@ impl ComponentSupplier for SystemFileResolverSupplier {
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Resolves files from system-file item paths.".to_owned(),
+            description: concat!(
+                "Resolves a local file URI or path; directories expand recursively ",
+                "into files sorted by path. Used with system-file source/downloader.",
+            )
+            .to_owned(),
             props_json_schema: None,
             props_ui_schema: None,
             state_json_schema: None,

@@ -45,13 +45,17 @@ impl ComponentSupplier for FixedScheduleTriggerSupplier {
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Runs processing tasks at a fixed interval.".to_owned(),
+            description: concat!(
+                "Runs tasks at an ISO 8601 duration interval, for example PT20M. ",
+                "Use a positive interval without years or months. By default the ",
+                "first run waits one interval; on-start-run-tasks enables an immediate run.",
+            ).to_owned(),
             #[rustfmt::skip]
             props_json_schema: Some(json!({
                 "type":"object",
                 "properties":{
-                    "interval":{"type":"string"},
-                    "on-start-run-tasks":{"type":"boolean","default":false}
+                    "interval":{"type":"string","description":"Positive ISO 8601 duration without years or months, for example PT20M."},
+                    "on-start-run-tasks":{"type":"boolean","default":false,"description":"Run when this trigger starts; otherwise wait one full interval for the first run."}
                 },
                 "required":["interval"]
             })),

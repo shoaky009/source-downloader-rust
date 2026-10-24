@@ -51,15 +51,19 @@ impl ComponentSupplier for MikanVariableProviderSupplier {
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Resolves anime variables using Mikanani and Bangumi.".into(),
+            description: concat!(
+                "Loads Mikan episode/show pages and Bangumi metadata for name, nameCn, ",
+                "two-digit season and optional mikanTitle/date/year/month. ",
+                "Does not extract episode; optional tokens configure its own HTTP clients.",
+            ).into(),
             #[rustfmt::skip]
             props_json_schema: Some(json!({
                 "type":"object",
                 "properties":{
-                    "mikan-base-url":{"type":"string","default":"https://mikanani.me"},
-                    "bgmtv-base-url":{"type":"string","default":"https://api.bgm.tv"},
-                    "token":{"type":"string"},
-                    "bgmtv-token":{"type":"string"}
+                    "mikan-base-url":{"type":"string","default":"https://mikanani.me","description":"Base URL for Mikan show pages; episode URLs come from source items."},
+                    "bgmtv-base-url":{"type":"string","default":"https://api.bgm.tv","description":"Bangumi API base URL used to load linked subjects."},
+                    "token":{"type":"string","description":"Optional value of the Mikan .AspNetCore.Identity.Application cookie, not a full Cookie header."},
+                    "bgmtv-token":{"type":"string","description":"Optional Bangumi Bearer token; separate from the Mikan login cookie."}
                 }
             })),
             props_ui_schema: None,

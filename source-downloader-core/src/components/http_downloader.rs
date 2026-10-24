@@ -65,14 +65,18 @@ impl ComponentSupplier for HttpDownloaderSupplier {
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Downloads source files over HTTP with bounded parallelism."
-                .to_owned(),
+            description: concat!(
+                "Downloads resolved file URIs over HTTP into download-path with ",
+                "bounded parallelism. Receives source/download-option headers; ",
+                "authentication is normally configured on the source or resolver.",
+            )
+            .to_owned(),
             #[rustfmt::skip]
             props_json_schema: Some(json!({
                 "type":"object",
                 "properties":{
-                    "download-path":{"type":"string"},
-                    "parallelism":{"type":"integer","minimum":1,"default":5}
+                    "download-path":{"type":"string","description":"Local staging directory for resolved file downloads before the file mover organizes them."},
+                    "parallelism":{"type":"integer","minimum":1,"default":5,"description":"Maximum concurrent file downloads per submitted task; separate from source API pacing."}
                 },
                 "required":["download-path"]
             })),

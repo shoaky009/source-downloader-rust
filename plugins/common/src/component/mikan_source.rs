@@ -59,13 +59,17 @@ impl ComponentSupplier for MikanSourceSupplier {
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Provides anime releases from Mikanani.".into(),
+            description: concat!(
+                "Reads Mikan RSS releases; use torrent resolver and a torrent downloader. ",
+                "all-episode optionally expands newer releases through their fansub RSS; ",
+                "title and episode variables require separate providers.",
+            ).into(),
             #[rustfmt::skip]
             props_json_schema: Some(json!({
                 "type":"object",
                 "properties":{
-                    "url":{"type":"string"},
-                    "all-episode":{"type":"boolean","default":false}
+                    "url":{"type":"string","description":"Full Mikan RSS subscription URL; may contain a private subscription token."},
+                    "all-episode":{"type":"boolean","default":false,"description":"Expand newer RSS releases through the same show/fansub feed using saved cursors. A new cursor starts at the current time; this does not guarantee an immediate full-history import."}
                 },
                 "required":["url"]
             })),

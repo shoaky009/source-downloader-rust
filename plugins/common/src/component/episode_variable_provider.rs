@@ -30,7 +30,12 @@ impl ComponentSupplier for EpisodeVariableProviderSupplier {
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Extracts episode variables from filenames.".into(),
+            description: concat!(
+                "Extracts the file variable episode from filename stems, normally ",
+                "zero-padded to at least two digits. Unrecognized filenames have ",
+                "no episode variable; does not fetch episode metadata online.",
+            )
+            .into(),
             props_json_schema: None,
             props_ui_schema: None,
             state_json_schema: None,

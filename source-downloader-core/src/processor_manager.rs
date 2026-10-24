@@ -921,7 +921,7 @@ impl ProcessorManager {
     }
 }
 
-fn processor_component_ids(config: &ProcessorConfig) -> Vec<ComponentId> {
+pub(crate) fn processor_component_ids(config: &ProcessorConfig) -> Vec<ComponentId> {
     let mut ids = Vec::new();
     let mut known = HashSet::new();
     let mut push = |root_type: ComponentRootType, reference: &str| {

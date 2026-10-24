@@ -31,7 +31,12 @@ impl ComponentSupplier for SequenceVariableProviderSupplier {
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Provides sequential file variables.".to_owned(),
+            description: concat!(
+                "Provides sequence starting at 1 in resolver order, zero-padded ",
+                "to the number of digits in each file group size. Numbering restarts ",
+                "per item and per first-matching file group; it is not a global counter.",
+            )
+            .to_owned(),
             props_json_schema: None,
             props_ui_schema: None,
             state_json_schema: None,

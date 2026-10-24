@@ -30,7 +30,12 @@ impl ComponentSupplier for HardlinkFileMoverSupplier {
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Moves files by creating hard links.".to_owned(),
+            description: concat!(
+                "Creates hard links at target paths, retaining source files and ",
+                "sharing their contents; source and target must use the same filesystem. ",
+                "Current replacement handling skips existing ordinary files and only ",
+                "replaces symbolic-link targets.",
+            ).to_owned(),
             props_json_schema: None,
             props_ui_schema: None,
             state_json_schema: None,

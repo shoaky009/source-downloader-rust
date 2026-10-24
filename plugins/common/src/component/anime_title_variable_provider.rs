@@ -33,7 +33,12 @@ impl ComponentSupplier for AnimeTitleVariableProviderSupplier {
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Extracts anime title variables from filenames.".into(),
+            description: concat!(
+                "Extracts title and optional romajiTitle from title text without ",
+                "network access. Use in variable-process chains; current direct ",
+                "variable-providers usage fails the per-file result-count requirement.",
+            )
+            .into(),
             props_json_schema: None,
             props_ui_schema: None,
             state_json_schema: None,

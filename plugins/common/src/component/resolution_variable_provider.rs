@@ -42,12 +42,17 @@ impl ComponentSupplier for ResolutionVariableProviderSupplier {
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Provides resolution variables from source filenames.".into(),
+            description: concat!(
+                "Provides file variable resolution from dimensions and 2K/4K/8K ",
+                "markers. only-high-resolution excludes HD and FullHD by default. ",
+                "Bare 1080p is not recognized by the current patterns.",
+            )
+            .into(),
             #[rustfmt::skip]
             props_json_schema: Some(json!({
                 "type":"object",
                 "properties":{
-                    "only-high-resolution":{"type":"boolean","default":true}
+                    "only-high-resolution":{"type":"boolean","default":true,"description":"Exclude HD and FullHD results; false also recognizes 1280x720 and 1920x1080 dimensions."}
                 }
             })),
             props_ui_schema: None,

@@ -101,20 +101,26 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Provides Fanbox posts and resolves their media files.".into(),
+            description: concat!(
+                "Reads accessible posts from currently supported Fanbox creators and ",
+                "resolves covers, images, attachments, text and embedded HTML. ",
+                "Source and resolver can share one named component and request pacing. ",
+                "Passes authentication headers to the HTTP downloader; no creator-list property.",
+            ).into(),
             #[rustfmt::skip]
             props_json_schema: Some(json!({
                 "type":"object",
                 "properties":{
-                    "cookie":{"type":"string"},
+                    "cookie":{"type":"string","description":"Complete Cookie request-header value for an account with access to the supported creators. Forwarded to file downloads."},
                     "mode":{
                         "type":"string",
                         "enum":["all","latestOnly"],
-                        "default":"all"
+                        "default":"all",
+                        "description":"all paginates accessible history for currently supported creators using saved cursors; latestOnly reads only the latest 30 supporting posts per fetch."
                     },
                     "headers":{
                         "type":"object",
-                        "description":"Replaces the default Fanbox API and download headers.",
+                        "description":"Completely replaces default API and download headers, including Cookie, Origin and Referer. Supply every required header when overriding.",
                         "additionalProperties":{"type":"string"}
                     },
                     "request-interval-ms":{
@@ -129,7 +135,7 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
                         "default":5000,
                         "description":"Minimum interval between post.info requests on this client in milliseconds. Set to 0 to disable this additional interval. API request intervals and HTTP 429 cooldowns still apply."
                     },
-                    "base-url":{"type":"string","default":"https://api.fanbox.cc"}
+                    "base-url":{"type":"string","default":"https://api.fanbox.cc","description":"Fanbox API base URL; normally keep the default."}
                 },
                 "required":["cookie"]
             })),

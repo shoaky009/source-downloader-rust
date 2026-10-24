@@ -30,7 +30,12 @@ impl ComponentSupplier for SystemFileMoverSupplier {
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Moves files using the system file operation.".to_owned(),
+            description: concat!(
+                "Moves local source files to rendered target paths using the default ",
+                "filesystem rename operation. For cross-filesystem moves use general; ",
+                "this is a separate supplier from system-file source/downloader.",
+            )
+            .to_owned(),
             props_json_schema: None,
             props_ui_schema: None,
             state_json_schema: None,

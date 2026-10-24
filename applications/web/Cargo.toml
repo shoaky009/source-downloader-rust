@@ -28,9 +28,12 @@ problem_details = { workspace = true }
 tower-http = { workspace = true, features = ["cors", "fs", "trace"] }
 futures-util = { workspace = true, features = ["sink", "std"] }
 build-info = { workspace = true }
+reqwest = { workspace = true, features = ["rustls", "json", "stream"] }
+serde_json = { workspace = true }
+async-stream = { workspace = true }
+tempfile = { workspace = true }
 
 [dev-dependencies]
-tempfile = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 
 [build-dependencies]

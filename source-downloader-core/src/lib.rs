@@ -3,6 +3,7 @@ pub mod compatibility;
 pub mod component_manager;
 pub mod components;
 pub mod config;
+pub mod config_agent;
 pub mod expression;
 pub mod instance_manager;
 pub mod plugin;

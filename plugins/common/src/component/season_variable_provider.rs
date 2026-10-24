@@ -30,7 +30,12 @@ impl ComponentSupplier for SeasonVariableProviderSupplier {
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Provides season variables from source filenames.".into(),
+            description: concat!(
+                "Provides file variable season from file paths, then item titles. ",
+                "Uses two digits, defaults to 01, and recognizes specials such as ",
+                "OVA/OAD/SP as season 00.",
+            )
+            .into(),
             props_json_schema: None,
             props_ui_schema: None,
             state_json_schema: None,

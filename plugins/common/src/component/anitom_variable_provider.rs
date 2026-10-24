@@ -32,7 +32,12 @@ impl ComponentSupplier for AnitomVariableProviderSupplier {
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Parses anime filenames with Anitomy variables.".into(),
+            description: concat!(
+                "Parses filenames locally with Anitomy into animeTitle, animeSeason, ",
+                "episodeNumber, animeType, releaseGroup, videoResolution and other ",
+                "raw variables. These names are not aliases of season or episode.",
+            )
+            .into(),
             props_json_schema: None,
             props_ui_schema: None,
             state_json_schema: None,

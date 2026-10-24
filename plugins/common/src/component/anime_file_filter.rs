@@ -30,7 +30,12 @@ impl ComponentSupplier for AnimeFileFilterSupplier {
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Filters anime source files by filename and extension.".into(),
+            description: concat!(
+                "Keeps supported video/subtitle extensions and subtitle archives; ",
+                "rejects other files and common opening, ending, preview, scan ",
+                "and extra names. Check before using when extras should be retained.",
+            )
+            .into(),
             props_json_schema: None,
             props_ui_schema: None,
             state_json_schema: None,

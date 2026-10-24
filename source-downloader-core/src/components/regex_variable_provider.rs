@@ -60,7 +60,12 @@ impl ComponentSupplier for RegexVariableProviderSupplier {
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Extracts variables from source item fields using configured regular expressions.".to_owned(),
+            description: concat!(
+                "Extracts full regex matches from configured item fields, not ",
+                "capture groups. Also supports variable-process extraction from its ",
+                "input text; ordinary file-variable extraction returns no values.",
+            )
+            .to_owned(),
             #[rustfmt::skip]
             props_json_schema: Some(json!({
                 "type":"object",
@@ -70,18 +75,21 @@ impl ComponentSupplier for RegexVariableProviderSupplier {
                         "items":{
                             "type":"object",
                             "properties":{
-                                "name":{"type":"string"},
-                                "regex":{"type":"string"},
-                                "field":{"type":"string","default":"title"}
+                                "name":{"type":"string","description":"Output variable name for the complete matched text."},
+                                "regex":{"type":"string","description":"Rust regex; returns the first complete match, not capture-group contents."},
+                                "field":{"type":"string","default":"title","description":"Item field: title, link, downloadUri, contentType or datetime. variable-process uses its input text instead."}
                             },
                             "required":["name","regex"]
                         }
                     },
-                    "primary":{"type":"string"}
+                    "primary":{"type":"string","description":"Primary output variable used as the next provider input in a variable-process chain."}
                 },
                 "required":["regexes"]
             })),
-            props_ui_schema: None, state_json_schema: None, state_ui_schema: None, source_pointer_json_schema: None,
+            props_ui_schema: None,
+            state_json_schema: None,
+            state_ui_schema: None,
+            source_pointer_json_schema: None,
         }))
     }
 }

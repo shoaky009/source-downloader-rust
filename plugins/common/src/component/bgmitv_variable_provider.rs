@@ -51,7 +51,12 @@ impl ComponentSupplier for BgmTvVariableProviderSupplier {
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Resolves variables through the Bangumi API.".into(),
+            description: concat!(
+                "Searches Bangumi for nativeName. Use in variable-process chains; ",
+                "current direct variable-providers usage does not return the ",
+                "required per-file results.",
+            )
+            .into(),
             #[rustfmt::skip]
             props_json_schema: Some(json!({
                 "type":"object",

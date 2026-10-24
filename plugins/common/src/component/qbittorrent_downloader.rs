@@ -84,17 +84,22 @@ impl ComponentSupplier for QbittorrentDownloaderSupplier {
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Downloads torrents through qBittorrent and moves their files."
-                .to_owned(),
+            description: concat!(
+                "Adds torrents through the qBittorrent Web API and moves/renames files ",
+                "through renameFile and setLocation. Downloader and file-mover must ",
+                "share the same instance name. Uses qBittorrent default save path; ",
+                "no independent download path or path mapping property.",
+            )
+            .to_owned(),
             #[rustfmt::skip]
             props_json_schema: Some(json!({
                 "type":"object",
                 "properties":{
-                    "endpoint":{"type":"string"},
-                    "host":{"type":"string"},
-                    "username":{"type":"string"},
-                    "password":{"type":"string"},
-                    "always-download-all":{"type":"boolean","default":false}
+                    "endpoint":{"type":"string","description":"qBittorrent Web service root URL, without /api/v2. Takes precedence over host."},
+                    "host":{"type":"string","description":"Compatibility alias for endpoint; ignored when endpoint is set."},
+                    "username":{"type":"string","description":"Optional Web UI username. When omitted, authentication is skipped."},
+                    "password":{"type":"string","description":"Web UI password sent only when username is configured."},
+                    "always-download-all":{"type":"boolean","default":false,"description":"Download all torrent files instead of setting unselected files to priority 0; organizing still uses selected files."}
                 },
                 "anyOf":[
                     {

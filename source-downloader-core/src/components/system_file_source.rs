@@ -55,16 +55,23 @@ impl ComponentSupplier for SystemFileSourceSupplier {
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Provides files from the system filesystem.".to_owned(),
+            description: concat!(
+                "Scans local paths and exposes a no-op downloader using path as its ",
+                "download root. Source and downloader can share one named component. ",
+                "mode 0 creates an item per direct child; mode 1 recursively creates ",
+                "an item per file. Does not watch for filesystem changes.",
+            )
+            .to_owned(),
             #[rustfmt::skip]
             props_json_schema: Some(json!({
                 "type":"object",
                 "properties":{
-                    "path":{"type":"string"},
+                    "path":{"type":"string","description":"Local input path and download root. For mode 0 this must be a directory."},
                     "mode":{
                         "type":"integer",
                         "enum":[0,1],
-                        "default":0
+                        "default":0,
+                        "description":"0: one item per direct child, directories expanded by the resolver; 1: recursively one item per file. Does not watch for changes."
                     }
                 },
                 "required":["path"]

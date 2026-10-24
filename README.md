@@ -6,6 +6,8 @@
 - **core**：项目核心功能模块，组合 plugins 提供能力，供应用层调用。
 - **applications/web**：最终的 Web 应用入口，依赖 core，提供对外服务。
 
+Web 对话配置助手的使用与模型连接设置见 [docs/CONFIG_AGENT.md](docs/CONFIG_AGENT.md)。
+
 CI/CD、Tag 规范与发布操作见 [docs/RELEASING.md](docs/RELEASING.md)。
 
 ---

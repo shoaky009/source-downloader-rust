@@ -32,7 +32,12 @@ impl ComponentSupplier for GeneralFileMoverSupplier {
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Moves files using the standard file move operation.".to_owned(),
+            description: concat!(
+                "Moves local files to target paths. Across filesystems it copies ",
+                "to a temporary target, publishes the complete file, then removes ",
+                "the source. Does not retain the original file.",
+            )
+            .to_owned(),
             props_json_schema: None,
             props_ui_schema: None,
             state_json_schema: None,

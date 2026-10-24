@@ -36,13 +36,16 @@ impl ComponentSupplier for CronTriggerSupplier {
     }
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Runs processing tasks according to a cron expression in the system local timezone."
-                .to_owned(),
+            description: concat!(
+                "Runs tasks using a six-field cron expression including seconds, ",
+                "in the system local timezone. Example: 0 0 3 * * * runs daily at 03:00.",
+            )
+            .to_owned(),
             #[rustfmt::skip]
             props_json_schema: Some(json!({
                 "type":"object",
                 "properties":{
-                    "expression":{"type":"string"}
+                    "expression":{"type":"string","description":"Six fields including seconds in system local time; 0 0 3 * * * runs daily at 03:00."}
                 },
                 "required":["expression"]
             })),

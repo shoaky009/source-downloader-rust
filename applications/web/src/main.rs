@@ -137,6 +137,7 @@ async fn run_web_server(
     let path_routers = service::path::register_routers(core_application.clone());
     let metadata_routers = service::metadata::register_routers(core_application.clone());
     let api_routers = app_router
+        .merge(service::agent::register_routers(core_application.clone()))
         .merge(component_routers)
         .merge(instance_routers)
         .merge(processor_routers)

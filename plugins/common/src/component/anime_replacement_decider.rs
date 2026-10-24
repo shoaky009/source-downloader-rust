@@ -31,8 +31,12 @@ impl ComponentSupplier for AnimeReplacementDeciderSupplier {
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Chooses whether an anime file should replace an existing file."
-                .into(),
+            description: concat!(
+                "Decides replacements using release-version, Bilibili and prerelease ",
+                "markers in current/previous source titles. Does not compare ",
+                "resolution, encoding quality or file contents.",
+            )
+            .into(),
             props_json_schema: None,
             props_ui_schema: None,
             state_json_schema: None,

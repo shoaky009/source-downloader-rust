@@ -83,16 +83,20 @@ impl ComponentSupplier for AnimeVariableProviderSupplier {
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Resolves anime title variables using AniList and Bangumi."
-                .into(),
+            description: concat!(
+                "Searches AniList/Bangumi using cleaned item titles and selected ",
+                "nested paths; provides nativeName and optional romajiName. ",
+                "Requires network access and does not provide name or nameCn.",
+            )
+            .into(),
             #[rustfmt::skip]
             props_json_schema: Some(json!({
                 "type":"object",
                 "properties":{
                     "anilist-base-url":{"type":"string","default":"https://graphql.anilist.co"},
                     "bgmtv-base-url":{"type":"string","default":"https://api.bgm.tv"},
-                    "bgmtv-token":{"type":"string"},
-                    "prefer-bgm-tv":{"type":"boolean","default":false}
+                    "bgmtv-token":{"type":"string","description":"Optional Bangumi Bearer token."},
+                    "prefer-bgm-tv":{"type":"boolean","default":false,"description":"Query Bangumi even when AniList finds a match, preferring the Bangumi original title for nativeName."}
                 }
             })),
             props_ui_schema: None,

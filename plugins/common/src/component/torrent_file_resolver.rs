@@ -33,7 +33,12 @@ impl ComponentSupplier for TorrentFileResolverSupplier {
 
     fn get_metadata(&self) -> Option<Box<SdComponentMetadata>> {
         Some(Box::new(SdComponentMetadata {
-            description: "Resolves files from torrent metadata.".into(),
+            description: concat!(
+                "Reads file paths from downloadable torrent metadata. ",
+                "Magnet URIs require an xs URL pointing to a torrent; ",
+                "does not discover metadata from peers.",
+            )
+            .into(),
             props_json_schema: None,
             props_ui_schema: None,
             state_json_schema: None,
