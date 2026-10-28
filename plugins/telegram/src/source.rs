@@ -140,14 +140,13 @@ impl ComponentSupplier for TelegramSourceSupplier {
             #[rustfmt::skip]
             source_pointer_json_schema: Some(source_downloader_sdk::serde_json::json!({
                 "type": "object",
-                "title": "Telegram 消息进度",
-                "description": "按聊天分别保存最后处理的消息 ID。",
+                "title": "数据源游标",
                 "properties": {
                     "chatLastMessageIds": {
                         "type": "object",
                         "title": "聊天消息",
-                        "description": "键为配置的有符号聊天 ID，值为最后处理的消息 ID；省略时为空映射。",
-                        "additionalProperties": {"type": "integer", "title": "最后消息 ID", "description": "之后从该消息 ID 继续抓取。"}
+                        "description": "键为 Chat ID，值为已拉取到的 Message ID。",
+                        "additionalProperties": {"type": "integer", "title": "最后消息 ID"}
                     }
                 },
                 "additionalProperties": false

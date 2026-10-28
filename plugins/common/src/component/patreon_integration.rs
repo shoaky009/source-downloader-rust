@@ -74,22 +74,20 @@ impl ComponentSupplier for PatreonIntegrationSupplier {
             #[rustfmt::skip]
             source_pointer_json_schema: Some(source_downloader_sdk::serde_json::json!({
                 "type": "object",
-                "title": "Patreon 抓取进度",
-                "description": "按活动分别记录历史抓取进度。",
+                "title": "数据源游标",
                 "properties": {
                     "campaigns": {
                         "type": "object",
                         "title": "活动",
-                        "description": "键为十进制活动 ID；省略时为空映射。",
+                        "description": "键为活动 ID。",
                         "additionalProperties": {
                             "type": "object",
-                            "title": "活动进度",
-                            "description": "单个 Patreon 活动的月份及文章位置。",
+                            "title": "活动",
                             "properties": {
-                                "campaign_id": {"type": "integer", "title": "活动 ID", "description": "与外层活动键对应。"},
-                                "last_year_month": {"type": ["string", "null"], "title": "当前月份", "description": "YYYY-MM；null 或省略表示尚未指定月份。", "pattern": "^\\d{4}-\\d{2}$"},
+                                "campaign_id": {"type": "integer", "title": "活动 ID"},
+                                "last_year_month": {"type": ["string", "null"], "title": "当前月份", "pattern": "^\\d{4}-\\d{2}$"},
                                 "last_of_month": {"type": "boolean", "title": "本月已完成", "description": "最后处理的文章是否为该月末项。"},
-                                "last_post_id": {"type": "integer", "title": "最后文章 ID", "description": "该活动最后处理的文章 ID。"}
+                                "last_post_id": {"type": "integer", "title": "最后文章 ID"}
                             },
                             "additionalProperties": false,
                             "required": ["campaign_id", "last_of_month", "last_post_id"]

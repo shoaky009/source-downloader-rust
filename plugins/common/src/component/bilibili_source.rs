@@ -70,22 +70,20 @@ impl ComponentSupplier for BilibiliSourceSupplier {
             #[rustfmt::skip]
             source_pointer_json_schema: Some(source_downloader_sdk::serde_json::json!({
                 "type": "object",
-                "title": "哔哩哔哩收藏进度",
-                "description": "按收藏夹分别保存历史补抓和增量进度。",
+                "title": "数据源游标",
                 "properties": {
                     "favorites": {
                         "type": "object",
                         "title": "收藏夹",
-                        "description": "键为十进制收藏夹 ID；省略时为空映射。",
+                        "description": "键为收藏夹 ID。",
                         "additionalProperties": {
                             "type": "object",
-                            "title": "收藏夹进度",
-                            "description": "单个收藏夹已处理的收藏时间区间。",
+                            "title": "收藏夹",
                             "properties": {
-                                "favorite_id": {"type": "integer", "title": "收藏夹 ID", "description": "与外层收藏夹键对应。"},
-                                "min_fav_time": {"type": "integer", "title": "最早收藏时间", "description": "已处理条目的最小 fav_time，Unix 秒。"},
-                                "max_fav_time": {"type": "integer", "title": "最新收藏时间", "description": "已处理条目的最大 fav_time，Unix 秒。"},
-                                "touch_bottom": {"type": "boolean", "title": "已遍历到底", "description": "曾处理过收藏夹最早一页的末项。"}
+                                "favorite_id": {"type": "integer", "title": "收藏夹 ID"},
+                                "min_fav_time": {"type": "integer", "title": "最早收藏时间", "description": "已拉取条目的最早收藏时间。"},
+                                "max_fav_time": {"type": "integer", "title": "最新收藏时间", "description": "已拉取条目的最新收藏时间。"},
+                                "touch_bottom": {"type": "boolean", "title": "已遍历到底"}
                             },
                             "additionalProperties": false,
                             "required": ["favorite_id", "min_fav_time", "max_fav_time", "touch_bottom"]

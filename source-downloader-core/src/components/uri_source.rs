@@ -53,8 +53,8 @@ impl ComponentSupplier for UriSourceSupplier {
             #[rustfmt::skip]
             source_pointer_json_schema: Some(source_downloader_sdk::serde_json::json!({
                 "type": "object",
-                "title": "无抓取进度",
-                "description": "此来源不保存游标，进度始终为 {}；重复抓取由来源本身和处理记录决定。",
+                "title": "数据源游标",
+                "description": "此数据源不使用游标。",
                 "properties": {},
                 "additionalProperties": false
             })),

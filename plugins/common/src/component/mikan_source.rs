@@ -80,24 +80,21 @@ impl ComponentSupplier for MikanSourceSupplier {
             source_pointer_json_schema: Some(source_downloader_sdk::serde_json::json!({
                 "$schema": "http://json-schema.org/draft-07/schema#",
                 "type": "object",
-                "title": "Mikan 抓取进度",
-                "description": "同时保存全局时间及各番组/字幕组进度。默认新游标的 latest 为当前 UTC 时间；反序列化失败时回退 Unix epoch。",
+                "title": "数据源游标",
                 "properties": {
                     "latest": {
                         "type": "string",
                         "format": "date-time",
-                        "title": "全局最新发布时间",
-                        "description": "RFC3339 时间字符串，包含时区，可包含小数秒，例如 2026-08-25T01:00:40.542549+08:00。"
+                        "title": "全局最新发布时间"
                     },
                     "shows": {
                         "type": "object",
-                        "title": "番组进度",
-                        "description": "键为 bangumiId-subGroupId，值为该组合已处理的最新发布时间。",
+                        "title": "番组",
+                        "description": "键为番组 ID-字幕组 ID，值为已拉取到的最新发布时间。",
                         "additionalProperties": {
                             "type": "string",
                             "format": "date-time",
-                            "title": "最新发布时间",
-                            "description": "RFC3339 时间字符串，包含时区，可包含小数秒，例如 2026-08-25T01:00:40.542549+08:00。"
+                            "title": "最新发布时间"
                         }
                     }
                 },
