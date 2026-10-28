@@ -84,46 +84,20 @@ impl ComponentSupplier for MikanSourceSupplier {
                 "description": "同时保存全局时间及各番组/字幕组进度。默认新游标的 latest 为当前 UTC 时间；反序列化失败时回退 Unix epoch。",
                 "properties": {
                     "latest": {
-                        "type": "array",
+                        "type": "string",
+                        "format": "date-time",
                         "title": "全局最新发布时间",
-                        "description": "time 默认序列化的九个整数，依次为：年、年内日序（1–366）、时、分、秒、纳秒、时区时、时区分、时区秒；不是 RFC3339 字符串。",
-                        "items": [
-                            {"type": "integer", "title": "年", "description": "公历年份。"},
-                            {"type": "integer", "title": "年内第几天", "description": "从 1 开始的年内日序，闰年最大为 366。"},
-                            {"type": "integer", "title": "时", "description": "本地时间小时，0–23。"},
-                            {"type": "integer", "title": "分", "description": "本地时间分钟，0–59。"},
-                            {"type": "integer", "title": "秒", "description": "本地时间秒，0–59。"},
-                            {"type": "integer", "title": "纳秒", "description": "秒内纳秒，0–999999999。"},
-                            {"type": "integer", "title": "时区时偏移", "description": "UTC 偏移的小时分量，有符号整数。"},
-                            {"type": "integer", "title": "时区分偏移", "description": "UTC 偏移的分钟分量，有符号整数。"},
-                            {"type": "integer", "title": "时区秒偏移", "description": "UTC 偏移的秒分量，有符号整数。"}
-                        ],
-                        "additionalItems": false,
-                        "minItems": 9,
-                        "maxItems": 9
+                        "description": "RFC3339 时间字符串，包含时区，可包含小数秒，例如 2026-08-25T01:00:40.542549+08:00。"
                     },
                     "shows": {
                         "type": "object",
                         "title": "番组进度",
                         "description": "键为 bangumiId-subGroupId，值为该组合已处理的最新发布时间。",
                         "additionalProperties": {
-                            "type": "array",
+                            "type": "string",
+                            "format": "date-time",
                             "title": "最新发布时间",
-                            "description": "time 默认序列化的九个整数，依次为：年、年内日序（1–366）、时、分、秒、纳秒、时区时、时区分、时区秒；不是 RFC3339 字符串。",
-                            "items": [
-                                {"type": "integer", "title": "年", "description": "公历年份。"},
-                                {"type": "integer", "title": "年内第几天", "description": "从 1 开始的年内日序，闰年最大为 366。"},
-                                {"type": "integer", "title": "时", "description": "本地时间小时，0–23。"},
-                                {"type": "integer", "title": "分", "description": "本地时间分钟，0–59。"},
-                                {"type": "integer", "title": "秒", "description": "本地时间秒，0–59。"},
-                                {"type": "integer", "title": "纳秒", "description": "秒内纳秒，0–999999999。"},
-                                {"type": "integer", "title": "时区时偏移", "description": "UTC 偏移的小时分量，有符号整数。"},
-                                {"type": "integer", "title": "时区分偏移", "description": "UTC 偏移的分钟分量，有符号整数。"},
-                                {"type": "integer", "title": "时区秒偏移", "description": "UTC 偏移的秒分量，有符号整数。"}
-                            ],
-                            "additionalItems": false,
-                            "minItems": 9,
-                            "maxItems": 9
+                            "description": "RFC3339 时间字符串，包含时区，可包含小数秒，例如 2026-08-25T01:00:40.542549+08:00。"
                         }
                     }
                 },
@@ -400,8 +374,34 @@ impl ItemPointer for FansubPointer {
 
 #[derive(Serialize, Deserialize)]
 struct MikanSourcePointer {
+    #[serde(with = "time::serde::rfc3339")]
     latest: OffsetDateTime,
+    #[serde(with = "rfc3339_map")]
     shows: HashMap<String, OffsetDateTime>,
+}
+
+mod rfc3339_map {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::HashMap;
+    use time::OffsetDateTime;
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(transparent)]
+    struct Timestamp(#[serde(with = "time::serde::rfc3339")] OffsetDateTime);
+
+    pub fn serialize<S: Serializer>(
+        values: &HashMap<String, OffsetDateTime>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.collect_map(values.iter().map(|(key, value)| (key, Timestamp(*value))))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<HashMap<String, OffsetDateTime>, D::Error> {
+        HashMap::<String, Timestamp>::deserialize(deserializer)
+            .map(|values| values.into_iter().map(|(key, value)| (key, value.0)).collect())
+    }
 }
 
 impl Default for MikanSourcePointer {
