@@ -5,7 +5,7 @@ Source supplier 使用现有 `SdComponentMetadata.source_pointer_json_schema` �
 Schema 必须对应 `SourcePointer::dump()` 的实际序列化结果，不能直接从 Rust 类型名称推断表示形式：
 
 - 根节点 `title` 统一为「数据源游标」。字段标题保持简短，`description` 仅补充字段含义或动态键含义，不重复标题，不描述默认值、序列化格式或实现机制。
-- 用 `properties` 描述固定字段，`additionalProperties` 描述订阅、作者等动态键，并说明键的组成。
+- 用 `properties` 描述固定字段；动态 map 用 `propertyNames.title` 描述键，用 `additionalProperties.title` 描述值。`propertyNames` 仅提供标题，不添加键的验证约束。
 - 正确表达整数、布尔值、字符串、数组和 `null`。`required` 应与实际解析时的必填要求一致。
 - RSS 使用 `time` 默认的九整数时间数组；各项独立命名，并使用 draft-07 tuple schema。Mikan 的 `latest` 及 `shows` 中各番组/字幕组的时间使用 RFC3339 字符串，包含时区，可包含小数秒；Schema 声明为 `string` 和 `format: date-time`。Fanbox 的本地时间字符串没有时区，不能声明成 RFC3339 `date-time`。
 - 无状态 Source 描述为没有属性且 `additionalProperties: false` 的 object，并使用简短说明「此数据源不使用游标。」`None` 表示未提供描述，客户端继续使用 JSON 编辑。

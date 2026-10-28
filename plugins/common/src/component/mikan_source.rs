@@ -90,11 +90,11 @@ impl ComponentSupplier for MikanSourceSupplier {
                     "shows": {
                         "type": "object",
                         "title": "番组",
-                        "description": "键为番组 ID-字幕组 ID，值为已拉取到的最新发布时间。",
+                        "propertyNames": {"title": "番剧 ID-字幕组 ID"},
                         "additionalProperties": {
                             "type": "string",
                             "format": "date-time",
-                            "title": "最新发布时间"
+                            "title": "最后拉取条目的发布时间"
                         }
                     }
                 },

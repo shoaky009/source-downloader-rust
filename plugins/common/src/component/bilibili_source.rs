@@ -75,7 +75,7 @@ impl ComponentSupplier for BilibiliSourceSupplier {
                     "favorites": {
                         "type": "object",
                         "title": "收藏夹",
-                        "description": "键为收藏夹 ID。",
+                        "propertyNames": {"title": "收藏夹 ID"},
                         "additionalProperties": {
                             "type": "object",
                             "title": "收藏夹",

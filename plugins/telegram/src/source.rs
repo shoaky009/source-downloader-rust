@@ -145,8 +145,8 @@ impl ComponentSupplier for TelegramSourceSupplier {
                     "chatLastMessageIds": {
                         "type": "object",
                         "title": "聊天消息",
-                        "description": "键为 Chat ID，值为已拉取到的 Message ID。",
-                        "additionalProperties": {"type": "integer", "title": "最后消息 ID"}
+                        "propertyNames": {"title": "Chat ID"},
+                        "additionalProperties": {"type": "integer", "title": "Message ID"}
                     }
                 },
                 "additionalProperties": false

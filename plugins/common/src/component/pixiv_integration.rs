@@ -103,7 +103,7 @@ impl ComponentSupplier for PixivIntegrationSupplier {
                     "last_illustrations": {
                         "type": "object",
                         "title": "作者作品",
-                        "description": "键为作者 ID，值为已拉取到的作品 ID。",
+                        "propertyNames": {"title": "作者 ID"},
                         "additionalProperties": {"type": "integer", "title": "作品 ID"}
                     },
                     "top_bookmark_id": {"type": "string", "title": "最新收藏 ID", "description": "已拉取到的最大收藏 ID。"},

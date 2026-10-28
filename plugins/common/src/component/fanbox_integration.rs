@@ -150,7 +150,7 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
                     "creatorPointers": {
                         "type": "object",
                         "title": "创作者",
-                        "description": "键为创作者 ID。",
+                        "propertyNames": {"title": "创作者 ID"},
                         "additionalProperties": {
                             "type": "object",
                             "title": "创作者",

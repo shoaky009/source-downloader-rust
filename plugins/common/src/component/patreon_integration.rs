@@ -79,7 +79,7 @@ impl ComponentSupplier for PatreonIntegrationSupplier {
                     "campaigns": {
                         "type": "object",
                         "title": "活动",
-                        "description": "键为活动 ID。",
+                        "propertyNames": {"title": "活动 ID"},
                         "additionalProperties": {
                             "type": "object",
                             "title": "活动",
