@@ -312,6 +312,12 @@ pub struct SdComponentMetadata {
     pub props_ui_schema: Option<Value>,
     pub state_json_schema: Option<Value>,
     pub state_ui_schema: Option<Value>,
+    /// JSON Schema of the serialized SourcePointer::dump() value. Sources describe
+    /// field titles, meanings, optional/null values and map keys here so clients can
+    /// display and edit progress. Match the actual wire representation, including
+    /// timestamp encoding; this is separate from component props and runtime state.
+    /// A schema for an empty object describes a stateless source; None means that
+    /// pointer metadata is unavailable and clients should fall back to JSON editing.
     pub source_pointer_json_schema: Option<Value>,
     /// JSON Schema describing output data, not configuration inputs. Top-level scopes
     /// are itemVariables, fileVariables, extractedVariables (variable-process),

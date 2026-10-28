@@ -8,6 +8,8 @@
 
 Web 对话配置助手的使用与模型连接设置见 [docs/CONFIG_AGENT.md](docs/CONFIG_AGENT.md)。
 
+Source 抓取进度的字段描述与客户端编辑约定见 [docs/SOURCE_POINTERS.md](docs/SOURCE_POINTERS.md)。
+
 CI/CD、Tag 规范与发布操作见 [docs/RELEASING.md](docs/RELEASING.md)。
 
 ---

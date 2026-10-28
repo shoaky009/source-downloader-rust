@@ -139,7 +139,17 @@ impl ComponentSupplier for FixedSourceSupplier {
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,
-            source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            source_pointer_json_schema: Some(source_downloader_sdk::serde_json::json!({
+                "type": "object",
+                "title": "固定来源进度",
+                "description": "仅 offset-mode=true 时按已处理项偏移续抓；关闭时该值不影响抓取。",
+                "properties": {
+                    "offset": {"type": "integer", "title": "已处理项数", "description": "从 content 中跳过的项数；0 表示从首项开始。", "minimum": 0}
+                },
+                "additionalProperties": false,
+                "required": ["offset"]
+            })),
             #[rustfmt::skip]
             output_schema: Some(source_downloader_sdk::serde_json::json!(
             {

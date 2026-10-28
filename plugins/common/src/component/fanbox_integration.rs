@@ -143,33 +143,33 @@ impl ComponentSupplier for FanboxIntegrationSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             #[rustfmt::skip]
-            source_pointer_json_schema: Some(json!({
-                "type":"object",
-                "properties":{
-                    "creatorPointers":{
-                        "type":"object",
-                        "additionalProperties":{
-                            "type":"object",
-                            "properties":{
-                                "creatorId":{"type":"string"},
-                                "nextMaxId":{
-                                    "type":["integer","null"]
-                                },
-                                "nextMaxDate":{
-                                    "type":["string","null"]
-                                },
-                                "topId":{
-                                    "type":["integer","null"]
-                                },
-                                "topDate":{
-                                    "type":["string","null"]
-                                },
-                                "touchBottom":{"type":"boolean"}
+            source_pointer_json_schema: Some(source_downloader_sdk::serde_json::json!({
+                "type": "object",
+                "title": "Fanbox 抓取进度",
+                "description": "按创作者保存历史补抓位置和最新已处理文章，用于中断续抓及后续增量同步。",
+                "properties": {
+                    "creatorPointers": {
+                        "type": "object",
+                        "title": "创作者",
+                        "description": "键为创作者 ID；省略时为空映射。",
+                        "additionalProperties": {
+                            "type": "object",
+                            "title": "创作者进度",
+                            "description": "Fanbox 按创作者保存历史分页及最新已处理文章。",
+                            "properties": {
+                                "creatorId": {"type": "string", "title": "创作者 ID", "description": "与外层键对应。"},
+                                "nextMaxId": {"type": ["integer", "null"], "title": "下一页文章上界", "description": "历史续抓的文章 ID 上界；完成历史后清空为 null。"},
+                                "nextMaxDate": {"type": ["string", "null"], "title": "下一页时间上界", "description": "本地日期时间 YYYY-MM-DDTHH:mm:ss，无时区；null 表示未设置。"},
+                                "topId": {"type": ["integer", "null"], "title": "最新文章 ID", "description": "已处理的最新文章 ID；初始为 null。"},
+                                "topDate": {"type": ["string", "null"], "title": "最新文章时间", "description": "本地日期时间 YYYY-MM-DDTHH:mm:ss，无时区；初始为 null。"},
+                                "touchBottom": {"type": "boolean", "title": "历史已完成", "description": "是否已抓取至该创作者历史末尾；省略时为 false。"}
                             },
-                            "required":["creatorId","touchBottom"]
+                            "additionalProperties": false,
+                            "required": ["creatorId"]
                         }
                     }
-                }
+                },
+                "additionalProperties": false
             })),
             #[rustfmt::skip]
             output_schema: Some(source_downloader_sdk::serde_json::json!(

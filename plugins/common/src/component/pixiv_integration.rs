@@ -96,20 +96,23 @@ impl ComponentSupplier for PixivIntegrationSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             #[rustfmt::skip]
-            source_pointer_json_schema: Some(json!({
-                "type":"object",
-                "properties":{
-                    "last_illustrations":{
-                        "type":"object",
-                        "additionalProperties":{"type":"integer"}
+            source_pointer_json_schema: Some(source_downloader_sdk::serde_json::json!({
+                "type": "object",
+                "title": "Pixiv 抓取进度",
+                "description": "分别记录作者作品和收藏分页进度。",
+                "properties": {
+                    "last_illustrations": {
+                        "type": "object",
+                        "title": "作者作品进度",
+                        "description": "键为作者 ID，值为最后处理的作品 ID；省略时为空映射。",
+                        "additionalProperties": {"type": "integer", "title": "作品 ID", "description": "该作者最后处理的作品 ID。"}
                     },
-                    "top_bookmark_id":{"type":"string"},
-                    "current_bookmark_id":{
-                        "type":["string","null"]
-                    },
-                    "touch_bottom":{"type":"boolean"}
+                    "top_bookmark_id": {"type": "string", "title": "最新收藏 ID", "description": "已处理的最大收藏 ID；省略时为字符串 0。"},
+                    "current_bookmark_id": {"type": ["string", "null"], "title": "当前收藏 ID", "description": "收藏历史续抓游标；null 或省略表示尚未开始。"},
+                    "touch_bottom": {"type": "boolean", "title": "已遍历收藏到底", "description": "是否已完成收藏历史遍历。"}
                 },
-                "required":["last_illustrations","top_bookmark_id","current_bookmark_id","touch_bottom"]
+                "additionalProperties": false,
+                "required": ["touch_bottom"]
             })),
             output_schema: None,
         }))

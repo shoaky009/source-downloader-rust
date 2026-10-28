@@ -72,26 +72,31 @@ impl ComponentSupplier for PatreonIntegrationSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             #[rustfmt::skip]
-            source_pointer_json_schema: Some(json!({
-                "type":"object",
-                "properties":{
-                    "campaigns":{
-                        "type":"object",
-                        "additionalProperties":{
-                            "type":"object",
-                            "properties":{
-                                "campaign_id":{"type":"integer"},
-                                "last_year_month":{
-                                    "type":["string","null"]
-                                },
-                                "last_of_month":{"type":"boolean"},
-                                "last_post_id":{"type":"integer"}
+            source_pointer_json_schema: Some(source_downloader_sdk::serde_json::json!({
+                "type": "object",
+                "title": "Patreon 抓取进度",
+                "description": "按活动分别记录历史抓取进度。",
+                "properties": {
+                    "campaigns": {
+                        "type": "object",
+                        "title": "活动",
+                        "description": "键为十进制活动 ID；省略时为空映射。",
+                        "additionalProperties": {
+                            "type": "object",
+                            "title": "活动进度",
+                            "description": "单个 Patreon 活动的月份及文章位置。",
+                            "properties": {
+                                "campaign_id": {"type": "integer", "title": "活动 ID", "description": "与外层活动键对应。"},
+                                "last_year_month": {"type": ["string", "null"], "title": "当前月份", "description": "YYYY-MM；null 或省略表示尚未指定月份。", "pattern": "^\\d{4}-\\d{2}$"},
+                                "last_of_month": {"type": "boolean", "title": "本月已完成", "description": "最后处理的文章是否为该月末项。"},
+                                "last_post_id": {"type": "integer", "title": "最后文章 ID", "description": "该活动最后处理的文章 ID。"}
                             },
-                            "required":["campaign_id","last_year_month","last_of_month","last_post_id"]
+                            "additionalProperties": false,
+                            "required": ["campaign_id", "last_of_month", "last_post_id"]
                         }
                     }
                 },
-                "required":["campaigns"]
+                "additionalProperties": false
             })),
             output_schema: None,
         }))

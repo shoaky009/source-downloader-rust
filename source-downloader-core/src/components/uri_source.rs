@@ -50,7 +50,14 @@ impl ComponentSupplier for UriSourceSupplier {
             props_ui_schema: None,
             state_json_schema: None,
             state_ui_schema: None,
-            source_pointer_json_schema: None,
+            #[rustfmt::skip]
+            source_pointer_json_schema: Some(source_downloader_sdk::serde_json::json!({
+                "type": "object",
+                "title": "无抓取进度",
+                "description": "此来源不保存游标，进度始终为 {}；重复抓取由来源本身和处理记录决定。",
+                "properties": {},
+                "additionalProperties": false
+            })),
             output_schema: None,
         }))
     }

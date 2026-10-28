@@ -90,15 +90,33 @@ impl ComponentSupplier for RssSourceSupplier {
             state_json_schema: None,
             state_ui_schema: None,
             #[rustfmt::skip]
-            source_pointer_json_schema: Some(json!({
-                "type":"object",
-                "properties":{
-                    "latest":{
-                        "type":["string","null"],
-                        "format":"date-time"
+            source_pointer_json_schema: Some(source_downloader_sdk::serde_json::json!({
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "title": "RSS 抓取进度",
+                "description": "按已处理条目的发布时间过滤，缺省 latest 为 null。",
+                "properties": {
+                    "latest": {
+                        "type": ["array", "null"],
+                        "title": "最新发布时间",
+                        "description": "time 默认序列化的九个整数，依次为：年、年内日序（1–366）、时、分、秒、纳秒、时区时、时区分、时区秒；不是 RFC3339 字符串。",
+                        "items": [
+                            {"type": "integer", "title": "年", "description": "公历年份。"},
+                            {"type": "integer", "title": "年内第几天", "description": "从 1 开始的年内日序，闰年最大为 366。"},
+                            {"type": "integer", "title": "时", "description": "本地时间小时，0–23。"},
+                            {"type": "integer", "title": "分", "description": "本地时间分钟，0–59。"},
+                            {"type": "integer", "title": "秒", "description": "本地时间秒，0–59。"},
+                            {"type": "integer", "title": "纳秒", "description": "秒内纳秒，0–999999999。"},
+                            {"type": "integer", "title": "时区时偏移", "description": "UTC 偏移的小时分量，有符号整数。"},
+                            {"type": "integer", "title": "时区分偏移", "description": "UTC 偏移的分钟分量，有符号整数。"},
+                            {"type": "integer", "title": "时区秒偏移", "description": "UTC 偏移的秒分量，有符号整数。"}
+                        ],
+                        "additionalItems": false,
+                        "minItems": 9,
+                        "maxItems": 9
                     }
                 },
-                "required":["latest"]
+                "additionalProperties": false
             })),
             #[rustfmt::skip]
             output_schema: Some(source_downloader_sdk::serde_json::json!(
@@ -407,6 +425,59 @@ fn parse_date(v: &str, format: Option<&str>) -> Result<OffsetDateTime, Processin
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pointer_schema_describes_actual_time_serialization() {
+        let pointer = super::LatestPointer {
+            latest: Some(source_downloader_sdk::time::OffsetDateTime::UNIX_EPOCH),
+        };
+        let dumped = source_downloader_sdk::component::SourcePointer::dump(&pointer);
+        assert_eq!(
+            dumped["latest"],
+            source_downloader_sdk::serde_json::json!([1970, 1, 0, 0, 0, 0, 0, 0, 0])
+        );
+        let schema = source_downloader_sdk::component::ComponentSupplier::get_metadata(
+            &super::SUPPLIER,
+        )
+        .unwrap()
+        .source_pointer_json_schema
+        .unwrap();
+        assert_eq!(
+            schema["properties"]["latest"]["type"],
+            source_downloader_sdk::serde_json::json!(["array", "null"])
+        );
+        assert_eq!(schema["$schema"], "http://json-schema.org/draft-07/schema#");
+        let timestamp = &schema["properties"]["latest"];
+        let components = timestamp["items"].as_array().unwrap();
+        assert_eq!(components.len(), dumped["latest"].as_array().unwrap().len());
+        for (component, title) in components.iter().zip([
+            "年",
+            "年内第几天",
+            "时",
+            "分",
+            "秒",
+            "纳秒",
+            "时区时偏移",
+            "时区分偏移",
+            "时区秒偏移",
+        ]) {
+            assert_eq!(component["type"], "integer");
+            assert_eq!(component["title"], title);
+            assert!(!component["description"].as_str().unwrap().is_empty());
+        }
+        assert_eq!(timestamp["additionalItems"], false);
+        assert_eq!(timestamp["minItems"], 9);
+        assert_eq!(timestamp["maxItems"], 9);
+        let restored: super::LatestPointer =
+            source_downloader_sdk::serde_json::from_value(dumped).unwrap();
+        assert_eq!(restored.latest, pointer.latest);
+        assert!(
+            source_downloader_sdk::component::SourcePointer::dump(
+                &super::LatestPointer::default()
+            )["latest"]
+                .is_null()
+        );
+    }
+
     use super::*;
     const XML: &str = r#"<rss xmlns:x="urn:test"><channel><item><title>A</title><link>https://e/a</link><pubDate>Thu, 07 Aug 2025 01:02:03 +0000</pubDate><enclosure url="https://e/a.jpg" type="image/jpeg"/><x:tag role="main">anime</x:tag><x:code>42</x:code></item></channel></rss>"#;
     #[test]
