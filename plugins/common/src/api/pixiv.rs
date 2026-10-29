@@ -1,6 +1,6 @@
 use crate::http::HttpClient;
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer};
 use source_downloader_sdk::component::{ComponentError, ProcessingError};
 use source_downloader_sdk::serde_json::Value;
 use std::collections::HashMap;
@@ -33,13 +33,42 @@ pub(crate) struct Bookmarks {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct Following {
+    pub(crate) users: Vec<PixivUser>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PixivUser {
+    #[serde(deserialize_with = "deserialize_id")]
+    pub(crate) user_id: i64,
+    #[serde(default)]
+    pub(crate) illusts: Vec<Illustration>,
+}
+
+fn deserialize_id<'de, D: Deserializer<'de>>(deserializer: D) -> Result<i64, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Id {
+        Number(i64),
+        String(String),
+    }
+    match Id::deserialize(deserializer)? {
+        Id::Number(id) => Ok(id),
+        Id::String(id) => id.parse().map_err(serde::de::Error::custom),
+    }
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Illustration {
+    #[serde(deserialize_with = "deserialize_id")]
     pub(crate) id: i64,
     pub(crate) title: String,
     pub(crate) illust_type: i64,
     #[serde(default)]
     pub(crate) tags: Vec<String>,
+    #[serde(deserialize_with = "deserialize_id")]
     pub(crate) user_id: i64,
     pub(crate) user_name: String,
     pub(crate) url: String,
@@ -142,13 +171,46 @@ impl PixivClient {
         user_id: i64,
         offset: u32,
         limit: u32,
-    ) -> Result<Value, ProcessingError> {
+    ) -> Result<Following, ProcessingError> {
         let request = self.request(&format!("/ajax/user/{user_id}/following")).query(&[
             ("offset", offset.to_string()),
             ("limit", limit.to_string()),
             ("rest", "show".to_string()),
         ]);
         self.json(request, "Fetch Pixiv followings").await
+    }
+
+    pub(crate) async fn user_illustration_ids(
+        &self,
+        user_id: i64,
+    ) -> Result<Vec<i64>, ProcessingError> {
+        let body: Value = self
+            .json(
+                self.request(&format!("/ajax/user/{user_id}/profile/all"))
+                    .query(&[("lang", "zh")]),
+                "Fetch Pixiv user works",
+            )
+            .await?;
+        // Pixiv can return [] instead of {} for an empty illustration/manga map.
+        Ok(["illusts", "manga"]
+            .into_iter()
+            .filter_map(|key| body.get(key).and_then(Value::as_object))
+            .flat_map(|works| works.keys().filter_map(|id| id.parse().ok()))
+            .collect())
+    }
+
+    pub(crate) async fn illustrations(
+        &self,
+        user_id: i64,
+        ids: &[i64],
+    ) -> Result<Vec<Illustration>, ProcessingError> {
+        let request = self
+            .request(&format!("/ajax/user/{user_id}/illusts"))
+            .query(&[("lang", "zh")])
+            .query(&ids.iter().map(|id| ("ids[]", id)).collect::<Vec<_>>());
+        let works: HashMap<String, Illustration> =
+            self.json(request, "Fetch Pixiv illustrations").await?;
+        Ok(works.into_values().collect())
     }
 
     pub(crate) async fn pages(
