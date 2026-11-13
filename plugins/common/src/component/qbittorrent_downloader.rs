@@ -15,6 +15,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
+use tokio::sync::OnceCell;
 
 pub struct QbittorrentDownloaderSupplier;
 pub const SUPPLIER: QbittorrentDownloaderSupplier = QbittorrentDownloaderSupplier;
@@ -78,6 +79,7 @@ impl ComponentSupplier for QbittorrentDownloaderSupplier {
             username,
             password,
             logged_in: Mutex::new(false),
+            api: OnceCell::new(),
             default_path: OnceLock::new(),
             always_download_all,
         }))
@@ -88,7 +90,8 @@ impl ComponentSupplier for QbittorrentDownloaderSupplier {
                 "Adds torrents through the qBittorrent Web API and moves/renames files ",
                 "through renameFile and setLocation. Downloader and file-mover must ",
                 "share the same instance name. Uses qBittorrent default save path; ",
-                "no independent download path or path mapping property.",
+                "no independent download path or path mapping property. ",
+                "Automatically detects the Web API version for qBittorrent 4.x/5.x.",
             )
             .to_owned(),
             #[rustfmt::skip]
@@ -141,6 +144,7 @@ struct QbittorrentDownloader {
     username: Option<String>,
     password: Option<String>,
     logged_in: Mutex<bool>,
+    api: OnceCell<QbittorrentApi>,
     default_path: OnceLock<String>,
     always_download_all: bool,
 }
@@ -161,6 +165,64 @@ struct TorrentInfo {
 struct TorrentFile {
     index: u32,
     name: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum QbittorrentApi {
+    Legacy,
+    StructuredResponses,
+}
+
+impl QbittorrentApi {
+    fn from_version(version: &str) -> Result<Self, ProcessingError> {
+        let parts = version
+            .trim()
+            .split('.')
+            .map(str::parse::<u32>)
+            .collect::<Result<Vec<_>, _>>();
+        match parts.as_deref() {
+            Ok([2, minor] | [2, minor, _]) => {
+                // Web API 2.14 changed torrents/add and auth/login responses.
+                if *minor >= 14 {
+                    Ok(Self::StructuredResponses)
+                } else {
+                    Ok(Self::Legacy)
+                }
+            }
+            _ => Err(ProcessingError::non_retryable(format!(
+                "Unsupported qBittorrent Web API version: {version}"
+            ))),
+        }
+    }
+
+    fn validate_add_response(self, body: &str) -> Result<(), ProcessingError> {
+        let added = match self {
+            Self::Legacy => body.trim() == "Ok.",
+            Self::StructuredResponses => {
+                let response: TorrentAddResponse =
+                    serde_json::from_str(body).map_err(|error| {
+                        ProcessingError::non_retryable(format!(
+                            "Decode qBittorrent add response: {error}: {body}"
+                        ))
+                    })?;
+                response.failure_count == 0
+                    && (response.success_count > 0 || response.pending_count > 0)
+            }
+        };
+        if !added {
+            return Err(ProcessingError::non_retryable(format!(
+                "qBittorrent add failed: {body}"
+            )));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Deserialize)]
+struct TorrentAddResponse {
+    success_count: u32,
+    pending_count: u32,
+    failure_count: u32,
 }
 
 impl QbittorrentDownloader {
@@ -184,7 +246,8 @@ impl QbittorrentDownloader {
         .text()
         .await
         .map_err(|error| http::map_error(error, "Read qBittorrent login"))?;
-        if response.trim() != "Ok." {
+        // Web API 2.14+ uses an empty body for a successful login.
+        if !matches!(response.trim(), "Ok." | "") {
             return Err(ProcessingError::non_retryable(format!(
                 "qBittorrent login failed: {response}"
             )));
@@ -205,6 +268,33 @@ impl QbittorrentDownloader {
             self.login().await?;
         }
         result
+    }
+
+    async fn api(&self) -> Result<QbittorrentApi, ProcessingError> {
+        self.api
+            .get_or_try_init(|| async {
+                let version = self
+                    .request(
+                        self.client
+                            .get(format!("{}/api/v2/app/webapiVersion", self.endpoint)),
+                        "Get qBittorrent Web API version",
+                    )
+                    .await?
+                    .text()
+                    .await
+                    .map_err(|error| {
+                        http::map_error(error, "Read qBittorrent Web API version")
+                    })?;
+                let api = QbittorrentApi::from_version(&version)?;
+                tracing::info!(
+                    api_version = version.trim(),
+                    ?api,
+                    "qBittorrent Web API detected"
+                );
+                Ok(api)
+            })
+            .await
+            .copied()
     }
 
     async fn torrent_hash(&self, item: &SourceItem) -> Result<String, ProcessingError> {
@@ -247,14 +337,21 @@ impl QbittorrentDownloader {
                         response.json::<Vec<TorrentFile>>().await.map_err(|error| {
                             http::map_error(error, "Decode qBittorrent files")
                         })?;
-                    break;
+                    if !files.is_empty() {
+                        break;
+                    }
+                    if attempt == 3 {
+                        return Err(ProcessingError::retryable(format!(
+                            "qBittorrent metadata not ready for torrent {hash}"
+                        )));
+                    }
                 }
                 Err(error) if attempt < 3 => {
                     tracing::debug!(attempt, %error, "qBittorrent metadata not ready");
-                    tokio::time::sleep(Duration::from_millis(300 * (attempt + 1))).await;
                 }
                 Err(error) => return Err(error),
             }
+            tokio::time::sleep(Duration::from_millis(300 * (attempt + 1))).await;
         }
         let unwanted = files
             .into_iter()
@@ -391,6 +488,7 @@ impl QbittorrentDownloader {
 #[async_trait]
 impl Downloader for QbittorrentDownloader {
     async fn submit(&self, task: &DownloadTask) -> Result<(), ProcessingError> {
+        let api = self.api().await?;
         let tags = task.tags.unwrap_or_default().join(",");
         let mut form = vec![
             ("urls", task.source_item.download_uri.to_string()),
@@ -413,11 +511,7 @@ impl Downloader for QbittorrentDownloader {
             .text()
             .await
             .map_err(|error| http::map_error(error, "Read qBittorrent add response"))?;
-        if body.trim() != "Ok." {
-            return Err(ProcessingError::non_retryable(format!(
-                "qBittorrent add failed: {body}"
-            )));
-        }
+        api.validate_add_response(&body)?;
         if !self.always_download_all {
             let hash = self.torrent_hash(task.source_item).await?;
             let wanted = task
@@ -440,6 +534,7 @@ impl Downloader for QbittorrentDownloader {
             let result = tokio::runtime::Handle::try_current().ok().and_then(|handle| {
                 tokio::task::block_in_place(|| {
                     handle.block_on(async {
+                        self.api().await.ok()?;
                         self.request(request, "Get qBittorrent default save path")
                             .await
                             .ok()?
@@ -792,6 +887,213 @@ mod tests {
         assert_eq!(b"d4:name1:ae", info_slice(torrent).unwrap());
     }
 
+    #[test]
+    fn selects_api_by_web_api_version() {
+        for version in ["2.8.19", "2.9.3", "2.11.4", "2.13.1"] {
+            assert_eq!(
+                QbittorrentApi::from_version(version).unwrap(),
+                QbittorrentApi::Legacy,
+                "version={version}"
+            );
+        }
+        for version in ["2.14", "2.14.0", " 2.15.1\n", "2.16.2", "2.100.0"] {
+            assert_eq!(
+                QbittorrentApi::from_version(version).unwrap(),
+                QbittorrentApi::StructuredResponses,
+                "version={version}"
+            );
+        }
+        for version in ["", "unknown", "v5.2.0", "2", "2.x", "3.0"] {
+            assert!(QbittorrentApi::from_version(version).is_err(), "version={version}");
+        }
+    }
+
+    #[test]
+    fn validates_versioned_add_responses() {
+        assert!(QbittorrentApi::Legacy.validate_add_response("Ok.\n").is_ok());
+        assert!(QbittorrentApi::Legacy.validate_add_response("Fails.").is_err());
+        for (success_count, pending_count, failure_count, accepted) in [
+            (1, 0, 0, true),
+            (0, 1, 0, true),
+            (0, 0, 1, false),
+            (1, 0, 1, false),
+            (0, 0, 0, false),
+        ] {
+            let body = json!({
+                "success_count": success_count,
+                "pending_count": pending_count,
+                "failure_count": failure_count,
+                "added_torrent_ids": []
+            })
+            .to_string();
+            assert_eq!(
+                QbittorrentApi::StructuredResponses.validate_add_response(&body).is_ok(),
+                accepted,
+                "response={body}"
+            );
+        }
+        for body in ["", "Ok.", "{}", r#"{"success_count":1}"#] {
+            assert!(
+                QbittorrentApi::StructuredResponses.validate_add_response(body).is_err(),
+                "response={body}"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn detects_api_at_startup_and_reuses_it_for_submission() {
+        let added_body = json!({
+            "success_count": 1,
+            "pending_count": 0,
+            "failure_count": 0,
+            "added_torrent_ids": ["0123456789abcdef0123456789abcdef01234567"]
+        })
+        .to_string();
+        for (version, login_body, add_body) in [
+            ("2.8.19", "Ok.", "Ok."),
+            ("2.11.4", "Ok.", "Ok."),
+            ("2.15.1", "", added_body.as_str()),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/api/v2/auth/login"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("Set-Cookie", "SID=test; Path=/")
+                        .set_body_string(login_body),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/api/v2/app/webapiVersion"))
+                .and(wiremock::matchers::header("cookie", "SID=test"))
+                .respond_with(ResponseTemplate::new(200).set_body_string(version))
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/api/v2/app/defaultSavePath"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("/downloads"))
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/api/v2/torrents/add"))
+                .and(wiremock::matchers::header("cookie", "SID=test"))
+                .respond_with(ResponseTemplate::new(200).set_body_string(add_body))
+                .expect(2)
+                .mount(&server)
+                .await;
+            let component = SUPPLIER
+                .apply(
+                    &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                    &Map::from_iter([
+                        ("endpoint".into(), Value::String(server.uri())),
+                        ("username".into(), json!("admin")),
+                        ("password".into(), json!("test-password")),
+                        ("always-download-all".into(), json!(true)),
+                    ]),
+                )
+                .unwrap();
+            let downloader = component.as_downloader().unwrap();
+
+            assert_eq!(downloader.default_download_path(), "/downloads");
+            let requests = server.received_requests().await.unwrap();
+            assert_eq!(requests[1].url.path(), "/api/v2/app/webapiVersion");
+            assert_eq!(requests[2].url.path(), "/api/v2/app/defaultSavePath");
+            let item = source_item();
+            let task = DownloadTask {
+                source_item: &item,
+                download_files: &[],
+                download_path: Path::new("/downloads"),
+                category: &None,
+                tags: None,
+                headers: None,
+            };
+            downloader.submit(&task).await.unwrap();
+            downloader.submit(&task).await.unwrap();
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn submit_accepts_pending_add_and_waits_for_files() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v2/app/webapiVersion"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("2.15.1"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/torrents/add"))
+            .respond_with(ResponseTemplate::new(202).set_body_json(json!({
+                "added_torrent_ids": [],
+                "failure_count": 0,
+                "pending_count": 1,
+                "success_count": 0
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let files_requests = std::sync::atomic::AtomicUsize::new(0);
+        Mock::given(method("GET"))
+            .and(path("/api/v2/torrents/files"))
+            .respond_with(move |_: &wiremock::Request| {
+                match files_requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed) {
+                    0 => ResponseTemplate::new(404),
+                    1 => ResponseTemplate::new(200).set_body_json(json!([])),
+                    _ => ResponseTemplate::new(200).set_body_json(json!([
+                        {"index": 0, "name": "show/01.mkv"},
+                        {"index": 1, "name": "show/extra.txt"}
+                    ])),
+                }
+            })
+            .expect(3)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/torrents/filePrio"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let component = SUPPLIER
+            .apply(
+                &source_downloader_sdk::component::EMPTY_COMPONENT_CREATE_CONTEXT,
+                &Map::from_iter([("endpoint".into(), Value::String(server.uri()))]),
+            )
+            .unwrap();
+        let downloader = component.as_downloader().unwrap();
+        let item = source_item();
+        let file = file_content();
+        let download_files =
+            vec![source_downloader_sdk::component::SourceFileRef::from(&file)];
+        let task = DownloadTask {
+            source_item: &item,
+            download_files: &download_files,
+            download_path: Path::new("/downloads"),
+            category: &None,
+            tags: None,
+            headers: None,
+        };
+
+        downloader.submit(&task).await.unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(
+            form(requests.last().unwrap()),
+            HashMap::from_iter([
+                (
+                    "hash".to_owned(),
+                    "0123456789abcdef0123456789abcdef01234567".to_owned(),
+                ),
+                ("id".to_owned(), "1".to_owned()),
+                ("priority".to_owned(), "0".to_owned()),
+            ])
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn exposes_file_mover_and_moves_torrent_in_batch() {
         let server = MockServer::start().await;
@@ -854,6 +1156,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn submit_matches_qbittorrent_files_with_download_relative_paths() {
         let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v2/app/webapiVersion"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("2.11.4"))
+            .expect(1)
+            .mount(&server)
+            .await;
         Mock::given(method("POST"))
             .and(path("/api/v2/torrents/add"))
             .respond_with(ResponseTemplate::new(200).set_body_string("Ok."))
